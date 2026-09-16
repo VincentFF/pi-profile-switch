@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.3...v0.4.4) (2026-09-16)
+
+
+### Bug Fixes
+
+* remove redundant /mcp enable|disable command ([#27](https://github.com/VincentFF/pi-profile-switch/issues/27)) ([0f774a6](https://github.com/VincentFF/pi-profile-switch/commit/0f774a6ecf53123c164c950c3b2dbe819a9531e6))
+
 ## [0.4.3](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.2...v0.4.3) (2026-09-16)
 
 
