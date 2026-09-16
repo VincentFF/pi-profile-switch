@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.2...v0.4.3) (2026-09-16)
+
+
+### Bug Fixes
+
+* support standard user-global MCP configs ([#25](https://github.com/VincentFF/pi-profile-switch/issues/25)) ([78583c5](https://github.com/VincentFF/pi-profile-switch/commit/78583c531a32e171fa47733380690e8117c8e4b0))
+
 ## [0.4.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.1...v0.4.2) (2026-09-15)
 
 
