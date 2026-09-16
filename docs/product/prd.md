@@ -147,9 +147,7 @@ profile 只引用 adapter 已配置的 MCP server 名称：
 }
 ```
 
-server 的命令、地址、OAuth、token 和 timeout 保留在 `pi-mcp-adapter` 管理的 MCP 配置中。`profiles.json` 不保存 MCP 连接参数或凭证。
-
-用户执行 `/mcp enable <server>` 或 `/mcp disable <server>` 时，修改当前 profile 的 `mcp` 数组并保存到该 profile 所属 catalog——该数组即 profile-scoped 持久存储（adapter 不提供此 API）；pi-profile 不写入 adapter 默认的 `.pi/mcp.json` 覆盖状态。
+server 的命令、地址、OAuth、token 和 timeout 保留在 `pi-mcp-adapter` 管理的 MCP 配置中。`profiles.json` 不保存 MCP 连接参数或凭证。profile 仅在 `mcps` 数组中声明所启用的 server 列表，不注册多余的 `/mcp enable|disable` 命令，以完整保留 `pi-mcp-adapter` 原生的 `/mcp` 命令控制权。
 
 `/profile use` 切换 profile 时，`pi-profile` 向 adapter 应用新 profile 的 runtime server allowlist；不调用 adapter 的持久化 enable/disable 实现。
 
@@ -193,7 +191,7 @@ CRUD 只在 TUI mode 提供。RPC、print 和 JSON mode 可以通过 `pi-profile
 
 创建 profile 时，TUI 必须明确询问写入 global 还是 project catalog。编辑现有 profile 与持久 active selection 时，写入最终解析 profile 的来源 scope。
 
-`/profile customize` 修改 runtime overlay；不写 profile catalog。`/mcp enable` 与 `/mcp disable` 直接修改当前 profile 所属 catalog 的 `mcp` 数组；保存后执行 MCP runtime reload。
+`/profile customize` 修改 runtime overlay；不写 profile catalog。
 
 CRUD 向导打开后，外部编辑器或另一 Pi 实例对 catalog 的修改不会阻止保存。当前向导内容直接覆盖文件。
 
@@ -255,8 +253,6 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 - `/profile use implement` 不重启 Pi 进程，并在 reload 后替换 resources。
 - skill 内容修改后，所有引用该 skill 的 profile 在 reload 后得到新内容。
 - 项目 profile 覆盖全局 profile，删除项目条目后回退全局定义。
-- `/mcp disable <server>` 写入当前 profile 的 `mcp` 数组，并在 reload 后移除该 server 的 tools。
-- `/mcp enable <server>` 写入当前 profile 的 `mcp` 数组，并在 reload 后恢复该 server 的 tools。
 - profile 切换只应用 runtime server allowlist，不修改 `.pi/mcp.json`。
 - 未安装 `pi-mcp-adapter` 时，未声明 `mcp` 的 profile 正常激活。
 - 同名 tool/command 冲突的最终结果与 Pi 的加载顺序一致。
@@ -269,6 +265,5 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 3. 用 `pi-profile review` 启动，确认模型只看到 `review` 引用的 skills。
 4. 修改 `git-commit/SKILL.md` 并执行 `/profile reload`，确认两个 profile 都使用修改后的内容。
 5. 执行 `/profile customize`，临时禁用当前 profile 声明的 skill 或 tool，再执行 `/profile reset` 恢复定义。
-6. 在 `review` 中执行 `/mcp disable atlassian`，确认当前 profile 的 `mcp` 数组移除该名称，并在 reload 后该 server 的 tools 不可用。
-7. 切换到 `implement`，确认其独立 `mcp` 数组不受 `review` 的禁用操作影响。
-8. 退出后直接运行 `pi`，确认 `.pi/mcp.json` 中 adapter 原有启用状态未被 profile 切换修改。
+6. 确认 `review` 只加载声明的 `atlassian` server tools；切换到 `implement`，确认各 profile 独立的 MCP 声明与隔离。
+7. 退出后直接运行 `pi`，确认 `.pi/mcp.json` 中 adapter 原有启用状态未被 profile 切换修改。

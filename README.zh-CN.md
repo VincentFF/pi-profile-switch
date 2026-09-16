@@ -59,7 +59,6 @@ Profile 只**引用**资源，从不复制资源。已安装的包和标准目�
 | `/profile use <name>` / `/profile reload` | 会话内切换 / 重载（失败自动回滚） |
 | `/profile create\|edit\|delete\|duplicate` | 向导式 profile 增删改（仅 TUI） |
 | `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
-| `/mcp enable\|disable <server>` | 在活动 profile 中开关 MCP server |
 
 非交互模式（`--mode rpc|print|json`）下命令同样生效；CRUD 向导仅 TUI 可用。
 
