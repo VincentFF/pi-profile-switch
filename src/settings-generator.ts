@@ -45,6 +45,7 @@ import path from "node:path";
 import type { ActivationPlan } from "./profile-resolver.ts";
 import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
+import { loadMergedMcpServers } from "./mcp-config.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
 /** A configured global package and its resolved install/local root. */
@@ -66,6 +67,10 @@ export interface DiscoveryContext {
 export interface GenerateOptions {
 	/** The user's real agent dir (e.g. ~/.pi/agent). */
 	agentDir: string;
+	/** Optional home dir override (useful for testing). */
+	homeDir?: string;
+	/** Optional trusted project dir. */
+	projectDir?: string;
 	/** Required for selection plans; unused for the default profile. */
 	discovery?: DiscoveryContext;
 	/** The trusted project's `.pi/settings.json` content (already parsed).
@@ -276,6 +281,10 @@ function buildSelectionSettings(
 export interface RuntimeFileOptions {
 	/** The user's real agent dir (e.g. ~/.pi/agent). */
 	agentDir: string;
+	/** Optional home dir override (useful for testing). */
+	homeDir?: string;
+	/** Optional trusted project dir. */
+	projectDir?: string;
 	/** Required for selection plans; unused for the default profile. */
 	discovery?: DiscoveryContext;
 	/** The trusted project's `.pi/settings.json` content (already parsed). */
@@ -418,29 +427,34 @@ export async function writeRuntimeFiles(
 	} else {
 		// Filter MCP servers
 		try { await rm(mcpInstancePath); } catch {}
-		if (await exists(mcpTarget)) {
-			try {
-				const mcpContent = await readFile(mcpTarget, "utf8");
-				let mcpParsed = JSON.parse(mcpContent);
-				if (isRecord(mcpParsed) && isRecord(mcpParsed.mcpServers)) {
-					const filteredServers: Record<string, unknown> = {};
-					for (const serverName of plan.mcps) {
-						if (mcpParsed.mcpServers[serverName] !== undefined) {
-							filteredServers[serverName] = mcpParsed.mcpServers[serverName];
-						}
-					}
-					mcpParsed.mcpServers = filteredServers;
-					await writeFile(mcpInstancePath, JSON.stringify(mcpParsed, null, 2));
-				} else {
-					// Malformed or empty, write empty
-					await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
-				}
-			} catch {
-				await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
+		const { servers, sharedServers, baseConfig } = await loadMergedMcpServers(
+			options.agentDir,
+			options.projectDir,
+			options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
+		);
+
+		const allowedSet = new Set(plan.mcps);
+		const filteredServers: Record<string, unknown> = {};
+
+		for (const serverName of plan.mcps) {
+			if (servers[serverName] !== undefined) {
+				const def = { ...servers[serverName] };
+				delete def.disabled;
+				filteredServers[serverName] = def;
 			}
-		} else {
-			await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
 		}
+
+		for (const sharedName of sharedServers) {
+			if (!allowedSet.has(sharedName)) {
+				filteredServers[sharedName] = { disabled: true };
+			}
+		}
+
+		const outputConfig: Record<string, unknown> = isRecord(baseConfig)
+			? { ...baseConfig, mcpServers: filteredServers }
+			: { mcpServers: filteredServers };
+
+		await writeFile(mcpInstancePath, JSON.stringify(outputConfig, null, 2));
 	}
 
 	// Instructions generation (Ticket 04)

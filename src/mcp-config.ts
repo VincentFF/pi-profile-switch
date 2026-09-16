@@ -1,24 +1,25 @@
 /**
- * AdapterConfigDiscovery: reads the MCP server NAMES pi-mcp-adapter would
- * discover from its pi-native config files, without ever managing them.
+ * AdapterConfigDiscovery: reads MCP server names and configurations
+ * pi-mcp-adapter would discover from its standard configuration files,
+ * without ever managing them.
  *
  * pi-profile never stores MCP connection parameters or credentials
- * (ADR-0002); this module reads only the `mcpServers` key names so the
- * launcher can validate a profile's `mcp` references before spawn.
+ * (ADR-0002); this module reads config definitions to validate references
+ * before spawn and filter instance mcp.json files.
  *
- * Discovery scope (documented limitation): the pi-native files only — the
- * global `<agentDir>/mcp.json` and, when trusted, the project's
+ * Discovery scope: standard user-global configs (~/.config/mcp/mcp.json,
+ * ~/.agents/mcp.json, ~/.agents/mcp/mcp.json), the Pi-global
+ * `<agentDir>/mcp.json`, and, when trusted, the project's `.mcp.json` and
  * `.pi/mcp.json`. Servers defined solely in the adapter's editor-specific
- * legacy locations (~/.claude/mcp.json et al.) are invisible here; profiles
- * referencing them fail launch validation. The pi-native files are the
- * adapter's documented default, and no in-session re-validation exists (the
- * adapter's status snapshots arrive too late and only post-init), so the
- * launch check is the only name validation — keep configs in the pi-native
- * files.
+ * legacy locations (~/.claude/mcp.json et al.) are invisible here unless
+ * imported.
  *
  * Malformed config files fail loudly — a broken mcp.json must not silently
  * read as "no servers" and reject every reference.
  */
+
+import { homedir } from "node:os";
+import path from "node:path";
 
 import { isRecord, readJsonFile } from "./json-file.ts";
 
@@ -32,35 +33,104 @@ export class McpConfigError extends Error {
 	}
 }
 
-async function readServerNames(filePath: string): Promise<string[]> {
-	const result = await readJsonFile(filePath);
-	if (!result.ok) {
-		if (result.reason === "missing") {
-			return [];
-		}
-		throw new McpConfigError(`MCP config is not valid JSON: ${filePath}`, filePath);
-	}
-	if (!isRecord(result.value)) {
-		throw new McpConfigError(`MCP config must be a JSON object: ${filePath}`, filePath);
-	}
-	if (result.value.mcpServers === undefined) {
-		return [];
-	}
-	if (!isRecord(result.value.mcpServers)) {
-		throw new McpConfigError(`"mcpServers" must be a JSON object: ${filePath}`, filePath);
-	}
-	return Object.keys(result.value.mcpServers);
+export interface McpDiscoveryOptions {
+	homeDir?: string;
 }
 
-/** Server names the adapter would discover: global agentDir config plus the
- *  trusted project's config. Pass `projectDir` only when the trust check
- *  passed — an untrusted project's config is never read. */
-export async function discoverAdapterServerNames(agentDir: string, projectDir?: string): Promise<string[]> {
-	const names = new Set(await readServerNames(`${agentDir}/mcp.json`));
+export interface MergedMcpResult {
+	servers: Record<string, Record<string, unknown>>;
+	sharedServers: Set<string>;
+	baseConfig?: Record<string, unknown>;
+}
+
+export interface McpConfigSource {
+	path: string;
+	isShared: boolean;
+	isAgentDir?: boolean;
+}
+
+/**
+ * Standard MCP configuration sources recognized by pi-mcp-adapter in precedence order:
+ * 1. ~/.config/mcp/mcp.json (user-global standard MCP)
+ * 2. ~/.agents/mcp.json (user-global .agents MCP)
+ * 3. ~/.agents/mcp/mcp.json (user-global .agents nested MCP)
+ * 4. <agentDir>/mcp.json (Pi global override)
+ * 5. <projectDir>/.mcp.json (project standard MCP, when project is trusted)
+ * 6. <projectDir>/.pi/mcp.json (project Pi override, when project is trusted)
+ */
+export function getStandardMcpConfigSources(
+	agentDir: string,
+	projectDir?: string,
+	options?: McpDiscoveryOptions,
+): McpConfigSource[] {
+	const home = options?.homeDir ?? process.env.HOME ?? homedir();
+	const sources: McpConfigSource[] = [
+		{ path: path.join(home, ".config", "mcp", "mcp.json"), isShared: true },
+		{ path: path.join(home, ".agents", "mcp.json"), isShared: true },
+		{ path: path.join(home, ".agents", "mcp", "mcp.json"), isShared: true },
+		{ path: path.join(agentDir, "mcp.json"), isShared: false, isAgentDir: true },
+	];
 	if (projectDir !== undefined) {
-		for (const name of await readServerNames(`${projectDir}/.pi/mcp.json`)) {
-			names.add(name);
+		sources.push({ path: path.join(projectDir, ".mcp.json"), isShared: true });
+		sources.push({ path: path.join(projectDir, ".pi", "mcp.json"), isShared: false });
+	}
+	return sources;
+}
+
+export async function loadMergedMcpServers(
+	agentDir: string,
+	projectDir?: string,
+	options?: McpDiscoveryOptions,
+): Promise<MergedMcpResult> {
+	const sources = getStandardMcpConfigSources(agentDir, projectDir, options);
+	const seenPaths = new Set<string>();
+	const servers: Record<string, Record<string, unknown>> = {};
+	const sharedServers = new Set<string>();
+	let baseConfig: Record<string, unknown> | undefined;
+
+	for (const source of sources) {
+		const resolvedPath = path.resolve(source.path);
+		if (seenPaths.has(resolvedPath)) continue;
+		seenPaths.add(resolvedPath);
+
+		const result = await readJsonFile(resolvedPath);
+		if (!result.ok) {
+			if (result.reason === "missing") continue;
+			throw new McpConfigError(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath);
+		}
+		if (!isRecord(result.value)) {
+			throw new McpConfigError(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath);
+		}
+		if (source.isAgentDir) {
+			baseConfig = result.value;
+		}
+		if (result.value.mcpServers === undefined) continue;
+		if (!isRecord(result.value.mcpServers)) {
+			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
+		}
+		for (const [name, def] of Object.entries(result.value.mcpServers)) {
+			if (source.isShared) {
+				sharedServers.add(name);
+			}
+			if (isRecord(def)) {
+				servers[name] = { ...(servers[name] ?? {}), ...def };
+			} else {
+				servers[name] = { ...(servers[name] ?? {}) };
+			}
 		}
 	}
-	return [...names].sort();
+
+	return { servers, sharedServers, baseConfig };
+}
+
+/** Server names the adapter would discover: standard global MCP configs,
+ *  global agentDir config, plus the trusted project's configs. Pass `projectDir`
+ *  only when the trust check passed — an untrusted project's config is never read. */
+export async function discoverAdapterServerNames(
+	agentDir: string,
+	projectDir?: string,
+	options?: McpDiscoveryOptions,
+): Promise<string[]> {
+	const { servers } = await loadMergedMcpServers(agentDir, projectDir, options);
+	return Object.keys(servers).sort();
 }
