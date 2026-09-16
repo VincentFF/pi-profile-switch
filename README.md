@@ -59,7 +59,6 @@ In the TUI, the `/profile` command family manages everything in-session:
 | `/profile use <name>` / `/profile reload` | Switch / reload without restarting (rollback on failure) |
 | `/profile create\|edit\|delete\|duplicate` | Guided profile CRUD (TUI only) |
 | `/profile customize` / `/profile reset` | Narrow the active profile for this session only |
-| `/mcp enable\|disable <server>` | Toggle MCP servers in the active profile |
 
 All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizards are TUI-only.
 

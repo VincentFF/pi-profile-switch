@@ -21,8 +21,6 @@ import {
 	runProfileDuplicateWizard,
 	runProfileEditWizard,
 } from "../../src/switching/profile-wizard.ts";
-import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
-import { setMcpServerEnabled } from "../../src/switching/mcp-toggle.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 import { getGlobalStateDir } from "../../src/workspace.ts";
@@ -53,9 +51,6 @@ import { getGlobalStateDir } from "../../src/workspace.ts";
  *   is stale afterwards.
  * - list/status ship structured `details` payloads (`{kind, profiles}` /
  *   `{kind, report}`) for RPC consumers (ticket 11).
- * - `/mcp enable|disable <server>`: edit the active profile's mcp array in
- *   its owning catalog, then reload (ticket 10). Fails clearly with the
- *   adapter absent; notifies before the reload (stale context after).
  *
  * Pi re-executes this module on reload, so post-reload state is established
  * exclusively through `session_start` — nothing stale survives.
@@ -378,71 +373,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				const switched = await switchProfile(chosen, deps, { clearOverlay: true });
 				for (const warning of switched.warnings) notify(warning, "warning");
 				setProfileStatus(ctx.ui, switched.profile);
-			} catch (error) {
-				notify(error instanceof Error ? error.message : String(error), "error");
-			}
-		},
-	});
-
-	// Persistent profile-scoped MCP toggles (ticket 10): edit the active
-	// profile's mcp array in its owning catalog, then reload so the runtime
-	// and the republished allowlist match. The adapter's own configuration
-	// (mcp.json files) is never written.
-	pi.registerCommand("mcp", {
-		description: "pi-profile: /mcp enable <server> | /mcp disable <server>",
-		handler: async (args, ctx) => {
-			const notify = (message: string, level: "info" | "warning" | "error") => {
-				try {
-					ctx.ui?.notify(message, level);
-				} catch {
-					// stale context after reload — see /profile
-				}
-			};
-			const [action, server] = args.trim().split(/\s+/).filter(Boolean);
-			if (!["enable", "disable"].includes(action ?? "") || server === undefined) {
-				notify("usage: /mcp enable <server> | /mcp disable <server>", "error");
-				return;
-			}
-			try {
-				const plan = await readLaunchPlanFile(runtimeDir);
-				if (plan?.agentDir === undefined) {
-					notify("pi-profile: launch plan is missing agentDir — cannot toggle MCP servers", "error");
-					return;
-				}
-				if (!probeAdapterPresence(pi.events)) {
-					throw new Error(
-						"pi-mcp-adapter is not active in this session — /mcp enable|disable requires it " +
-							"(select the adapter in the profile's extensions).",
-					);
-				}
-				const result = await setMcpServerEnabled(
-					{ realAgentDir: plan.agentDir, cwd: ctx.cwd, profile: { name: plan.profile, source: plan.source } },
-					server,
-					action === "enable",
-				);
-				if (!result.changed) {
-					notify(`MCP server "${server}" is already ${action}d in profile "${plan.profile}"`, "info");
-					return;
-				}
-				// Notify BEFORE the reload: this context is stale afterwards.
-				notify(
-					`${action}d MCP server "${server}" in profile "${plan.profile}" (mcps: [${result.mcps.join(", ")}]); reloading`,
-					"info",
-				);
-				const switched = await switchProfile(plan.profile, {
-					runtimeDir,
-					realAgentDir: plan.agentDir,
-					cwd: ctx.cwd,
-					waitForIdle: () => ctx.waitForIdle(),
-					reload: () => ctx.reload(),
-					// Same staleness probe as /profile: interactive Pi
-					// swallows reload refusals; a live context afterwards
-					// means the reload never ran.
-					assertStale: () => {
-						void ctx.cwd;
-					},
-				}, { reloadCurrent: true });
-				for (const warning of switched.warnings) notify(warning, "warning");
 			} catch (error) {
 				notify(error instanceof Error ? error.message : String(error), "error");
 			}

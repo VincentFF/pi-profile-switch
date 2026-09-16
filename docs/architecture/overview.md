@@ -75,7 +75,6 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - `default` 不存在于文件中，不能删除。
 - 项目同名 profile 完整替换全局 profile；删除项目覆盖后立即暴露全局同名。
 - 删除活动 profile 前必须先完成替代 profile 选择。
-- `/mcp enable` 与 `/mcp disable` 修改当前 profile 的 `mcp` 数组，不修改 MCP 连接配置。
 
 ### `ExtensionDiscovery`
 
@@ -130,8 +129,8 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - **失败回滚**：reload 前保留上一份已验证 settings 快照；reload 失败时写回快照并再次 reload。
 - **instructions**：在 `before_agent_start` 中把 profile instructions 追加到 Pi 已构建的 system prompt 末尾（初始与切换路径统一走 extension，不用 flag）。
 - **tools/model/thinking**：初始由生成 flags 生效；session_start（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展工具）重新展开并 `pi.setActiveTools`、可选 `pi.setModel` 与 thinking。
-- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）；`/mcp enable|disable` 直接写当前 profile 所属 catalog 的 `mcp` 数组（profile-scoped 持久存储——adapter 无此 API），随后走标准 rewrite+reload 使变更即时生效。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。
-- CRUD 只在 TUI mode 提供：extension 经 `ctx.mode`（tui/rpc/json/print）判定，非 TUI 下 CRUD/向导以带当前模式名的错误拒绝；切换/overlay/list/status 非 CRUD，RPC 下仍可用；`/mcp enable|disable` 写 catalog 但属开关命令，RPC 下同样可用（ticket 11 明确）RPC 结构化状态：`/profile list|status` 经 `pi.sendMessage` 发出 `customType: "pi-profile"` 的自定义消息，`details` 携带结构化对象（list → profiles 数组；status → StatusReport）。
+- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。不注册多余的 `/mcp enable|disable`，保留 `pi-mcp-adapter` 原生 `/mcp` 命令体系。
+- CRUD 只在 TUI mode 提供：extension 经 `ctx.mode`（tui/rpc/json/print）判定，非 TUI 下 CRUD/向导以带当前模式名的错误拒绝；切换/overlay/list/status 非 CRUD，RPC 下仍可用。RPC 结构化状态：`/profile list|status` 经 `pi.sendMessage` 发出 `customType: "pi-profile"` 的自定义消息，`details` 携带结构化对象（list → profiles 数组；status → StatusReport）。
 
 ### `McpServerRegistry`
 
@@ -239,7 +238,6 @@ pi-profile/
 │       ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
 │       ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
 │       ├── profile-wizard.ts     # profile create/edit/duplicate 向导
-│       ├── mcp-toggle.ts         # /mcp enable|disable（编辑 owning catalog 的 mcp 数组 + reload）
 │       └── tool-references.ts    # tool 引用对 Pi 活动注册表的展开
 ├── schemas/
 │   └── profiles.schema.json
