@@ -164,6 +164,7 @@ export async function switchProfile(
 			: undefined;
 	await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {
 		agentDir: deps.realAgentDir,
+		projectDir: resolved.projectDir,
 		discovery: resolved.discovery,
 		projectSettings: resolved.projectSettings,
 		planExtras: {

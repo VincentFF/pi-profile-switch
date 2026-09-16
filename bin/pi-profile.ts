@@ -29,7 +29,7 @@ try {
 	const agentDir = getAgentDir();
 	// Fails before spawning when the profile is unknown or cannot activate.
 	// --approve/--no-approve are consumed here as a one-run trust input.
-	const { plan, discovery, projectSettings, warnings } = await resolveInitialProfile(args.profile, {
+	const { plan, discovery, projectSettings, projectDir, warnings } = await resolveInitialProfile(args.profile, {
 		agentDir,
 		cwd: process.cwd(),
 		trustOverride: args.trustOverride,
@@ -41,7 +41,7 @@ try {
 	// window) are swept before this launch materializes its own. Best-effort:
 	// sweep errors never block the launch.
 	await sweepStaleRuntimeDirs(agentDir);
-	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings });
+	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings, projectDir });
 	process.exitCode = await spawnPi({
 		generated,
 		piArgs: args.piArgs,

@@ -268,6 +268,34 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(mcpInstance.mcpServers).toEqual({ github: {} });
 	});
 
+	it("extracts MCP servers defined in ~/.agents/mcp.json and disables unallowed shared servers", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(
+			path.join(fixture.root, ".agents", "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					"mcp-atlassian": { url: "http://127.0.0.1:10801/mcp", lifecycle: "keep-alive" },
+					"mcp-grafana": { url: "http://127.0.0.1:10802/mcp" },
+				},
+			}),
+		);
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { "agent-only": { url: "http://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["mcp-atlassian"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({
+			"mcp-atlassian": { url: "http://127.0.0.1:10801/mcp", lifecycle: "keep-alive" },
+			"mcp-grafana": { disabled: true },
+		});
+	});
+
 	it("symlinks the real mcp.json when no mcp allowlist is declared", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
 
