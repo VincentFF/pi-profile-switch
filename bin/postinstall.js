@@ -4,7 +4,8 @@
  *
  * Runs at package install time (`npm install pi-profile-switch` / `pi install`).
  * Idempotent and conservative:
- * - Writes `defaults/profiles.json` to the profile-switch dir ONLY when no
+ * - Writes the shipped `examples/profiles.json` starter catalog to the
+ *   profile-switch dir ONLY when no
  *   catalog exists there yet (COPYFILE_EXCL; an existing file — including
  *   one written concurrently — is never touched).
  * - Skips entirely when a legacy `~/.pi/agent/profiles.json` exists, because
@@ -22,7 +23,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const DEFAULT_TEMPLATE = fileURLToPath(new URL("../defaults/profiles.json", import.meta.url));
+const DEFAULT_TEMPLATE = fileURLToPath(new URL("../examples/profiles.json", import.meta.url));
 
 /** Mirrors getProfileSwitchDir() in src/workspace.ts.
  *  @param {NodeJS.ProcessEnv} env */

@@ -240,7 +240,8 @@ pi-profile/
 ├── test/                         # Vitest：*.test.ts 单元 + *.integration.test.ts 真实子进程
 │   └── helpers/                  # fixture 布局约定（ticket 01 建立）
 └── examples/
-    └── profiles.json
+    ├── profiles.json           # 安装时播种的 starter ask profile（postinstall 读取）
+    └── example.json            # 完整字段示例
 ```
 
 `package.json` 同时声明 Pi extension 和 `pi-profile` binary。extension 提供对话内 runtime 交互；binary 负责初始 profile 解析、生成运行目录并 spawn Pi。发布形态：Node 拒绝对 node_modules 下的 `.ts` 做 type-stripping，所以 bin 入口是 `bin/pi-profile.js`——一个 jiti（Pi 加载扩展所用的同一 loader）包装器，加载共享的 TS 图；开发态仍直接运行 `bin/pi-profile.ts`。`files` 字段发布 bin/extensions/src/schemas/examples/README。

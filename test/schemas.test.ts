@@ -23,20 +23,20 @@ async function loadSchema(name: string) {
 }
 
 describe("shipped JSON schemas", () => {
-	it("profiles schema validates the shipped example", async () => {
+	it("profiles schema validates the shipped install-time starter", async () => {
 		const profiles = await loadSchema("profiles.schema.json");
-		const profilesExample = JSON.parse(await readFile(path.resolve("examples/profiles.json"), "utf8"));
+		const starter = JSON.parse(await readFile(path.resolve("examples/profiles.json"), "utf8"));
 
 		const ajv = newAjv();
-		expect(ajv.validate(profiles, profilesExample), JSON.stringify(ajv.errors)).toBe(true);
+		expect(ajv.validate(profiles, starter), JSON.stringify(ajv.errors)).toBe(true);
 	});
 
-	it("profiles schema validates the shipped install-time default", async () => {
+	it("profiles schema validates the shipped complete example", async () => {
 		const profiles = await loadSchema("profiles.schema.json");
-		const defaultTemplate = JSON.parse(await readFile(path.resolve("defaults/profiles.json"), "utf8"));
+		const example = JSON.parse(await readFile(path.resolve("examples/example.json"), "utf8"));
 
 		const ajv = newAjv();
-		expect(ajv.validate(profiles, defaultTemplate), JSON.stringify(ajv.errors)).toBe(true);
+		expect(ajv.validate(profiles, example), JSON.stringify(ajv.errors)).toBe(true);
 	});
 
 	it("the profiles schema rejects the built-in name, inheritance keys, and wrong types", async () => {
@@ -57,10 +57,10 @@ describe("shipped JSON schemas", () => {
 		try {
 			await writeFile(
 				path.join(fixture.agentDir, "profiles.json"),
-				await readFile(path.resolve("examples/profiles.json"), "utf8"),
+				await readFile(path.resolve("examples/example.json"), "utf8"),
 			);
 			const catalog = await ProfileCatalog.load(fixture.agentDir);
-			expect(catalog.resolve("review")?.definition.label).toBe("Code review");
+			expect(catalog.resolve("impl")?.definition.label).toBe("Implementation");
 		} finally {
 			await rm(fixture.root, { recursive: true, force: true });
 		}

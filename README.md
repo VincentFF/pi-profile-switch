@@ -4,7 +4,7 @@
 
 Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile references a set of existing skills, extensions, MCP servers, and tools — switch between them in the same Pi process, without restarting.
 
-Use a lean read-only profile for code review, a full-powered one for implementation, a minimal one for a quick question — all against the same installed resources.
+Use a read-only profile for Q&A and code exploration, a full-powered one for implementation — all against the same installed resources.
 
 ## Install
 
@@ -20,33 +20,32 @@ Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (in
 # Launch with the built-in default profile (all resources, plain Pi behavior)
 pi-profile
 
-# Launch with a named profile
-pi-profile review
+# Launch with the seeded read-only ask profile
+pi-profile ask
 
 # Anything after -- is passed to pi verbatim
-pi-profile review -- --model openai/gpt-5.4
+pi-profile ask -- --model openai/gpt-5.4
 ```
 
-Define profiles in `~/.pi-profile-switch/profiles.json` (global, fallback to `~/.pi/agent/profiles.json` for migration; custom root via `PI_PROFILE_SWITCH_DIR`) or `<project>/.pi/profiles.json` (project, trusted projects only):
+On install, pi-profile-switch seeds `~/.pi-profile-switch/profiles.json` (global, fallback to `~/.pi/agent/profiles.json` for migration; custom root via `PI_PROFILE_SWITCH_DIR`) with a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
 
 ```json
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "skills": ["code-review"],
-      "mcp": ["github"],
-      "tools": ["read", "grep", "find", "bash"],
-      "instructions": "Review only; do not modify files."
+    "ask": {
+      "label": "Ask & Discuss",
+      "description": "Read-only Q&A and code exploration; no file modifications or command execution",
+      "skills": [],
+      "extensions": [],
+      "tools": ["read", "grep", "find", "ls"],
+      "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
     }
   }
 }
 ```
 
-Profiles **reference** resources by name — they never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed. Full schema with more examples: [`examples/profiles.json`](examples/profiles.json).
-
-On install, pi-profile-switch seeds `~/.pi-profile-switch/profiles.json` with a starter **`ask`** profile — read-only Q&A and code exploration (`read`/`grep`/`find`/`ls`, no skills, extensions, or MCP). It assumes nothing about your setup; edit or delete it freely.
+Project-level profiles live in `<project>/.pi/profiles.json` (trusted projects only). Profiles **reference** resources by name — they never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed. Complete configuration examples live in [`examples/`](examples/): `profiles.json` is the seeded starter above, and `example.json` demonstrates every available field (skills, extensions, MCP servers, tools, model defaults, instructions).
 
 ## Commands
 

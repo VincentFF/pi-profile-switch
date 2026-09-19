@@ -1,6 +1,7 @@
 /**
  * Default-catalog seeding (install time): bin/postinstall.js writes the
- * shipped `defaults/profiles.json` to the profile-switch dir ONLY when no
+ * shipped `examples/profiles.json` starter to the profile-switch dir ONLY
+ * when no
  * catalog exists — never overwriting user data, never shadowing the legacy
  * ~/.pi/agent fallback, never failing the install.
  */
@@ -34,7 +35,7 @@ describe("installDefaultProfiles", () => {
 
 		expect(result.written).toBe(true);
 		const written = await readFile(path.join(dir, "profiles.json"), "utf8");
-		const template = await readFile(path.resolve("defaults/profiles.json"), "utf8");
+		const template = await readFile(path.resolve("examples/profiles.json"), "utf8");
 		expect(written).toBe(template);
 		// The seeded profile is the read-only "ask" starter.
 		const parsed = JSON.parse(written);
