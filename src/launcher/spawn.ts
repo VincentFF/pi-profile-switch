@@ -1,8 +1,8 @@
 /**
  * Spawns the real `pi` binary as a subprocess (ADR-0005).
  *
- * The spawned pi gets: the pi-profile extension via `-e`, any generated
- * flags, and the user's arguments verbatim. stdio is inherited so interactive
+ * The spawned pi gets: the pi-profile extension via `-e` and the user's
+ * arguments verbatim. stdio is inherited so interactive
  * TUI, RPC, and print modes all behave natively; exit codes and signals
  * propagate.
  */
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import type { GeneratedRuntime } from "../settings-generator.ts";
 
 export interface SpawnPiOptions {
-	/** Generated runtime dir + env + flags. */
+	/** Generated runtime dir + env. */
 	generated: GeneratedRuntime;
 	/** User arguments, forwarded verbatim. */
 	piArgs: string[];
@@ -25,10 +25,10 @@ export interface SpawnPiOptions {
 
 const EXTENSION_ENTRY = fileURLToPath(new URL("../../extensions/pi-profile/index.ts", import.meta.url));
 
-/** Pure argv construction for the spawned pi: extension entry, generated
- *  flags, trust re-application, then user args verbatim. */
+/** Pure argv construction for the spawned pi: extension entry,
+ *  trust re-application, then user args verbatim. */
 export function buildPiArgs(options: SpawnPiOptions): string[] {
-	const args = ["-e", EXTENSION_ENTRY, ...options.generated.flags];
+	const args = ["-e", EXTENSION_ENTRY];
 	// default profile keeps trust behavior native: re-apply the recorded flag.
 	if (options.trustOverride === true) args.push("--approve");
 	if (options.trustOverride === false) args.push("--no-approve");

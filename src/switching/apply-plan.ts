@@ -9,17 +9,16 @@
  *
  * Steps:
  *   1. tools: re-expand the profile's raw tool references against Pi's LIVE
- *      tool registry (includes extension-provided tools the pre-spawn
- *      expansion cannot know) and setActiveTools. Literals that no tool
- *      provides are dropped with a warning — Pi silently ignores unknown
- *      names, so the warning is the only signal.
- *   2. model: setModel + setThinkingLevel when declared.
- *   3. mcp: probe the adapter and publish the runtime allowlist (ticket 04).
- *   4. persistence: when the plan is marked `persistSelection` and this is a
- *      reload, save the selection and the rollback anchor
- *      (activeProfile = lastVerifiedProfile = plan.profile) to the
+ *      tool registry (including extension- and MCP-provided tools) and
+ *      call setActiveTools. This is the CURRENT strict-allowlist enforcement
+ *      ensuring non-builtin tools obey profile restrictions; settings
+ *      `defaultTools` provides only the boot baseline for built-ins.
+ *      Literals that no tool provides are dropped with a warning — Pi
+ *      silently ignores unknown names, so the warning is the only signal.
+ *   2. persistence: when the plan is marked `persistSelection` and this is a
+ *      reload, save the selection (activeProfile = plan.profile) to the
  *      profile's scope state file. Launch-transient selections never write.
- *   5. change summary: a `switchedFrom` marker produces a one-shot summary
+ *   3. change summary: a `switchedFrom` marker produces a one-shot summary
  *      for the next agent turn and is cleared from the plan file.
  *
  * Pi's reload re-executes extension modules, so no stale handler or command
@@ -31,12 +30,6 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
-import {
-	MCP_ALLOWLIST_EVENT,
-	MCP_ALLOWLIST_VERSION,
-	MissingMcpAdapterError,
-	probeAdapterPresence,
-} from "../mcp-coordination.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { expandToolReferences } from "./tool-references.ts";
@@ -45,8 +38,6 @@ export interface LaunchPlanFile {
 	profile: string;
 	source: string;
 	agentDir?: string;
-	instructions?: string;
-	model?: { provider: string; id: string; thinkingLevel?: string };
 	tools?: string[];
 	toolReferences?: string[];
 	mcps?: string[];
@@ -71,10 +62,6 @@ export interface LaunchPlanFile {
 export interface PlanApplicationSurface {
 	getAllTools(): Array<{ name: string }>;
 	setActiveTools(names: string[]): void;
-	modelRegistry: { find(provider: string, id: string): unknown | undefined };
-	setModel(model: unknown): Promise<boolean>;
-	setThinkingLevel(level: unknown): void;
-	events: { emit(channel: string, data: unknown): void };
 	notify?(message: string, level: "info" | "warning" | "error"): void;
 }
 
@@ -119,46 +106,13 @@ export async function applyLaunchPlan(input: {
 		surface.setActiveTools(expanded);
 	}
 
-	// --- model ---
-	if (plan.model !== undefined) {
-		const found = surface.modelRegistry.find(plan.model.provider, plan.model.id);
-		if (found === undefined) {
-			warnings.push(`profile "${plan.profile}": declared model ${plan.model.provider}/${plan.model.id} not found`);
-		} else {
-			const applied = await surface.setModel(found);
-			if (!applied) {
-				warnings.push(
-					`profile "${plan.profile}": model ${plan.model.provider}/${plan.model.id} has no configured auth`,
-				);
-			}
-		}
-		if (plan.model.thinkingLevel !== undefined) {
-			surface.setThinkingLevel(plan.model.thinkingLevel);
-		}
-	}
-
-	// --- mcp coordination (ticket 04 contract) ---
-	if (plan.mcps !== undefined && plan.mcps.length > 0) {
-		if (!probeAdapterPresence(surface.events)) {
-			const error = new MissingMcpAdapterError(plan.profile);
-			surface.notify?.(error.message, "error");
-			throw error;
-		}
-		surface.events.emit(MCP_ALLOWLIST_EVENT, {
-			version: MCP_ALLOWLIST_VERSION,
-			profile: plan.profile,
-			servers: plan.mcps,
-		});
-	}
-
-	// --- persistence + rollback anchor (post-reload only) ---
+	// --- persistence (post-reload only) ---
 	if (plan.persistSelection === true && input.reason === "reload" && plan.agentDir !== undefined) {
 		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 		// Merge: the overlay belongs to customize/reset, not to this write.
 		// A switch (clearOverlay) explicitly drops it.
 		await new RuntimeStateStore(stateDir).update({
 			activeProfile: plan.profile,
-			lastVerifiedProfile: plan.profile,
 			...(plan.clearOverlay === true ? { overlay: undefined } : {}),
 		});
 	}
@@ -182,7 +136,6 @@ function buildSwitchSummary(plan: LaunchPlanFile): string {
 		`profile switched: ${plan.switchedFrom} → ${plan.profile}`,
 		plan.tools !== undefined ? `tools: [${plan.tools.join(", ")}]` : undefined,
 		plan.mcps !== undefined && plan.mcps.length > 0 ? `mcp: [${plan.mcps.join(", ")}]` : undefined,
-		plan.model !== undefined ? `model: ${plan.model.provider}/${plan.model.id}` : undefined,
 	].filter((part): part is string => part !== undefined);
 	return parts.join("; ");
 }

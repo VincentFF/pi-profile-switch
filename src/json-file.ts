@@ -1,8 +1,8 @@
 /**
  * Shared JSON-file reading for pi-profile's file-backed stores (catalog,
- * resource registry, runtime state). Each store maps read failures to its
- * own error policy (loud CatalogError/RegistryError vs. quiet state
- * fallback); this helper only classifies the outcome.
+ * runtime state). Each store maps read failures to its own error policy
+ * (loud CatalogError vs. quiet state fallback); this helper only classifies
+ * the outcome.
  */
 
 import { readFile } from "node:fs/promises";

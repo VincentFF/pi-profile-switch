@@ -5,7 +5,7 @@
  * Two entry points:
  * - `generateRuntimeDir` (launcher): mkdtemp a fresh runtime dir, write the
  *   files, link state (auth/models/mcp/npm/git/bin; trust.json only for
- *   default), derive env + flags.
+ *   default), derive env.
  * - `writeRuntimeFiles` (in-session switch, ticket 05): rewrite
  *   settings.json + pi-profile.json inside the EXISTING runtime dir (the
  *   running process's PI_CODING_AGENT_DIR cannot move), and transition the
@@ -31,8 +31,9 @@
  *   root as a launch side effect)
  * - unmanaged kinds (prompts, themes) pass through: the user's arrays are
  *   preserved and the real agent dir's prompts/themes dirs re-included
- * - tools/model become generated flags; the launch plan file feeds the
- *   in-pi extension (instructions injection, status)
+ * - tools/model are written to generated settings (defaultTools,
+ *   defaultProvider, defaultModel, defaultThinkingLevel); the launch plan
+ *   file feeds the in-pi extension (tools strict allowlist, status)
  *
  * User configuration files are never modified.
  */
@@ -85,8 +86,6 @@ export interface GeneratedRuntime {
 	runtimeDir: string;
 	/** Environment variables for the spawned pi process. */
 	env: Record<string, string>;
-	/** Extra pi flags derived from the plan (e.g. --tools, --model). Empty for default. */
-	flags: string[];
 }
 
 /** Files managed explicitly by pi-profile in runtimeDir; excluded from auto-symlinking. */
@@ -111,6 +110,18 @@ const UNMANAGED_DIR_KINDS = ["prompts", "themes"] as const;
 async function exists(filePath: string): Promise<boolean> {
 	try {
 		await stat(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Symlink-aware existence check (lstat): a dangling symlink still counts as
+ *  existing — a stat-based check misses it, which would skip its removal or
+ *  collide on symlink creation. Use this for paths pi-profile links itself. */
+async function existsLexical(filePath: string): Promise<boolean> {
+	try {
+		await lstat(filePath);
 		return true;
 	} catch {
 		return false;
@@ -291,8 +302,8 @@ export interface RuntimeFileOptions {
 	projectSettings?: Record<string, unknown>;
 	/** Extra launch-plan fields written by the in-session switch path:
 	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
-	 *  tells the post-reload extension instance to save the selection and
-	 *  record the rollback anchor; `clearOverlay` drops the stored overlay
+	 *  tells the post-reload extension instance to save the selection;
+	 *  `clearOverlay` drops the stored overlay
 	 *  (a profile switch discards the previous profile's overlay).
 	 *  `previousResolved` carries the pre-switch resolved name sets so
 	 *  `/profile status` can report glob deltas (ticket 07). */
@@ -372,10 +383,11 @@ export async function writeRuntimeFiles(
 	const settings = await computeSettings(plan, options, runtimeDir);
 	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 
-	// The launch plan feeds the in-pi extension: instructions injection,
-	// tool/model re-application after reload, MCP coordination, switching.
+	// The launch plan feeds the in-pi extension: tool re-application after
+	// reload (the tools strict allowlist), in-session switching, status
+	// reporting, and post-reload state persistence.
 	// agentDir is the REAL agent dir — the extension needs it for trust
-	// checks, state files, and catalog/registry reads (its own
+	// checks, state files, and catalog reads (its own
 	// PI_CODING_AGENT_DIR points at this runtime dir).
 	await writeFile(
 		path.join(runtimeDir, "pi-profile.json"),
@@ -384,8 +396,6 @@ export async function writeRuntimeFiles(
 				profile: plan.profile,
 				source: plan.source,
 				agentDir: options.agentDir,
-				...(plan.instructions !== undefined ? { instructions: plan.instructions } : {}),
-				...(plan.model !== undefined ? { model: plan.model } : {}),
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
 				...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
@@ -408,10 +418,14 @@ export async function writeRuntimeFiles(
 	const trustLink = path.join(runtimeDir, "trust.json");
 	const trustTarget = path.join(options.agentDir, "trust.json");
 	if (plan.filter === "none") {
-		if ((await exists(trustTarget)) && !(await exists(trustLink))) {
+		if ((await exists(trustTarget)) && !(await existsLexical(trustLink))) {
 			await symlink(trustTarget, trustLink);
 		}
-	} else if (await exists(trustLink)) {
+	} else if (await existsLexical(trustLink)) {
+		// Lexical check: a dangling trust.json symlink (real trust.json deleted
+		// after the link was made) must still be removed — otherwise a later
+		// re-created real trust.json silently resurrects stored trust inside a
+		// named profile, defeating defaultProjectTrust: "never".
 		await rm(trustLink);
 	}
 
@@ -543,13 +557,10 @@ export async function generateRuntimeDir(
 
 	await writeRuntimeFiles(runtimeDir, plan, options);
 
-	const flags: string[] = [];
-
 	return {
 		runtimeDir,
 		env: {
 			PI_CODING_AGENT_DIR: runtimeDir,
 		},
-		flags,
 	};
 }

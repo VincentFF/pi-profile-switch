@@ -74,11 +74,6 @@ describe("generateRuntimeDir (default profile)", () => {
 		);
 	});
 
-	it("generates no filtering flags for the default profile", async () => {
-		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
-		expect(result.flags).toEqual([]);
-	});
-
 	it("places the runtime dir under the instances root", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		expect(result.runtimeDir.startsWith(path.join(fixture.profileSwitchDir, "instances", "default", "agent"))).toBe(true);

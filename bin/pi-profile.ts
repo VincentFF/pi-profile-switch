@@ -3,7 +3,7 @@
  * pi-profile launcher (ADR-0005).
  *
  * Resolves the initial profile, materializes it as a generated runtime
- * directory (settings + symlinks + env + flags), and spawns the real `pi`
+ * directory (settings + symlinks + env), and spawns the real `pi`
  * binary with user arguments passed through verbatim.
  *
  * Usage:
@@ -18,8 +18,7 @@ import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
 import { sweepStaleRuntimeDirs } from "../src/launcher/runtime-cleanup.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
-import { McpConfigError } from "../src/mcp-config.ts";
-import { MissingMcpAdapterError } from "../src/mcp-coordination.ts";
+import { McpConfigError, MissingMcpAdapterError } from "../src/mcp-config.ts";
 import { CatalogError } from "../src/profile-catalog.ts";
 import { ActivationError } from "../src/profile-resolver.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";

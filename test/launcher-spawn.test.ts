@@ -6,7 +6,6 @@ import type { GeneratedRuntime } from "../src/settings-generator.ts";
 const generated: GeneratedRuntime = {
 	runtimeDir: "/tmp/runtime",
 	env: { PI_CODING_AGENT_DIR: "/tmp/runtime" },
-	flags: [],
 };
 
 describe("buildPiArgs", () => {
@@ -25,11 +24,5 @@ describe("buildPiArgs", () => {
 	it("re-applies a recorded --no-approve", () => {
 		const args = buildPiArgs({ generated, piArgs: ["--mode", "rpc"], trustOverride: false });
 		expect(args).toEqual(["-e", expect.any(String), "--no-approve", "--mode", "rpc"]);
-	});
-
-	it("emits generated flags before user args", () => {
-		const withFlags: GeneratedRuntime = { ...generated, flags: ["--tools", "read,grep"] };
-		const args = buildPiArgs({ generated: withFlags, piArgs: ["--mode", "rpc"], trustOverride: undefined });
-		expect(args).toEqual(["-e", expect.any(String), "--tools", "read,grep", "--mode", "rpc"]);
 	});
 });

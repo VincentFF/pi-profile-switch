@@ -54,19 +54,11 @@ describe("RuntimeStateStore (global scope)", () => {
 		expect((await store.read()).activeProfile).toBeUndefined();
 	});
 
-	it("reads the rollback anchor (lastVerifiedProfile)", async () => {
-		await writeState({ activeProfile: "review", lastVerifiedProfile: "review" });
-
-		const state = await new RuntimeStateStore(fixture.agentDir).read();
-
-		expect(state).toEqual({ activeProfile: "review", lastVerifiedProfile: "review" });
-	});
-
-	it("writes both fields, replacing the file", async () => {
+	it("writes the state, replacing the file", async () => {
 		const store = new RuntimeStateStore(fixture.agentDir);
-		await store.write({ activeProfile: "impl", lastVerifiedProfile: "review" });
+		await store.write({ activeProfile: "impl" });
 
-		expect(await store.read()).toEqual({ activeProfile: "impl", lastVerifiedProfile: "review" });
+		expect(await store.read()).toEqual({ activeProfile: "impl" });
 	});
 
 	it("creates the state directory when writing (project .pi may be fresh)", async () => {
@@ -92,13 +84,12 @@ describe("RuntimeStateStore (global scope)", () => {
 		const store = new RuntimeStateStore(fixture.agentDir);
 		await store.write({
 			activeProfile: "review",
-			lastVerifiedProfile: "review",
 			overlay: { disabledSkills: ["noisy-skill"] },
 		});
 
-		const next = await store.update({ lastVerifiedProfile: "impl", overlay: undefined });
+		const next = await store.update({ activeProfile: "impl", overlay: undefined });
 
-		expect(next).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
-		expect(await store.read()).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
+		expect(next).toEqual({ activeProfile: "impl" });
+		expect(await store.read()).toEqual({ activeProfile: "impl" });
 	});
 });

@@ -80,11 +80,11 @@ describe("launcher integration: in-session switching", () => {
 				expect(after.messageCount).toBe(before.messageCount);
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
 
-				// Selection + rollback anchor persisted to the global state file.
+				// Selection persisted to the global state file.
 				const state = JSON.parse(
 					await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"),
 				);
-				expect(state).toEqual({ activeProfile: "beta", lastVerifiedProfile: "beta" });
+				expect(state).toEqual({ activeProfile: "beta" });
 			} finally {
 				await rpc.close();
 			}

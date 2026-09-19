@@ -29,14 +29,12 @@ import { getGlobalStateDir } from "../../src/workspace.ts";
  * pi-profile extension entry.
  *
  * Loaded into the spawned pi via `-e`. Responsibilities:
- * - Append the profile's declared instructions to Pi's fully built system
- *   prompt on every turn (`before_agent_start`), so the default prompt,
- *   AGENTS.md, and other extensions keep working.
  * - After every session start (startup/reload/new/resume/fork), apply the
- *   launch plan: re-expand tool references against Pi's live registry,
- *   set the declared model/thinking, publish the MCP allowlist, persist the
- *   selection + rollback anchor after switches, and produce the one-shot
- *   change summary injected into the next turn.
+ *   launch plan: re-expand tool references against Pi's live registry
+ *   (including extension- and MCP-provided tools) and call setActiveTools
+ *   for strict allowlisting, persist the selection after switches, and
+ *   produce the one-shot change summary injected into the next turn
+ *   via `before_agent_start`.
  * - `/profile use <name>` / `/profile reload`: in-session switching without
  *   restarting the Pi process (src/switching/switch-profile.ts).
  * - `/profile customize` / `/profile reset`: runtime overlay (ticket 06).
@@ -78,11 +76,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			surface: {
 				getAllTools: () => pi.getAllTools(),
 				setActiveTools: (names) => pi.setActiveTools(names),
-				modelRegistry: ctx.modelRegistry,
-				setModel: (model) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0]),
-				setThinkingLevel: (level) =>
-					pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]),
-				events: pi.events,
 				notify: (message, level) => ctx.ui?.notify(message, level),
 			},
 		});
@@ -90,12 +83,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		const plan = await readLaunchPlanFile(runtimeDir);
-		const instructions = plan?.instructions;
 		let systemPrompt = event.systemPrompt;
-		if (instructions !== undefined && instructions.length > 0 && !systemPrompt.includes(instructions)) {
-			systemPrompt = `${systemPrompt}\n\n${instructions}`;
-		}
 		if (pendingSummary !== undefined) {
 			systemPrompt = `${systemPrompt}\n\n[${pendingSummary}]`;
 			pendingSummary = undefined;

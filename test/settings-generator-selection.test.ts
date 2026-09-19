@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, lstat, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -242,7 +242,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(bareSettings.defaultThinkingLevel).toBeUndefined();
 	});
 
-	it("writes the launch plan file for the in-pi extension (profile, instructions)", async () => {
+	it("writes the launch plan file for the in-pi extension and writes APPEND_SYSTEM.md", async () => {
 		const result = await generateRuntimeDir(selectionPlan({ instructions: "Be picky." }), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
@@ -250,7 +250,8 @@ describe("generateRuntimeDir (named profile selection)", () => {
 
 		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
 		expect(plan.profile).toBe("review");
-		expect(plan.instructions).toBe("Be picky.");
+		expect(plan.instructions).toBeUndefined();
+		expect(await readFile(path.join(result.runtimeDir, "APPEND_SYSTEM.md"), "utf8")).toBe("Be picky.");
 	});
 
 	it("filters the MCP servers into an instance mcp.json when mcps is declared", async () => {
@@ -421,12 +422,11 @@ describe("generateRuntimeDir (trusted project merge)", () => {
 });
 
 describe("generateRuntimeDir (default profile, unchanged)", () => {
-	it("does not set defaultProjectTrust and generates no flags for default", async () => {
+	it("does not set defaultProjectTrust for default", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		const settings = await generatedSettings(result.runtimeDir);
 
 		expect(settings.defaultProjectTrust).toBeUndefined();
-		expect(result.flags).toEqual([]);
 	});
 });
 
@@ -471,6 +471,25 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 		});
 
 		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+	});
+
+	it("removes a dangling trust.json symlink when switching to a named profile", async () => {
+		// The real trust.json was deleted after a default-profile run left the
+		// link behind: the link is now dangling (stat-based existence checks
+		// report it as absent). Removal must still happen — otherwise a later
+		// re-created real trust.json silently resurrects stored trust inside a
+		// named profile, defeating defaultProjectTrust: "never".
+		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const trustLink = path.join(first.runtimeDir, "trust.json");
+		await symlink(path.join(fixture.agentDir, "trust.json"), trustLink);
+		expect(existsSync(trustLink)).toBe(false); // dangling: target absent
+
+		await writeRuntimeFiles(first.runtimeDir, selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		await expect(lstat(trustLink)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("restores the trust.json link when switching back to default", async () => {

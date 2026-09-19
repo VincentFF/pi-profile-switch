@@ -7,23 +7,21 @@
  *   resolution; zero matches is fine (new matches join on the next start) and
  *   is reported in the plan's `unmatched` list so typos are visible.
  * - Literal references must exist; a missing literal fails activation.
- *   Extension references resolve through ResourceRegistry.select (ADR-0006):
- *   registry ID, installed package name/alias, loose-file stem, or an
- *   on-disk path — no pre-registration required.
- * - `alwaysOn` resources and the recursive `dependsOn` closure join every
- *   plan; cycles and missing entries fail loudly (via ResourceRegistry).
+ *   Extension references resolve through ExtensionDiscovery.select (ADR-0007):
+ *   package name/alias, loose-file stem, or an on-disk path — no
+ *   pre-registration required.
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
  * - MCP references (`mcp`) expand against the server names the launcher
  *   discovered from pi-mcp-adapter's pi-native config files: literal misses
  *   fail loudly; globs expand to zero or more matches (consistent with
  *   skills/extensions). Adapter presence is checked separately by the
- *   launcher/extension (ADR-0002).
- * - Tool globs expand against Pi's built-in tool names only: extension- and
- *   MCP-provided tool names are unknowable before spawn (extension code must
- *   not execute here), so literal tool names pass through unvalidated and
- *   glob matching for contributed tools happens when the extension applies
- *   the plan against Pi's actual registrations (tickets 05+).
+ *   launcher (ADR-0002).
+ * - Tool globs expand against Pi's built-in tool names for settings
+ *   `defaultTools`; raw tool references are also carried into the launch
+ *   plan so the in-session extension can expand them against Pi's live
+ *   registry (including extension and MCP tools) via setActiveTools for
+ *   strict allowlisting.
  */
 
 import { minimatch } from "minimatch";
@@ -75,10 +73,13 @@ export interface ActivationPlan {
 	toolReferences?: string[];
 	/** Declared model; undefined leaves Pi's current model untouched. */
 	model?: ProfileModel;
-	/** Declared instructions; appended to Pi's system prompt by the extension. */
+	/** Declared instructions; written to the generated APPEND_SYSTEM.md,
+	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
-	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
-	 *  undefined when the profile declares no `mcps` (no coordination). */
+	/** Expanded MCP server allowlist: written by SettingsGenerator into the
+	 *  filtered instance `mcp.json` (the adapter's runtime restriction) and
+	 *  surfaced in `/profile status`; undefined when the profile declares
+	 *  no `mcps` (no restriction). */
 	mcps?: string[];
 	/** Glob references (skills/extensions/MCP) that matched nothing this
 	 *  resolution — surfaced as warnings so zero-match typos are never silent.
@@ -110,7 +111,7 @@ export interface ResolveInput {
 	 * The runtime overlay (ticket 06): temporary narrowing applied on top of
 	 * the profile definition at every resolution. Overlay references must
 	 * name resources the profile actually resolves (typos fail loudly), and
-	 * `alwaysOn` extensions and their dependency chains cannot be disabled.
+	 * any resolved reference may be narrowed or disabled.
 	 */
 	overlay?: RuntimeOverlay;
 }

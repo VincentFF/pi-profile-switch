@@ -4,7 +4,7 @@
  * `defaultProjectTrust: "never"` and Pi therefore never auto-discovers them.
  *
  * Mirrors Pi's own trust decision order (`resolveProjectTrusted`), with
- * pi-profile's catalog/registry/state files added to the trust-requiring
+ * pi-profile's catalog/state files added to the trust-requiring
  * resource set (they are pi-profile's project attack surface; Pi doesn't
  * know about them):
  *   1. one-run `--approve` / `--no-approve` override (consumed by the

@@ -1,7 +1,7 @@
 /**
  * ExtensionDiscovery: implicit, read-only discovery of selectable extensions
- * (ADR-0006), so profiles can reference extensions without registering them
- * in resources.json first.
+ * (ADR-0006), so profiles can reference extensions without any
+ * registration step.
  *
  * Two implicit sources, both Pi-native and side-effect free:
  * - Configured user packages: each package's `package.json#pi.extensions`
@@ -13,9 +13,6 @@
  *
  * Discovery never executes extension code and never installs anything: a
  * package contributes entries only for declared files that exist on disk.
- * Explicit resources.json entries merge over this discovery result in
- * ResourceRegistry.load (registration remains the override, never the
- * prerequisite).
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -328,7 +325,7 @@ export async function discoverImplicitExtensions(options: {
 	const merged = new Map<string, DiscoveredLocalExtension>(globalLocal.map((entry) => [entry.id, entry]));
 	if (options.projectDir !== undefined) {
 		// Project loose files override same-ID global ones, mirroring the
-		// catalog/registry override convention.
+		// project-over-global catalog override convention.
 		for (const entry of await scanLooseDir(path.join(options.projectDir, ".pi", "extensions"), warnings)) {
 			merged.set(entry.id, entry);
 		}
