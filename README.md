@@ -4,8 +4,6 @@
 
 Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a named capability bundle you define: skills, extensions, MCP servers, tools (including tools exposed by MCP servers and extensions), model defaults, and extra system-prompt instructions. Switch bundles inside a running Pi session — no restart.
 
-Define a read-only bundle for Q&A and code exploration, a full-powered one wired to your GitHub and Linear MCP servers for implementation, a stripped-down one for a client's repo — all against the same installed resources.
-
 ## Install
 
 ```bash

@@ -4,8 +4,6 @@
 
 [Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 是你自定义的命名能力组合：skills、extensions、MCP server、tools（包括 MCP server 和 extension 提供的工具）、默认模型，以及追加到系统提示词的 instructions。在同一个运行中的 Pi 会话里切换这些组合，无需重启。
 
-问答与代码走读定义一个只读组合，实现需求定义一个接入 GitHub、Linear MCP server 的全量组合，给客户仓库再定义一个精简组合——全部基于同一套已安装的资源。
-
 ## 安装
 
 ```bash
