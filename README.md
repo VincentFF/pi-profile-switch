@@ -34,11 +34,7 @@ Profiles live in two JSON files, both optional:
 | `~/.pi-profile-switch/profiles.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the root; `~/.pi/agent/profiles.json` is read as a legacy fallback for migration. |
 | `<project>/.pi/profiles.json` | Project-level, trusted projects only. |
 
-Three ways to create or change a profile:
-
-1. Edit the JSON directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
-2. Run `/profile create` or `/profile edit` in the TUI for a guided wizard.
-3. Run `/profile customize` to narrow the active profile for the current session only; nothing is written to disk.
+Create or change a profile by editing the JSON directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
 On install, pi-profile-switch seeds the global file with a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
 

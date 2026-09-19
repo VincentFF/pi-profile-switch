@@ -34,11 +34,7 @@ profile 定义在两个 JSON 文件中，均可选：
 | `~/.pi-profile-switch/profiles.json` | 全局，对所有项目生效。`PI_PROFILE_SWITCH_DIR` 可自定义根目录；`~/.pi/agent/profiles.json` 作为遗留路径向下兼容，用于迁移。 |
 | `<项目>/.pi/profiles.json` | 项目级，仅对已信任项目生效。 |
 
-三种方式创建或修改 profile：
-
-1. 直接编辑 JSON——schema 见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
-2. 在 TUI 中执行 `/profile create` 或 `/profile edit`，跟随向导完成。
-3. 执行 `/profile customize`，仅收窄当前会话的活动 profile，不写入磁盘。
+直接编辑 JSON 即可创建或修改 profile——schema 见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
 
 安装时，pi-profile-switch 会向全局文件播种一个初始 **`ask`** profile——只读的问答与代码走读模式。它不假设你安装过任何插件，可随意修改或删除：
 
