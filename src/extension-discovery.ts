@@ -13,9 +13,6 @@
  *
  * Discovery never executes extension code and never installs anything: a
  * package contributes entries only for declared files that exist on disk.
- * Explicit resources.json entries merge over this discovery result in
- * ResourceRegistry.load (registration remains the override, never the
- * prerequisite).
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";

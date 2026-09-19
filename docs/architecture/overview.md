@@ -30,9 +30,8 @@
                                         │
 ┌───────────────────────────────────────▼───────────────────────────────────────┐
 │                              pi-profile extension（在 pi 内）                  │
-│ /profile 命令族 · CRUD 向导 · 状态 · instructions 注入 · tools/model 切换      │
-│ 切换 = 重新 resolve → 重写生成的 settings.json → ctx.reload()（pi 原生）       │
-│ MCP 协调：经 pi.events 与 pi-mcp-adapter 通信                                  │
+│ /profile 命令族 · CRUD 向导 · 状态 · tools 严格白名单                           │
+│ 切换 = 重新 resolve → 重写生成的 settings/mcp/instructions → ctx.reload()    │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,8 +47,8 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 | `~/.agents/skills`（HOME 级，无法抑制） | settings `skills` 数组写 `-绝对路径` / `!glob` 排除未选中项 | 补集排除 |
 | 项目级（`.pi/*`、项目 ancestor `.agents/skills`） | 生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（stored trust 优先于 never）；launcher 自读真实 `trust.json`，仅已信任时把选中项绝对路径写入 settings 数组（附加用户级路径不经 Pi trust 检查）；项目 `packages` 被剥除（会装进全局 npm 根） | 白名单（附加路径）+ trust 守门 |
 | packages（全局与项目） | settings `packages` 数组对象形式按类别写 allowlist glob | 白名单 |
-| tools | 生成 `--tools` flag（全量 tool 严格 allowlist，含 extension tools） | 白名单 |
-| MCP servers | extension 经 `pi.events` 向 adapter 发布运行时 allowlist | 白名单（内存） |
+| tools | settings `defaultTools`（内置工具 boot 基线）+ extension `setActiveTools`（含扩展与 MCP 工具的严格白名单） | 白名单 |
+| MCP servers | 生成 instance `<agentDir>/mcp.json` 仅保留允许的 server（未限制时软链接原 `mcp.json`） | 白名单（文件过滤） |
 
 `default` profile 不生成任何过滤：settings 为用户全局 settings 的逐字拷贝，不置 `defaultProjectTrust`，项目信任行为与原生 Pi 完全一致。
 
@@ -124,12 +123,12 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 **Rules**：
 
-- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前 runtime 文件 → 重新 resolve → 重写生成的 `settings.json` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile` + `lastVerifiedProfile` 回滚锚）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入——只有验证成功的激活才落锚。下一个 agent turn 收到一次性变更摘要。
+- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前 runtime 文件 → 重新 resolve → 重写生成的 `settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile`）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入。下一个 agent turn 收到一次性变更摘要。
 - **reload**：`/profile reload` 重新发现与 resolve 后走同一路径，共享 skill 的修改随之传播。
-- **失败回滚**：reload 前保留上一份已验证 settings 快照；reload 失败时写回快照并再次 reload。
-- **instructions**：在 `before_agent_start` 中把 profile instructions 追加到 Pi 已构建的 system prompt 末尾（初始与切换路径统一走 extension，不用 flag）。
-- **tools/model/thinking**：初始由生成 flags 生效；session_start（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展工具）重新展开并 `pi.setActiveTools`、可选 `pi.setModel` 与 thinking。
-- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。不注册多余的 `/mcp enable|disable`，保留 `pi-mcp-adapter` 原生 `/mcp` 命令体系。
+- **失败回滚**：reload 前保留上一份已验证快照；reload 失败时写回快照并再次 reload。
+- **instructions**：由 SettingsGenerator 写入 instance `<agentDir>/APPEND_SYSTEM.md`，Pi 原生追加到 system prompt；切换后 reload 自动生效。
+- **tools/model/thinking**：model 与 thinking 写入生成的 settings（`defaultProvider`/`defaultModel`/`defaultThinkingLevel`），由 Pi 原生生效；tools 写入 settings `defaultTools` 作为内置工具 boot 基线，并在 `session_start`（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展与 MCP 工具）重新展开并 `pi.setActiveTools`，确保严格白名单。
+- **MCP 隔离**：由 SettingsGenerator 写入过滤后的 instance `<agentDir>/mcp.json`，adapter 启动与 reload 时天然只连接允许的 server；未限制时直接软链接原 `mcp.json`。adapter 未安装且 profile 声明 `mcp` 时在 launcher 阶段失败退出；保留 `pi-mcp-adapter` 原生 `/mcp` 命令体系。
 - CRUD 只在 TUI mode 提供：extension 经 `ctx.mode`（tui/rpc/json/print）判定，非 TUI 下 CRUD/向导以带当前模式名的错误拒绝；切换/overlay/list/status 非 CRUD，RPC 下仍可用。RPC 结构化状态：`/profile list|status` 经 `pi.sendMessage` 发出 `customType: "pi-profile"` 的自定义消息，`details` 携带结构化对象（list → profiles 数组；status → StatusReport）。
 
 ### `McpServerRegistry`
@@ -140,7 +139,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `profiles.json` / `pi-profile-state.json`
 
-核心字段：profile 的 `skills`/`extensions`/`mcps`/`tools`（glob）、可选 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 与 `instructions`；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。系统 100% 沿用 Pi 原生扩展发现与过滤机制，无需 `resources.json`。
+核心字段：profile 的 `skills`/`extensions`/`mcps`/`tools`（glob）、可选 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 与 `instructions`；state 的 `activeProfile`/`overlay`。系统 100% 沿用 Pi 原生扩展发现与过滤机制，无需 `resources.json`。
 
 ### 生成的 `settings.json`（pi-profile 私有运行时产物，非用户配置）
 
@@ -174,10 +173,10 @@ pi-profile review -- --mode rpc
   ├─ resolver 读 trust.json，判定项目 trust
   ├─ SkillRegistry（只读 SDK discovery）+ ExtensionDiscovery + adapter server 名
   ├─ ProfileResolver 生成 ActivationPlan（glob、overlay）
-  ├─ 校验：模型认证、入口存在、MCP server 存在
-  ├─ SettingsGenerator 写出运行目录（settings.json + symlinks + env + flags）
-  ├─ spawn pi：-e <extension>、生成 flags、用户参数原样透传
-  └─ extension 在 session_start 时经 pi.events 发布 MCP allowlist
+  ├─ 校验：模型认证、入口存在、MCP adapter 与 server 存在
+  ├─ SettingsGenerator 写出运行目录（settings.json + mcp.json + APPEND_SYSTEM.md + symlinks + env）
+  ├─ spawn pi：-e <extension>、用户参数原样透传
+  └─ extension 在 session_start 时展开并应用 tools 严格白名单
 ```
 
 ### 会话内切换（extension）
@@ -186,14 +185,13 @@ pi-profile review -- --mode rpc
 /profile use implement
   │
   ├─ 校验与 resolve（同启动路径）
-  ├─ 按来源 scope 保存 runtime state
   ├─ 等待 agent idle
-  ├─ 快照当前生成的 settings.json
-  ├─ 重写 settings.json → ctx.reload()
-  │    ├─ Pi 重读 settings，重建 resources（旧 extensions shutdown，新的加载）
-  │    ├─ extension 重新执行：发布 MCP allowlist、设置 tools/model/thinking
+  ├─ 快照当前生成的 runtime 文件
+  ├─ 重写 settings.json / mcp.json / APPEND_SYSTEM.md → ctx.reload()
+  │    ├─ Pi 重读 settings / mcp / prompt，重建 resources（旧 extensions shutdown，新的加载）
+  │    ├─ extension 重新执行：展开并应用 tools 严格白名单，保存 runtime state
   │    └─ session 保留（sessionId 与历史不变）
-  ├─ 成功：记录 lastVerifiedProfile，下一 turn 发送变更摘要
+  ├─ 成功：下一 turn 发送变更摘要
   └─ 失败：写回快照并再次 reload，报告错误
 ```
 
@@ -209,7 +207,7 @@ pi-profile/
 │   └── postinstall.js            # 安装时用 starter ask profile 播种全局 catalog
 ├── extensions/
 │   └── pi-profile/
-│       └── index.ts              # /profile 命令族、TUI、instructions、MCP 协调
+│       └── index.ts              # /profile 命令族、TUI、状态、tools 严格白名单
 ├── src/
 │   ├── workspace.ts              # ~/.pi-profile-switch 工作区路径与 legacy fallback
 │   ├── json-file.ts              # 文件型 store 的共享 JSON 读取
@@ -229,10 +227,9 @@ pi-profile/
 │   ├── runtime-state-store.ts
 │   ├── profile-catalog-store.ts  # profiles.json 写入侧（自包含定义，无继承）
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
-│   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
 │   └── switching/                # 会话内切换 / overlay / 可观测面
 │       ├── switch-profile.ts     # 切换编排（快照→重写→reload→回滚）
-│       ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
+│       ├── apply-plan.ts         # session_start 应用（tools 严格白名单/状态持久化/摘要）
 │       ├── customize.ts          # runtime overlay customize/reset
 │       ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
 │       ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
