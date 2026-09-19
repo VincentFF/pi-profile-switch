@@ -54,7 +54,7 @@ profile 定义在两个 JSON 文件中，均可选：
 }
 ```
 
-一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例加载 TDD skill 和你的内部 skills、MCP adapter、两个 MCP server、显式 tool 白名单、钉住的模型，以及常驻 instructions：
+一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例加载 TDD skill、mcp-scripting skill（pi-mcp-adapter 自带）和你的内部 skills；接入两个 MCP server；tool 白名单用 glob 覆盖内建工具和这两个 server 的 MCP 工具；并钉住模型与常驻 instructions：
 
 ```json
 {
@@ -65,7 +65,8 @@ profile 定义在两个 JSON 文件中，均可选：
       "description": "Full-powered implementation profile: every available field, pinned model",
       "skills": [
         "tdd",
-        "internal-*"
+        "internal-*",
+        "mcp-scripting"
       ],
       "extensions": [
         "pi-mcp-adapter"
@@ -81,7 +82,10 @@ profile 定义在两个 JSON 文件中，均可选：
         "ls",
         "bash",
         "edit",
-        "write"
+        "write",
+        "mcp__*",
+        "github_*",
+        "linear_*"
       ],
       "defaultProvider": "anthropic",
       "defaultModel": "claude-sonnet-4-5",
@@ -95,7 +99,7 @@ profile 定义在两个 JSON 文件中，均可选：
 字段解析规则：
 
 - `skills`、`extensions`、`mcps`、`tools` 接受名称或 glob（如 `"internal-*"`），引用你已安装或已配置的资源——profile 从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。
-- `tools` 针对 Pi 的实时工具注册表展开，因此接受内建工具、extension 提供的工具，以及 MCP server 暴露的工具。
+- `tools` 针对 Pi 的实时工具注册表展开——内建工具、extension 提供的工具，以及 MCP server 暴露的工具。MCP 工具注册为 `mcp__<server>`（代理）和 `<server>_<tool>`（直接工具，adapter 默认 `toolPrefix`），因此 `mcp__*`、`github_*` 这类 glob 可以覆盖它们。
 - `mcps` 引用 pi-mcp-adapter 配置中的 server；连接细节留在 adapter 自己的配置里。
 - 未写的字段保持原生 Pi 行为。
 

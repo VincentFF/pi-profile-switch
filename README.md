@@ -54,7 +54,7 @@ On install, pi-profile-switch seeds the global file with a starter **`ask`** pro
 }
 ```
 
-One profile can use every field at once. This example `impl` profile loads the TDD skill plus your internal skills, the MCP adapter, two MCP servers, an explicit tool allowlist, a pinned model, and standing instructions:
+One profile can use every field at once. This example `impl` profile loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools plus both servers' MCP tools by glob; and pins the model and standing instructions:
 
 ```json
 {
@@ -65,7 +65,8 @@ One profile can use every field at once. This example `impl` profile loads the T
       "description": "Full-powered implementation profile: every available field, pinned model",
       "skills": [
         "tdd",
-        "internal-*"
+        "internal-*",
+        "mcp-scripting"
       ],
       "extensions": [
         "pi-mcp-adapter"
@@ -81,7 +82,10 @@ One profile can use every field at once. This example `impl` profile loads the T
         "ls",
         "bash",
         "edit",
-        "write"
+        "write",
+        "mcp__*",
+        "github_*",
+        "linear_*"
       ],
       "defaultProvider": "anthropic",
       "defaultModel": "claude-sonnet-4-5",
@@ -95,7 +99,7 @@ One profile can use every field at once. This example `impl` profile loads the T
 How fields resolve:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
-- `tools` expands against Pi's live tool registry, so it accepts built-ins, extension-provided tools, and tools exposed by MCP servers.
+- `tools` expands against Pi's live tool registry — built-ins, extension-provided tools, and tools exposed by MCP servers. MCP tools are registered as `mcp__<server>` (proxy) and `<server>_<tool>` (direct tools, the adapter's default `toolPrefix`), so globs like `mcp__*` and `github_*` cover them.
 - `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
 - Any field you omit keeps plain Pi behavior.
 

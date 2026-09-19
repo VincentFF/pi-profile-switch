@@ -6,7 +6,8 @@
       "description": "Full-powered implementation profile: every available field, pinned model",
       "skills": [
         "tdd",
-        "internal-*"
+        "internal-*",
+        "mcp-scripting"
       ],
       "extensions": [
         "pi-mcp-adapter"
@@ -22,7 +23,10 @@
         "ls",
         "bash",
         "edit",
-        "write"
+        "write",
+        "mcp__*",
+        "github_*",
+        "linear_*"
       ],
       "defaultProvider": "anthropic",
       "defaultModel": "claude-sonnet-4-5",
