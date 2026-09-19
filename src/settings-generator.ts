@@ -31,8 +31,9 @@
  *   root as a launch side effect)
  * - unmanaged kinds (prompts, themes) pass through: the user's arrays are
  *   preserved and the real agent dir's prompts/themes dirs re-included
- * - tools/model become generated flags; the launch plan file feeds the
- *   in-pi extension (instructions injection, status)
+ * - tools/model are written to generated settings (defaultTools,
+ *   defaultProvider, defaultModel, defaultThinkingLevel); the launch plan
+ *   file feeds the in-pi extension (tools strict allowlist, status)
  *
  * User configuration files are never modified.
  */

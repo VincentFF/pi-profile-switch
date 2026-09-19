@@ -9,16 +9,16 @@
  *
  * Steps:
  *   1. tools: re-expand the profile's raw tool references against Pi's LIVE
- *      tool registry (includes extension-provided tools the pre-spawn
- *      expansion cannot know) and setActiveTools. Literals that no tool
- *      provides are dropped with a warning — Pi silently ignores unknown
- *      names, so the warning is the only signal.
- *   2. model: setModel + setThinkingLevel when declared.
- *   3. mcp: probe the adapter and publish the runtime allowlist (ticket 04).
- *   4. persistence: when the plan is marked `persistSelection` and this is a
+ *      tool registry (including extension- and MCP-provided tools) and
+ *      call setActiveTools. This is the CURRENT strict-allowlist enforcement
+ *      ensuring non-builtin tools obey profile restrictions; settings
+ *      `defaultTools` provides only the boot baseline for built-ins.
+ *      Literals that no tool provides are dropped with a warning — Pi
+ *      silently ignores unknown names, so the warning is the only signal.
+ *   2. persistence: when the plan is marked `persistSelection` and this is a
  *      reload, save the selection (activeProfile = plan.profile) to the
  *      profile's scope state file. Launch-transient selections never write.
- *   5. change summary: a `switchedFrom` marker produces a one-shot summary
+ *   3. change summary: a `switchedFrom` marker produces a one-shot summary
  *      for the next agent turn and is cleared from the plan file.
  *
  * Pi's reload re-executes extension modules, so no stale handler or command

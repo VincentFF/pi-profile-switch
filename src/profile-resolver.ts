@@ -7,23 +7,21 @@
  *   resolution; zero matches is fine (new matches join on the next start) and
  *   is reported in the plan's `unmatched` list so typos are visible.
  * - Literal references must exist; a missing literal fails activation.
- *   Extension references resolve through ResourceRegistry.select (ADR-0006):
- *   registry ID, installed package name/alias, loose-file stem, or an
- *   on-disk path — no pre-registration required.
- * - `alwaysOn` resources and the recursive `dependsOn` closure join every
- *   plan; cycles and missing entries fail loudly (via ResourceRegistry).
+ *   Extension references resolve through ExtensionDiscovery.select (ADR-0007):
+ *   package name/alias, loose-file stem, or an on-disk path — no
+ *   pre-registration required.
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
  * - MCP references (`mcp`) expand against the server names the launcher
  *   discovered from pi-mcp-adapter's pi-native config files: literal misses
  *   fail loudly; globs expand to zero or more matches (consistent with
  *   skills/extensions). Adapter presence is checked separately by the
- *   launcher/extension (ADR-0002).
- * - Tool globs expand against Pi's built-in tool names only: extension- and
- *   MCP-provided tool names are unknowable before spawn (extension code must
- *   not execute here), so literal tool names pass through unvalidated and
- *   glob matching for contributed tools happens when the extension applies
- *   the plan against Pi's actual registrations (tickets 05+).
+ *   launcher (ADR-0002).
+ * - Tool globs expand against Pi's built-in tool names for settings
+ *   `defaultTools`; raw tool references are also carried into the launch
+ *   plan so the in-session extension can expand them against Pi's live
+ *   registry (including extension and MCP tools) via setActiveTools for
+ *   strict allowlisting.
  */
 
 import { minimatch } from "minimatch";
