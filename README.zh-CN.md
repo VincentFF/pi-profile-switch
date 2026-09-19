@@ -4,7 +4,7 @@
 
 [Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 引用一组已存在的 skills、extensions、MCP server 和 tools，并在同一 Pi 进程内切换，无需重启。
 
-代码评审用精简的只读 profile，实现需求用全量 profile，临时提问用最小 profile——全部基于同一套已安装的资源。
+问答与代码走读用只读 profile，实现需求用全量 profile——全部基于同一套已安装的资源。
 
 ## 安装
 
@@ -20,33 +20,32 @@ npm install -g pi-profile-switch
 # 使用内建 default profile 启动（全量资源，等同原生 Pi）
 pi-profile
 
-# 使用指定 profile 启动
-pi-profile review
+# 使用安装时播种的只读 ask profile 启动
+pi-profile ask
 
 # -- 后面的参数原样传给 pi
-pi-profile review -- --model openai/gpt-5.4
+pi-profile ask -- --model openai/gpt-5.4
 ```
 
-在 `~/.pi-profile-switch/profiles.json`（全局，支持 `PI_PROFILE_SWITCH_DIR` 环境变量自定义，向下兼容 `~/.pi/agent/profiles.json`）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）中定义 profile：
+安装时，pi-profile-switch 会向 `~/.pi-profile-switch/profiles.json`（全局，支持 `PI_PROFILE_SWITCH_DIR` 环境变量自定义，向下兼容 `~/.pi/agent/profiles.json`）写入一个初始 **`ask`** profile——只读的问答与代码走读模式。它不假设你安装过任何插件，可随意修改或删除：
 
 ```json
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "skills": ["code-review"],
-      "mcp": ["github"],
-      "tools": ["read", "grep", "find", "bash"],
-      "instructions": "Review only; do not modify files."
+    "ask": {
+      "label": "Ask & Discuss",
+      "description": "Read-only Q&A and code exploration; no file modifications or command execution",
+      "skills": [],
+      "extensions": [],
+      "tools": ["read", "grep", "find", "ls"],
+      "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
     }
   }
 }
 ```
 
-Profile 只**引用**资源，从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。完整示例见 [`examples/profiles.json`](examples/profiles.json)。
-
-安装时，pi-profile-switch 会向 `~/.pi-profile-switch/profiles.json` 写入一个初始 **`ask`** profile——只读的问答与代码走读模式（仅 `read`/`grep`/`find`/`ls`，无 skill、extension 和 MCP）。它不假设你安装过任何插件，可随意修改或删除。
+项目级 profile 定义在 `<项目>/.pi/profiles.json`（仅限已信任项目）。Profile 只**引用**资源，从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。完整配置案例见 [`examples/`](examples/)：`profiles.json` 即上面的初始 profile，`example.json` 演示全部可用字段（skills、extensions、MCP server、tools、默认模型、instructions）。
 
 ## 命令
 

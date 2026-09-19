@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "impl": {
+      "label": "Implementation",
+      "description": "Full-powered implementation profile: every available field, pinned model",
+      "skills": [
+        "tdd",
+        "internal-*"
+      ],
+      "extensions": [
+        "pi-mcp-adapter"
+      ],
+      "mcps": [
+        "github",
+        "linear"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash",
+        "edit",
+        "write"
+      ],
+      "defaultProvider": "anthropic",
+      "defaultModel": "claude-sonnet-4-5",
+      "defaultThinkingLevel": "high",
+      "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
+    }
+  }
+}

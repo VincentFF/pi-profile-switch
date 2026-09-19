@@ -35,11 +35,11 @@ describe("npm pack contents", () => {
 		for (const required of [
 			"bin/pi-profile.ts",
 			"bin/postinstall.js",
-			"defaults/profiles.json",
 			"extensions/pi-profile/index.ts",
 			"src/profile-resolver.ts",
 			"schemas/profiles.schema.json",
 			"examples/profiles.json",
+			"examples/example.json",
 			"README.md",
 			"package.json",
 		]) {

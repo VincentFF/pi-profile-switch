@@ -1,42 +1,18 @@
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "description": "Read-heavy review workflow",
-      "skills": [
-        "code-review",
-        "diagnosing-bugs"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
-      ],
-      "mcps": [
-        "github"
-      ],
+    "ask": {
+      "label": "Ask & Discuss",
+      "description": "Read-only Q&A and code exploration; no file modifications or command execution",
+      "skills": [],
+      "extensions": [],
       "tools": [
         "read",
         "grep",
         "find",
-        "bash"
+        "ls"
       ],
-      "instructions": "Review only; do not modify files."
-    },
-    "impl": {
-      "label": "Implementation",
-      "skills": [
-        "tdd"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
-      ],
-      "mcps": [
-        "github",
-        "linear"
-      ],
-      "defaultProvider": "deepseek",
-      "defaultModel": "deepseek-v4-pro",
-      "defaultThinkingLevel": "high"
+      "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
     }
   }
 }
