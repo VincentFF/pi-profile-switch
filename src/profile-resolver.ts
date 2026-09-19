@@ -109,7 +109,7 @@ export interface ResolveInput {
 	 * The runtime overlay (ticket 06): temporary narrowing applied on top of
 	 * the profile definition at every resolution. Overlay references must
 	 * name resources the profile actually resolves (typos fail loudly), and
-	 * `alwaysOn` extensions and their dependency chains cannot be disabled.
+	 * any resolved reference may be narrowed or disabled.
 	 */
 	overlay?: RuntimeOverlay;
 }

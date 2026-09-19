@@ -325,7 +325,7 @@ export async function discoverImplicitExtensions(options: {
 	const merged = new Map<string, DiscoveredLocalExtension>(globalLocal.map((entry) => [entry.id, entry]));
 	if (options.projectDir !== undefined) {
 		// Project loose files override same-ID global ones, mirroring the
-		// catalog/registry override convention.
+		// project-over-global catalog override convention.
 		for (const entry of await scanLooseDir(path.join(options.projectDir, ".pi", "extensions"), warnings)) {
 			merged.set(entry.id, entry);
 		}

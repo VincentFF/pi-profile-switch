@@ -9,7 +9,7 @@
  *      running turn is never torn down
  *   2. snapshot the runtime dir's settings.json + pi-profile.json in memory
  *   3. re-resolve through the full launcher path (trust check, catalogs,
- *      discovery, registry, model/MCP validation) against the REAL agent
+ *      discovery, model/MCP validation) against the REAL agent
  *      dir — any failure here leaves the runtime untouched
  *   4. rewrite the runtime files in place (the running process's
  *      PI_CODING_AGENT_DIR cannot move) and mark the plan

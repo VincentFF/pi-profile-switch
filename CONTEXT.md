@@ -25,7 +25,7 @@ _Avoid_: session profile, temporary profile
 The persisted active profile selection and overlay, written to the state file of the profile's source scope.
 
 **ActivationPlan**:
-The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay. It is materialized as generated settings plus spawn flags (launch) or a settings rewrite plus native reload (in-session switch).
+The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay. It is materialized as generated settings (launch) or a settings rewrite plus native reload (in-session switch).
 
 **Generated settings**:
 The pi-profile-switch-owned runtime directory under `~/.pi-profile-switch/instances/<profile>/agent`, holding a generated `settings.json` (the profile's resource selection encoded for Pi's native settings mechanism) and full-fidelity symlinks into the user's real `~/.pi/agent` (`auth.json`, `models.json`, `npm/`, sessions, etc.), pointed at via `PI_CODING_AGENT_DIR`. `trust.json` is linked only for the `default` profile — for named profiles the launcher is the sole project-trust gatekeeper. Never a user configuration file; regenerated on every launch, switch, or reload.

@@ -9,7 +9,7 @@
  *
  * Ordering invariants:
  * - customize: re-resolve with the candidate overlay FIRST (validation:
- *   unknown references and alwaysOn protection fail here, before anything
+ *   unknown references fail here, before anything
  *   is written), then switch+reload, then persist the overlay to state. A
  *   failed switch leaves the stored overlay untouched, consistent with the
  *   rolled-back runtime.
@@ -50,7 +50,7 @@ export async function customizeOverlay(
 	const candidate = mutate(state.overlay ?? {});
 
 	// switchProfile re-resolves with the candidate overlay; resolution-time
-	// validation (unknown references, alwaysOn protection) fails before any
+	// validation (unknown references) fails before any
 	// write. persistSelection is preserved by the reload-current path.
 	const result = await switchProfile(profile, deps, { reloadCurrent: true, overlay: candidate });
 
