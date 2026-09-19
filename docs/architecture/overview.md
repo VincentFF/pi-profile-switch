@@ -122,7 +122,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 **Rules**：
 
-- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前生成的 `settings.json` 与 `pi-profile.json` → 重新 resolve → 重写生成的 `settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile`）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入。下一个 agent turn 收到一次性变更摘要。
+- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照全部受管运行时文件（生成的 `settings.json`、`pi-profile.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 `trust.json` 链接状态，各自记为 absent/symlink/file） → 重新 resolve → 重写生成的 `settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile`）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入。下一个 agent turn 收到一次性变更摘要。
 - **reload**：`/profile reload` 重新发现与 resolve 后走同一路径，共享 skill 的修改随之传播。
 - **失败回滚**：reload 前保留上一份已验证快照；reload 失败时写回快照并再次 reload。
 - **instructions**：由 SettingsGenerator 写入 instance `<agentDir>/APPEND_SYSTEM.md`，Pi 原生追加到 system prompt；切换后 reload 自动生效。

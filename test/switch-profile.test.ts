@@ -1,11 +1,11 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { generateRuntimeDir } from "../src/settings-generator.ts";
+import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
 import { defaultPlan } from "../src/profile-resolver.ts";
 import { switchProfile, SwitchError } from "../src/switching/switch-profile.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
 let savedHome: string | undefined;
@@ -132,6 +132,86 @@ describe("switchProfile", () => {
 		expect(reloads).toBe(2); // the restore reload
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
 		expect((await readPlanFile()).profile).toBe("default");
+	});
+
+	it("restores mcp.json, APPEND_SYSTEM.md, and trust.json to the pre-switch state when the reload fails", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" }, linear: { command: "linear" } } }),
+		);
+		await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ projects: {} }));
+		await writeCatalog({
+			impl: { skills: ["alpha-skill"], extensions: ["pi-mcp-adapter"], mcps: ["github"], instructions: "Be terse." },
+		});
+		// Re-apply the default plan so the runtime dir reflects a real default
+		// launch: mcp.json + trust.json linked, no APPEND_SYSTEM.md.
+		await writeRuntimeFiles(runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
+		const agentMcp = path.join(fixture.agentDir, "mcp.json");
+		const agentTrust = path.join(fixture.agentDir, "trust.json");
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(agentMcp);
+		expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(agentTrust);
+		let reloads = 0;
+		const reload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("boom");
+		};
+
+		await expect(switchProfile("impl", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
+
+		expect(reloads).toBe(2);
+		// The switch rewrote all three (filtered mcp.json, APPEND_SYSTEM.md
+		// created, trust.json removed); the rollback must leave them in the
+		// pre-switch state, not the target profile's.
+		const mcpStat = await lstat(path.join(runtimeDir, "mcp.json"));
+		expect(mcpStat.isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(agentMcp);
+		const trustStat = await lstat(path.join(runtimeDir, "trust.json"));
+		expect(trustStat.isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(agentTrust);
+		await expect(lstat(path.join(runtimeDir, "APPEND_SYSTEM.md"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("restores a snapshotted regular file exactly, even after the switch replaced it with a symlink or deleted it", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" }, linear: { command: "linear" } } }),
+		);
+		await writeCatalog({
+			impl: { extensions: ["pi-mcp-adapter"], mcps: ["github"], instructions: "Be terse." },
+		});
+		// Clean switch to the named profile: mcp.json is a filtered regular
+		// file, APPEND_SYSTEM.md carries the profile instructions.
+		await switchProfile("impl", deps());
+		const filteredMcp = await readFile(path.join(runtimeDir, "mcp.json"), "utf8");
+		const realMcpBefore = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+		let reloads = 0;
+
+		await expect(
+			switchProfile(
+				"default",
+				deps({
+					reload: async () => {
+						reloads += 1;
+						if (reloads === 1) throw new Error("boom");
+					},
+				}),
+			),
+		).rejects.toThrow(/restored the previous settings/);
+
+		// The default profile's generator swapped mcp.json for a symlink to the
+		// real config and deleted APPEND_SYSTEM.md; rollback must replace the
+		// link — never writeFile through it, which would clobber the user's real
+		// mcp.json — and recreate the deleted file with the exact content.
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(realMcpBefore);
+		const mcpStat = await lstat(path.join(runtimeDir, "mcp.json"));
+		expect(mcpStat.isSymbolicLink()).toBe(false);
+		expect(mcpStat.isFile()).toBe(true);
+		expect(await readFile(path.join(runtimeDir, "mcp.json"), "utf8")).toBe(filteredMcp);
+		expect(await readFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), "utf8")).toBe("Be terse.");
 	});
 
 	it("reload re-resolves the current profile without a switch marker and keeps its persistence", async () => {

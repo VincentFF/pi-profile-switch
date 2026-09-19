@@ -7,7 +7,9 @@
  * Flow (`/profile use <name>`):
  *   1. wait for the agent to be idle (Pi's native `ctx.waitForIdle()`) — a
  *      running turn is never torn down
- *   2. snapshot the runtime dir's settings.json + pi-profile.json in memory
+ *   2. snapshot ALL pi-profile-managed runtime files in memory
+ *      (settings.json, pi-profile.json, mcp.json, APPEND_SYSTEM.md, and the
+ *      trust.json link state — each as absent | symlink | file)
  *   3. re-resolve through the full launcher path (trust check, catalogs,
  *      discovery, model/MCP validation) against the REAL agent
  *      dir — any failure here leaves the runtime untouched
@@ -29,7 +31,7 @@
  * (transient launch selections stay transient).
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { lstat, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveInitialProfile } from "../launcher/initial-profile.ts";
@@ -70,36 +72,67 @@ export interface SwitchResult {
 	warnings: string[];
 }
 
+/** The pre-switch state of one pi-profile-managed runtime file. Absence is
+ *  a real state (the switch may create the file); a symlink keeps its raw
+ *  target so restore can rebuild it exactly. */
+type FileSnapshot = { kind: "absent" } | { kind: "symlink"; target: string } | { kind: "file"; content: string };
+
 interface RuntimeSnapshot {
-	settings?: string;
-	plan?: string;
+	settings: FileSnapshot;
+	plan: FileSnapshot;
+	mcp: FileSnapshot;
+	appendSystem: FileSnapshot;
+	trust: FileSnapshot;
 }
 
-async function readIfExists(filePath: string): Promise<string | undefined> {
-	try {
-		return await readFile(filePath, "utf8");
-	} catch (error) {
-		// Absence is expected (first launch); anything else (permissions,
-		// unreadable dir) must not silently disable rollback protection.
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+/** Snapshots one managed runtime file. lstat (never stat) detects symlinks
+ *  without following them; ENOENT is the only tolerated error — absence is
+ *  expected (first launch), while anything else (permissions, unreadable
+ *  dir) must not silently disable rollback protection. */
+async function snapshotFile(filePath: string): Promise<FileSnapshot> {
+	const info = await lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+		// ENOENT is the only tolerated error — absence is expected (first
+		// launch); anything else (permissions, unreadable dir) must not
+		// silently disable rollback protection.
+		if (error.code === "ENOENT") return null;
 		throw error;
+	});
+	if (info === null) return { kind: "absent" };
+	if (info.isSymbolicLink()) {
+		return { kind: "symlink", target: await readlink(filePath) };
 	}
+	return { kind: "file", content: await readFile(filePath, "utf8") };
 }
 
 async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot> {
 	return {
-		settings: await readIfExists(path.join(runtimeDir, "settings.json")),
-		plan: await readIfExists(path.join(runtimeDir, "pi-profile.json")),
+		settings: await snapshotFile(path.join(runtimeDir, "settings.json")),
+		plan: await snapshotFile(path.join(runtimeDir, "pi-profile.json")),
+		mcp: await snapshotFile(path.join(runtimeDir, "mcp.json")),
+		appendSystem: await snapshotFile(path.join(runtimeDir, "APPEND_SYSTEM.md")),
+		trust: await snapshotFile(path.join(runtimeDir, "trust.json")),
 	};
 }
 
+async function restoreFile(filePath: string, snapshot: FileSnapshot): Promise<void> {
+	// rm first, always: restoring a snapshotted FILE must never writeFile
+	// through a symlink the failed switch left on disk — that would write
+	// THROUGH to the link target (the user's real ~/.pi/agent/mcp.json)
+	// instead of replacing the link.
+	await rm(filePath, { force: true });
+	if (snapshot.kind === "symlink") {
+		await symlink(snapshot.target, filePath);
+	} else if (snapshot.kind === "file") {
+		await writeFile(filePath, snapshot.content);
+	}
+}
+
 async function restoreRuntimeFiles(runtimeDir: string, snapshot: RuntimeSnapshot): Promise<void> {
-	if (snapshot.settings !== undefined) {
-		await writeFile(path.join(runtimeDir, "settings.json"), snapshot.settings);
-	}
-	if (snapshot.plan !== undefined) {
-		await writeFile(path.join(runtimeDir, "pi-profile.json"), snapshot.plan);
-	}
+	await restoreFile(path.join(runtimeDir, "settings.json"), snapshot.settings);
+	await restoreFile(path.join(runtimeDir, "pi-profile.json"), snapshot.plan);
+	await restoreFile(path.join(runtimeDir, "mcp.json"), snapshot.mcp);
+	await restoreFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), snapshot.appendSystem);
+	await restoreFile(path.join(runtimeDir, "trust.json"), snapshot.trust);
 }
 
 /** Waits are delegated to Pi's native `ctx.waitForIdle()` (see SwitchDeps);
