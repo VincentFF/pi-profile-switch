@@ -54,7 +54,7 @@ profile 定义在两个 JSON 文件中，均可选：
 }
 ```
 
-一个 profile 可以同时使用全部字段。下面这个 `impl` profile 加载 TDD skill 和你的内部 skills、MCP adapter、两个 MCP server、显式 tool 白名单、钉住的模型，以及常驻 instructions：
+一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例加载 TDD skill 和你的内部 skills、MCP adapter、两个 MCP server、显式 tool 白名单、钉住的模型，以及常驻 instructions：
 
 ```json
 {
