@@ -1,7 +1,7 @@
 {
   "name": "pi-profile-switch",
   "version": "0.4.6",
-  "description": "Named profiles for Pi: reference skills, extensions, MCP servers, and tools per workflow, switched without restarting.",
+  "description": "Named profiles for Pi: reference skills, extensions, MCP servers, and tools per workflow, switched without restarting. Install: npm install -g pi-profile-switch (not pi install).",
   "type": "module",
   "keywords": [
     "pi-package",
