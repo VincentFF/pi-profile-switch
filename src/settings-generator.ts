@@ -375,7 +375,7 @@ export async function writeRuntimeFiles(
 	// reload (the tools strict allowlist), in-session switching, status
 	// reporting, and post-reload state persistence.
 	// agentDir is the REAL agent dir — the extension needs it for trust
-	// checks, state files, and catalog/registry reads (its own
+	// checks, state files, and catalog reads (its own
 	// PI_CODING_AGENT_DIR points at this runtime dir).
 	await writeFile(
 		path.join(runtimeDir, "pi-profile.json"),

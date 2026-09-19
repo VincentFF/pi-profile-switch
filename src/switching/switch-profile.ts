@@ -141,8 +141,8 @@ export async function switchProfile(
 	// Snapshot before resolving so the rollback target always exists.
 	const snapshot = await snapshotRuntimeFiles(deps.runtimeDir);
 
-	// Full launcher resolution: trust gate, catalogs, discovery, dependency
-	// closure, model + MCP validation. Failures here leave the runtime
+	// Full launcher resolution: trust gate, catalogs, discovery, model +
+	// MCP validation. Failures here leave the runtime
 	// untouched — nothing was written yet.
 	const resolved = await resolveInitialProfile(
 		target,

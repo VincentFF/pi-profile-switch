@@ -20,7 +20,7 @@
         │ ProfileResolver（含 trust 守门） │ SettingsGenerator            │
         └───────────────────────────────┼───────────────────────────────┘
                                         │ 生成 per-launch agentDir
-                                        │ settings.json + symlinks + env + flags
+                                        │ settings.json + symlinks + env
                                         ▼
                          ┌─────────────────────────────┐
                          │   spawn 真实 pi 子进程        │
@@ -102,7 +102,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `SettingsGenerator`
 
-**Interface**：输入 ActivationPlan、全量发现结果与用户全局 settings，输出一个 per-launch 运行目录：生成的 `settings.json`、symlink 组、环境变量与生成 flags。
+**Interface**：输入 ActivationPlan、全量发现结果与用户全局 settings，输出一个 per-launch 运行目录：生成的 `settings.json`、symlink 组与环境变量。
 
 **Implementation**：
 
@@ -222,7 +222,7 @@ pi-profile/
 │   ├── extension-discovery.ts    # 只读扩展发现与 select()
 │   ├── skill-registry.ts         # 只读 SDK discovery
 │   ├── profile-resolver.ts
-│   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags
+│   ├── settings-generator.ts     # plan → settings.json + symlinks + env
 │   ├── runtime-state-store.ts
 │   ├── profile-catalog-store.ts  # profiles.json 写入侧（自包含定义，无继承）
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
