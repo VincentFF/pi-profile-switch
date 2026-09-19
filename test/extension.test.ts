@@ -136,23 +136,6 @@ async function runBeforeAgentStart(pi: FakePi, systemPrompt: string): Promise<st
 }
 
 describe("pi-profile extension", () => {
-	it("appends declared instructions to the built system prompt on every turn", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", instructions: "Be picky." });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		expect(await runBeforeAgentStart(pi, "BASE PROMPT")).toBe("BASE PROMPT\n\nBe picky.");
-		expect(await runBeforeAgentStart(pi, "BASE PROMPT")).toBe("BASE PROMPT\n\nBe picky.");
-	});
-
-	it("does not duplicate declared instructions if already present in the system prompt (from APPEND_SYSTEM.md)", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", instructions: "Be picky." });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		expect(await runBeforeAgentStart(pi, "BASE PROMPT\n\nBe picky.")).toBe("BASE PROMPT\n\nBe picky.");
-	});
-
 	it("sets the footer status badge on session start and profile switch", async () => {
 		await writeLaunchPlan({ profile: "review", source: "global" });
 		const pi = fakePi();

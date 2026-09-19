@@ -242,7 +242,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(bareSettings.defaultThinkingLevel).toBeUndefined();
 	});
 
-	it("writes the launch plan file for the in-pi extension (profile, instructions)", async () => {
+	it("writes the launch plan file for the in-pi extension and writes APPEND_SYSTEM.md", async () => {
 		const result = await generateRuntimeDir(selectionPlan({ instructions: "Be picky." }), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
@@ -250,7 +250,8 @@ describe("generateRuntimeDir (named profile selection)", () => {
 
 		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
 		expect(plan.profile).toBe("review");
-		expect(plan.instructions).toBe("Be picky.");
+		expect(plan.instructions).toBeUndefined();
+		expect(await readFile(path.join(result.runtimeDir, "APPEND_SYSTEM.md"), "utf8")).toBe("Be picky.");
 	});
 
 	it("filters the MCP servers into an instance mcp.json when mcps is declared", async () => {

@@ -384,7 +384,6 @@ export async function writeRuntimeFiles(
 				profile: plan.profile,
 				source: plan.source,
 				agentDir: options.agentDir,
-				...(plan.instructions !== undefined ? { instructions: plan.instructions } : {}),
 				...(plan.model !== undefined ? { model: plan.model } : {}),
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),

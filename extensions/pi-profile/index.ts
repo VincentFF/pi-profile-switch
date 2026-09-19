@@ -90,12 +90,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		const plan = await readLaunchPlanFile(runtimeDir);
-		const instructions = plan?.instructions;
 		let systemPrompt = event.systemPrompt;
-		if (instructions !== undefined && instructions.length > 0 && !systemPrompt.includes(instructions)) {
-			systemPrompt = `${systemPrompt}\n\n${instructions}`;
-		}
 		if (pendingSummary !== undefined) {
 			systemPrompt = `${systemPrompt}\n\n[${pendingSummary}]`;
 			pendingSummary = undefined;

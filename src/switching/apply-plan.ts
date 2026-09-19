@@ -45,7 +45,6 @@ export interface LaunchPlanFile {
 	profile: string;
 	source: string;
 	agentDir?: string;
-	instructions?: string;
 	model?: { provider: string; id: string; thinkingLevel?: string };
 	tools?: string[];
 	toolReferences?: string[];
