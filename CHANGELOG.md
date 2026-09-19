@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.6](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.5...v0.4.6) (2026-09-19)
+
+
+### Bug Fixes
+
+* fold defaults into examples/ and refresh outdated READMEs ([#31](https://github.com/VincentFF/pi-profile-switch/issues/31)) ([46edf77](https://github.com/VincentFF/pi-profile-switch/commit/46edf77ce401fe95d94b3f89508b428478ace4f1))
+
 ## [0.4.5](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.4...v0.4.5) (2026-09-19)
 
 
