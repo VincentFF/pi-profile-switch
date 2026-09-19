@@ -31,7 +31,7 @@
  * (transient launch selections stay transient).
  */
 
-import { lstat, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveInitialProfile } from "../launcher/initial-profile.ts";
@@ -74,8 +74,12 @@ export interface SwitchResult {
 
 /** The pre-switch state of one pi-profile-managed runtime file. Absence is
  *  a real state (the switch may create the file); a symlink keeps its raw
- *  target so restore can rebuild it exactly. */
-type FileSnapshot = { kind: "absent" } | { kind: "symlink"; target: string } | { kind: "file"; content: string };
+ *  target so restore can rebuild it exactly; a file keeps content AND
+ *  permission bits so restore doesn't widen a user-tightened mode. */
+type FileSnapshot =
+	| { kind: "absent" }
+	| { kind: "symlink"; target: string }
+	| { kind: "file"; content: string; mode: number };
 
 interface RuntimeSnapshot {
 	settings: FileSnapshot;
@@ -101,7 +105,7 @@ async function snapshotFile(filePath: string): Promise<FileSnapshot> {
 	if (info.isSymbolicLink()) {
 		return { kind: "symlink", target: await readlink(filePath) };
 	}
-	return { kind: "file", content: await readFile(filePath, "utf8") };
+	return { kind: "file", content: await readFile(filePath, "utf8"), mode: info.mode & 0o777 };
 }
 
 async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot> {
@@ -124,6 +128,7 @@ async function restoreFile(filePath: string, snapshot: FileSnapshot): Promise<vo
 		await symlink(snapshot.target, filePath);
 	} else if (snapshot.kind === "file") {
 		await writeFile(filePath, snapshot.content);
+		await chmod(filePath, snapshot.mode);
 	}
 }
 

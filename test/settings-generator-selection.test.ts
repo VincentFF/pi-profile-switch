@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, lstat, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -471,6 +471,25 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 		});
 
 		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+	});
+
+	it("removes a dangling trust.json symlink when switching to a named profile", async () => {
+		// The real trust.json was deleted after a default-profile run left the
+		// link behind: the link is now dangling (stat-based existence checks
+		// report it as absent). Removal must still happen — otherwise a later
+		// re-created real trust.json silently resurrects stored trust inside a
+		// named profile, defeating defaultProjectTrust: "never".
+		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const trustLink = path.join(first.runtimeDir, "trust.json");
+		await symlink(path.join(fixture.agentDir, "trust.json"), trustLink);
+		expect(existsSync(trustLink)).toBe(false); // dangling: target absent
+
+		await writeRuntimeFiles(first.runtimeDir, selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		await expect(lstat(trustLink)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("restores the trust.json link when switching back to default", async () => {

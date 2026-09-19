@@ -116,6 +116,18 @@ async function exists(filePath: string): Promise<boolean> {
 	}
 }
 
+/** Symlink-aware existence check (lstat): a dangling symlink still counts as
+ *  existing — a stat-based check misses it, which would skip its removal or
+ *  collide on symlink creation. Use this for paths pi-profile links itself. */
+async function existsLexical(filePath: string): Promise<boolean> {
+	try {
+		await lstat(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function toPosix(filePath: string): string {
 	return filePath.split(path.sep).join("/");
 }
@@ -406,10 +418,14 @@ export async function writeRuntimeFiles(
 	const trustLink = path.join(runtimeDir, "trust.json");
 	const trustTarget = path.join(options.agentDir, "trust.json");
 	if (plan.filter === "none") {
-		if ((await exists(trustTarget)) && !(await exists(trustLink))) {
+		if ((await exists(trustTarget)) && !(await existsLexical(trustLink))) {
 			await symlink(trustTarget, trustLink);
 		}
-	} else if (await exists(trustLink)) {
+	} else if (await existsLexical(trustLink)) {
+		// Lexical check: a dangling trust.json symlink (real trust.json deleted
+		// after the link was made) must still be removed — otherwise a later
+		// re-created real trust.json silently resurrects stored trust inside a
+		// named profile, defeating defaultProjectTrust: "never".
 		await rm(trustLink);
 	}
 

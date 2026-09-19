@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -217,6 +217,26 @@ describe("switchProfile", () => {
 		expect(await readFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), "utf8")).toBe("Be terse.");
 		expect(trustLinkCreated).toBe(true);
 		await expect(lstat(path.join(runtimeDir, "trust.json"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("restores the pre-switch file mode, not just the content", async () => {
+		await writeCatalog({ impl: { instructions: "Be terse." } });
+		await switchProfile("impl", deps());
+		const appendPath = path.join(runtimeDir, "APPEND_SYSTEM.md");
+		await chmod(appendPath, 0o600);
+
+		let reloads = 0;
+		const reload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("boom");
+		};
+		await expect(switchProfile("default", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
+
+		// The failed switch deleted APPEND_SYSTEM.md; rollback recreates it
+		// with the snapshot's content AND permission bits (writeFile alone
+		// would recreate it with the umask default, widening 0600 to 0644).
+		expect(await readFile(appendPath, "utf8")).toBe("Be terse.");
+		expect((await lstat(appendPath)).mode & 0o777).toBe(0o600);
 	});
 
 	it("reload re-resolves the current profile without a switch marker and keeps its persistence", async () => {
