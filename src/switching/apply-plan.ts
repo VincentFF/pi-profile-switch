@@ -16,8 +16,7 @@
  *   2. model: setModel + setThinkingLevel when declared.
  *   3. mcp: probe the adapter and publish the runtime allowlist (ticket 04).
  *   4. persistence: when the plan is marked `persistSelection` and this is a
- *      reload, save the selection and the rollback anchor
- *      (activeProfile = lastVerifiedProfile = plan.profile) to the
+ *      reload, save the selection (activeProfile = plan.profile) to the
  *      profile's scope state file. Launch-transient selections never write.
  *   5. change summary: a `switchedFrom` marker produces a one-shot summary
  *      for the next agent turn and is cleared from the plan file.
@@ -114,7 +113,6 @@ export async function applyLaunchPlan(input: {
 		// A switch (clearOverlay) explicitly drops it.
 		await new RuntimeStateStore(stateDir).update({
 			activeProfile: plan.profile,
-			lastVerifiedProfile: plan.profile,
 			...(plan.clearOverlay === true ? { overlay: undefined } : {}),
 		});
 	}

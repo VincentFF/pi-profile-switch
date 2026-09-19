@@ -81,7 +81,7 @@ describe("applyLaunchPlan", () => {
 		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
 
 		const state = JSON.parse(await readFile(path.join(agentDir, "pi-profile-state.json"), "utf8"));
-		expect(state).toEqual({ activeProfile: "impl", lastVerifiedProfile: "impl" });
+		expect(state).toEqual({ activeProfile: "impl" });
 	});
 
 	it("persists project-sourced profiles to the project state file", async () => {

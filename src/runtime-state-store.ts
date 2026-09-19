@@ -6,17 +6,13 @@
  * for global state, the project's `.pi` dir for project state (project
  * state is only touched when the trust check passed). The launcher only
  * reads — the initial CLI selection is transient by design; `/profile use`
- * (ticket 05) writes both the selection and the rollback anchor.
+ * (ticket 05) writes the selection.
  *
- * `activeProfile` is the saved selection restored on launch;
- * `lastVerifiedProfile` is the rollback anchor: the last profile whose
- * activation completed successfully. They differ only between a failed
- * activation and its rollback.
+ * `activeProfile` is the saved selection restored on launch.
  *
  * A missing or malformed state file is not an error on read — it simply
  * means "fall back to the default profile". Unexpected I/O errors
- * propagate. Writes replace the file wholesale (both fields are always
- * written together by the switch path).
+ * propagate. Writes replace the file wholesale.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -26,7 +22,6 @@ import { isRecord, readJsonFile } from "./json-file.ts";
 
 export interface RuntimeState {
 	activeProfile?: string;
-	lastVerifiedProfile?: string;
 	/** The runtime overlay: temporary narrowing of the active profile
 	 *  (ticket 06). Never written to catalogs, never applied at launch —
 	 *  only in-session switches/reloads read it. */
@@ -69,9 +64,6 @@ export class RuntimeStateStore {
 		if (typeof result.value.activeProfile === "string") {
 			state.activeProfile = result.value.activeProfile;
 		}
-		if (typeof result.value.lastVerifiedProfile === "string") {
-			state.lastVerifiedProfile = result.value.lastVerifiedProfile;
-		}
 		const overlay = parseOverlay(result.value.overlay);
 		if (overlay !== undefined) {
 			state.overlay = overlay;
@@ -93,10 +85,6 @@ export class RuntimeStateStore {
 		if ("activeProfile" in patch) {
 			if (patch.activeProfile === undefined) delete next.activeProfile;
 			else next.activeProfile = patch.activeProfile;
-		}
-		if ("lastVerifiedProfile" in patch) {
-			if (patch.lastVerifiedProfile === undefined) delete next.lastVerifiedProfile;
-			else next.lastVerifiedProfile = patch.lastVerifiedProfile;
 		}
 		if ("overlay" in patch) {
 			if (patch.overlay === undefined) delete next.overlay;
