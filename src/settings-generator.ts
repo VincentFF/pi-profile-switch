@@ -5,7 +5,7 @@
  * Two entry points:
  * - `generateRuntimeDir` (launcher): mkdtemp a fresh runtime dir, write the
  *   files, link state (auth/models/mcp/npm/git/bin; trust.json only for
- *   default), derive env + flags.
+ *   default), derive env.
  * - `writeRuntimeFiles` (in-session switch, ticket 05): rewrite
  *   settings.json + pi-profile.json inside the EXISTING runtime dir (the
  *   running process's PI_CODING_AGENT_DIR cannot move), and transition the
@@ -290,8 +290,8 @@ export interface RuntimeFileOptions {
 	projectSettings?: Record<string, unknown>;
 	/** Extra launch-plan fields written by the in-session switch path:
 	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
-	 *  tells the post-reload extension instance to save the selection and
-	 *  record the rollback anchor; `clearOverlay` drops the stored overlay
+	 *  tells the post-reload extension instance to save the selection;
+	 *  `clearOverlay` drops the stored overlay
 	 *  (a profile switch discards the previous profile's overlay).
 	 *  `previousResolved` carries the pre-switch resolved name sets so
 	 *  `/profile status` can report glob deltas (ticket 07). */
@@ -371,8 +371,9 @@ export async function writeRuntimeFiles(
 	const settings = await computeSettings(plan, options, runtimeDir);
 	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 
-	// The launch plan feeds the in-pi extension: instructions injection,
-	// tool/model re-application after reload, MCP coordination, switching.
+	// The launch plan feeds the in-pi extension: tool re-application after
+	// reload (the tools strict allowlist), in-session switching, status
+	// reporting, and post-reload state persistence.
 	// agentDir is the REAL agent dir — the extension needs it for trust
 	// checks, state files, and catalog/registry reads (its own
 	// PI_CODING_AGENT_DIR points at this runtime dir).

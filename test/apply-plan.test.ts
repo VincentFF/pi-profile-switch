@@ -74,7 +74,7 @@ describe("applyLaunchPlan", () => {
 		expect(surface.activeTools).toEqual([]);
 	});
 
-	it("persists the selection and rollback anchor to the global state file on reload", async () => {
+	it("persists the selection to the global state file on reload", async () => {
 		await writePlan({ profile: "impl", source: "global", agentDir, persistSelection: true });
 		const surface = fakeSurface();
 

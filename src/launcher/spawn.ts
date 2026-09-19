@@ -1,8 +1,8 @@
 /**
  * Spawns the real `pi` binary as a subprocess (ADR-0005).
  *
- * The spawned pi gets: the pi-profile extension via `-e`, any generated
- * flags, and the user's arguments verbatim. stdio is inherited so interactive
+ * The spawned pi gets: the pi-profile extension via `-e` and the user's
+ * arguments verbatim. stdio is inherited so interactive
  * TUI, RPC, and print modes all behave natively; exit codes and signals
  * propagate.
  */
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import type { GeneratedRuntime } from "../settings-generator.ts";
 
 export interface SpawnPiOptions {
-	/** Generated runtime dir + env + flags. */
+	/** Generated runtime dir + env. */
 	generated: GeneratedRuntime;
 	/** User arguments, forwarded verbatim. */
 	piArgs: string[];

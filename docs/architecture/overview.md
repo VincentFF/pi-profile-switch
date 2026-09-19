@@ -110,20 +110,19 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - 生成 `settings.json`：用户全局 settings 内容 + 过滤模型的数组改写（见上表）；非 `default` profile 追加 `defaultProjectTrust: "never"`；已信任项目的 `.pi/settings.json` 内容按 Pi 的合并规则（项目覆盖全局、嵌套按键合并）合并进来，以保持非受管行为原生。
 - symlinks：`auth.json`、`models.json`、`models-store.json`、`mcp.json`、`npm/`、`git/`、`bin/` 指向真实 agentDir 的对应项（git/bin 分别是包安装根与 Pi 托管二进制，避免在运行目录里重复安装；`mcp.json` 是 pi-mcp-adapter 的全局配置，其路径派生自 `PI_CODING_AGENT_DIR`，pi-profile 只链接从不改写）。`trust.json` 只在 `default` profile 下链接：Pi 侧已存储的 trust 决定优先于生成 settings 的 `defaultProjectTrust: "never"`，若链接会使命名 profile 的项目自动发现复活——launcher 自读真实 trust.json，是项目资源的唯一信任守门人。
 - 环境变量：`PI_CODING_AGENT_DIR=<运行目录>`（sessions 目录软链接回真实 agentDir，保留 Pi 原生分目录结构）。
-- 生成 flags：`--tools <选中清单>`（非 `default` 且声明 tools 时）、`--model <provider/id[:thinking]>`（声明 model 时）。
 - 已知限制：`pi install` / `pi config` 在会话内写生成的 settings，退出后丢失（持久改动走 `/profile edit` 或原生 `pi`）。
 
 ### `RuntimeStateStore`
 
-**Interface**：按 source scope 读写 `pi-profile-state.json`（activeProfile、overlay、lastVerifiedProfile）。项目定义写项目 state（`.pi/pi-profile-state.json`）；全局定义写全局工作区 state（`~/.pi-profile-switch/pi-profile-state.json`，向下兼容旧版 `~/.pi/agent` 读取）。
+**Interface**：按 source scope 读写 `pi-profile-state.json`（activeProfile、overlay）。项目定义写项目 state（`.pi/pi-profile-state.json`）；全局定义写全局工作区 state（`~/.pi-profile-switch/pi-profile-state.json`，向下兼容旧版 `~/.pi/agent` 读取）。
 
 ### `pi-profile extension`（`extensions/pi-profile/index.ts`，经 `-e` 加载）
 
-**Interface**：注册 `/profile` 命令族（list/use/status/customize/reset/create/edit/delete/resource/reload）、profile selector、CRUD 向导与状态展示。
+**Interface**：注册 `/profile` 命令族（list/use/status/customize/reset/create/edit/delete/reload）、profile selector、CRUD 向导与状态展示。
 
 **Rules**：
 
-- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前 runtime 文件 → 重新 resolve → 重写生成的 `settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile`）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入。下一个 agent turn 收到一次性变更摘要。
+- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前生成的 `settings.json` 与 `pi-profile.json` → 重新 resolve → 重写生成的 `settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile`）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入。下一个 agent turn 收到一次性变更摘要。
 - **reload**：`/profile reload` 重新发现与 resolve 后走同一路径，共享 skill 的修改随之传播。
 - **失败回滚**：reload 前保留上一份已验证快照；reload 失败时写回快照并再次 reload。
 - **instructions**：由 SettingsGenerator 写入 instance `<agentDir>/APPEND_SYSTEM.md`，Pi 原生追加到 system prompt；切换后 reload 自动生效。

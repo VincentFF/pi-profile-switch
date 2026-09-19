@@ -73,7 +73,8 @@ export interface ActivationPlan {
 	toolReferences?: string[];
 	/** Declared model; undefined leaves Pi's current model untouched. */
 	model?: ProfileModel;
-	/** Declared instructions; appended to Pi's system prompt by the extension. */
+	/** Declared instructions; written to the generated APPEND_SYSTEM.md,
+	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
 	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
 	 *  undefined when the profile declares no `mcps` (no coordination). */

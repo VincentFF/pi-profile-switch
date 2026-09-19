@@ -106,7 +106,7 @@ export async function applyLaunchPlan(input: {
 		surface.setActiveTools(expanded);
 	}
 
-	// --- persistence + rollback anchor (post-reload only) ---
+	// --- persistence (post-reload only) ---
 	if (plan.persistSelection === true && input.reason === "reload" && plan.agentDir !== undefined) {
 		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 		// Merge: the overlay belongs to customize/reset, not to this write.

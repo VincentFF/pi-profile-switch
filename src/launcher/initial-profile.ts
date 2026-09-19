@@ -3,10 +3,10 @@
  *
  * Flow: trust check (gatekeeper for everything project-scoped) → positional
  * name or saved state (project state wins when trusted) → catalog lookup →
- * skill discovery + resource registry → resolver (glob expansion, dependency
- * closure, alwaysOn, model validation) → ActivationPlan + full discovery
- * results for the settings generator. Unknown profiles, malformed
- * catalogs/registries, and unresolvable resources all fail before Pi spawns.
+ * discovery (skills, extensions, MCP server names) → resolver (glob
+ * expansion, overlay, model validation) → ActivationPlan + full discovery
+ * results for the settings generator. Unknown profiles, malformed catalogs,
+ * and unresolvable resources all fail before Pi spawns.
  *
  * The CLI's initial selection is transient: no runtime state is written here.
  */

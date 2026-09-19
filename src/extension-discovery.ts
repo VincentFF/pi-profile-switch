@@ -1,7 +1,7 @@
 /**
  * ExtensionDiscovery: implicit, read-only discovery of selectable extensions
- * (ADR-0006), so profiles can reference extensions without registering them
- * in resources.json first.
+ * (ADR-0006), so profiles can reference extensions without any
+ * registration step.
  *
  * Two implicit sources, both Pi-native and side-effect free:
  * - Configured user packages: each package's `package.json#pi.extensions`

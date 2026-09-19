@@ -155,7 +155,7 @@ describe("launcher integration: named global profiles", () => {
 	);
 
 	it(
-		"applies the declared model and thinking level via generated flags",
+		"applies the declared model and thinking level via generated settings",
 		{ timeout: 45_000 },
 		async () => {
 			await writeFile(
