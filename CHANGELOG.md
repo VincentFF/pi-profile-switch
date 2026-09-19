@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.8](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.7...v0.4.8) (2026-09-19)
+
+
+### Bug Fixes
+
+* state global install command in npm description ([#36](https://github.com/VincentFF/pi-profile-switch/issues/36)) ([6a04cdd](https://github.com/VincentFF/pi-profile-switch/commit/6a04cddb01c19acdf941eaff0f6ea91d3c0ae8db))
+
 ## [0.4.7](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.6...v0.4.7) (2026-09-19)
 
 
