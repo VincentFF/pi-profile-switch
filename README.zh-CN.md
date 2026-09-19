@@ -2,9 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-[Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 引用一组已存在的 skills、extensions、MCP server 和 tools，并在同一 Pi 进程内切换，无需重启。
-
-问答与代码走读用只读 profile，实现需求用全量 profile——全部基于同一套已安装的资源。
+[Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 是你自定义的命名能力组合：skills、extensions、MCP server、tools（包括 MCP server 和 extension 提供的工具）、默认模型，以及追加到系统提示词的 instructions。在同一个运行中的 Pi 会话里切换这些组合，无需重启。
 
 ## 安装
 
@@ -27,7 +25,18 @@ pi-profile ask
 pi-profile ask -- --model openai/gpt-5.4
 ```
 
-安装时，pi-profile-switch 会向 `~/.pi-profile-switch/profiles.json`（全局，支持 `PI_PROFILE_SWITCH_DIR` 环境变量自定义，向下兼容 `~/.pi/agent/profiles.json`）写入一个初始 **`ask`** profile——只读的问答与代码走读模式。它不假设你安装过任何插件，可随意修改或删除：
+## 自定义 profile
+
+profile 定义在两个 JSON 文件中，均可选：
+
+| 文件 | 作用域 |
+| --- | --- |
+| `~/.pi-profile-switch/profiles.json` | 全局，对所有项目生效。`PI_PROFILE_SWITCH_DIR` 可自定义根目录；`~/.pi/agent/profiles.json` 作为遗留路径向下兼容，用于迁移。 |
+| `<项目>/.pi/profiles.json` | 项目级，仅对已信任项目生效。 |
+
+直接编辑 JSON 即可创建或修改 profile——schema 见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
+
+安装时，pi-profile-switch 会向全局文件播种一个初始 **`ask`** profile——只读的问答与代码走读模式。它不假设你安装过任何插件，可随意修改或删除：
 
 ```json
 {
@@ -45,7 +54,56 @@ pi-profile ask -- --model openai/gpt-5.4
 }
 ```
 
-项目级 profile 定义在 `<项目>/.pi/profiles.json`（仅限已信任项目）。Profile 只**引用**资源，从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。完整配置案例见 [`examples/`](examples/)：`profiles.json` 即上面的初始 profile，`example.json` 演示全部可用字段（skills、extensions、MCP server、tools、默认模型、instructions）。
+一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例加载 TDD skill、mcp-scripting skill（pi-mcp-adapter 自带）和你的内部 skills；接入两个 MCP server；tool 白名单用 glob 覆盖内建工具和这两个 server 的 MCP 工具；并钉住模型与常驻 instructions：
+
+```json
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "impl": {
+      "label": "Implementation",
+      "description": "Full-powered implementation profile: every available field, pinned model",
+      "skills": [
+        "tdd",
+        "internal-*",
+        "mcp-scripting"
+      ],
+      "extensions": [
+        "pi-mcp-adapter"
+      ],
+      "mcps": [
+        "github",
+        "linear"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash",
+        "edit",
+        "write",
+        "mcp__*",
+        "github_*",
+        "linear_*"
+      ],
+      "defaultProvider": "anthropic",
+      "defaultModel": "claude-sonnet-4-5",
+      "defaultThinkingLevel": "high",
+      "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
+    }
+  }
+}
+```
+
+字段解析规则：
+
+- `skills`、`extensions`、`mcps`、`tools` 接受名称或 glob（如 `"internal-*"`），引用你已安装或已配置的资源——profile 从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。
+- `tools` 针对 Pi 的实时工具注册表展开——内建工具、extension 提供的工具，以及 MCP server 暴露的工具。MCP 工具注册为 `mcp__<server>`（代理）和 `<server>_<tool>`（直接工具，adapter 默认 `toolPrefix`），因此 `mcp__*`、`github_*` 这类 glob 可以覆盖它们。
+- `mcps` 引用 pi-mcp-adapter 配置中的 server；连接细节留在 adapter 自己的配置里。
+- 未写的字段保持原生 Pi 行为。
+
+[`examples/`](examples/) 中的两个文件与上面一一对应：`profiles.json` 是播种的初始 profile，`example.json` 是全字段演示。
 
 ## 命令
 
@@ -60,12 +118,6 @@ pi-profile ask -- --model openai/gpt-5.4
 | `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
 
 非交互模式（`--mode rpc|print|json`）下命令同样生效；CRUD 向导仅 TUI 可用。
-
-## 保证
-
-- **引用而非复制**——profile 指向你自己拥有和维护的资源。
-- **Pi 原生**——profile 未显式控制的一切保持原生 Pi 行为。
-- **失败安全**——未信任的项目目录从不读取；切换失败回滚到上一份可用配置。
 
 ## 文档
 

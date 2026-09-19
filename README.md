@@ -2,9 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile references a set of existing skills, extensions, MCP servers, and tools — switch between them in the same Pi process, without restarting.
-
-Use a read-only profile for Q&A and code exploration, a full-powered one for implementation — all against the same installed resources.
+Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a named capability bundle you define: skills, extensions, MCP servers, tools (including tools exposed by MCP servers and extensions), model defaults, and extra system-prompt instructions. Switch bundles inside a running Pi session — no restart.
 
 ## Install
 
@@ -27,7 +25,18 @@ pi-profile ask
 pi-profile ask -- --model openai/gpt-5.4
 ```
 
-On install, pi-profile-switch seeds `~/.pi-profile-switch/profiles.json` (global, fallback to `~/.pi/agent/profiles.json` for migration; custom root via `PI_PROFILE_SWITCH_DIR`) with a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
+## Define your own profiles
+
+Profiles live in two JSON files, both optional:
+
+| File | Scope |
+| --- | --- |
+| `~/.pi-profile-switch/profiles.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the root; `~/.pi/agent/profiles.json` is read as a legacy fallback for migration. |
+| `<project>/.pi/profiles.json` | Project-level, trusted projects only. |
+
+Create or change a profile by editing the JSON directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
+
+On install, pi-profile-switch seeds the global file with a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
 
 ```json
 {
@@ -45,7 +54,56 @@ On install, pi-profile-switch seeds `~/.pi-profile-switch/profiles.json` (global
 }
 ```
 
-Project-level profiles live in `<project>/.pi/profiles.json` (trusted projects only). Profiles **reference** resources by name — they never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed. Complete configuration examples live in [`examples/`](examples/): `profiles.json` is the seeded starter above, and `example.json` demonstrates every available field (skills, extensions, MCP servers, tools, model defaults, instructions).
+One profile can use every field at once. This example `impl` profile loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools plus both servers' MCP tools by glob; and pins the model and standing instructions:
+
+```json
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "impl": {
+      "label": "Implementation",
+      "description": "Full-powered implementation profile: every available field, pinned model",
+      "skills": [
+        "tdd",
+        "internal-*",
+        "mcp-scripting"
+      ],
+      "extensions": [
+        "pi-mcp-adapter"
+      ],
+      "mcps": [
+        "github",
+        "linear"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash",
+        "edit",
+        "write",
+        "mcp__*",
+        "github_*",
+        "linear_*"
+      ],
+      "defaultProvider": "anthropic",
+      "defaultModel": "claude-sonnet-4-5",
+      "defaultThinkingLevel": "high",
+      "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
+    }
+  }
+}
+```
+
+How fields resolve:
+
+- `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
+- `tools` expands against Pi's live tool registry — built-ins, extension-provided tools, and tools exposed by MCP servers. MCP tools are registered as `mcp__<server>` (proxy) and `<server>_<tool>` (direct tools, the adapter's default `toolPrefix`), so globs like `mcp__*` and `github_*` cover them.
+- `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
+- Any field you omit keeps plain Pi behavior.
+
+The files in [`examples/`](examples/) mirror the two profiles above: `profiles.json` is the seeded starter, `example.json` the full-field demo.
 
 ## Commands
 
@@ -60,12 +118,6 @@ In the TUI, the `/profile` command family manages everything in-session:
 | `/profile customize` / `/profile reset` | Narrow the active profile for this session only |
 
 All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizards are TUI-only.
-
-## Guarantees
-
-- **Reference, never copy** — profiles point at resources you already own and maintain.
-- **Pi-native** — anything a profile doesn't explicitly control keeps plain Pi behavior.
-- **Fail safe** — untrusted project directories are never read; a failed switch rolls back to the last working configuration.
 
 ## Docs
 
