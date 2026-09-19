@@ -76,8 +76,10 @@ export interface ActivationPlan {
 	/** Declared instructions; written to the generated APPEND_SYSTEM.md,
 	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
-	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
-	 *  undefined when the profile declares no `mcps` (no coordination). */
+	/** Expanded MCP server allowlist: written by SettingsGenerator into the
+	 *  filtered instance `mcp.json` (the adapter's runtime restriction) and
+	 *  surfaced in `/profile status`; undefined when the profile declares
+	 *  no `mcps` (no restriction). */
 	mcps?: string[];
 	/** Glob references (skills/extensions/MCP) that matched nothing this
 	 *  resolution — surfaced as warnings so zero-match typos are never silent.

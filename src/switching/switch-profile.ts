@@ -14,7 +14,7 @@
  *   4. rewrite the runtime files in place (the running process's
  *      PI_CODING_AGENT_DIR cannot move) and mark the plan
  *      `persistSelection` so the post-reload extension instance saves the
- *      selection + rollback anchor
+ *      selection
  *   5. `ctx.reload()` — Pi re-reads settings from disk, re-executes
  *      extensions, preserves the session
  *   6. VERIFY the reload ran: interactive Pi swallows reload refusals and
