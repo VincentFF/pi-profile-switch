@@ -15,7 +15,7 @@ import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
 import { discoverAdapterServerNames } from "../mcp-config.ts";
-import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-coordination.ts";
+import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-config.ts";
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
 import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";

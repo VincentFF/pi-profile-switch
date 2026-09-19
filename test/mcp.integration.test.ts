@@ -37,29 +37,11 @@ async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
 }
 
 /** A fake pi-mcp-adapter: lives in a dir named like the real package (so the
- *  launcher's presence check matches), answers snapshot probes, and records
- *  any published allowlist to a marker file. */
-async function installFakeAdapter(): Promise<string> {
-	const marker = path.join(fixture.root, "ALLOWLIST.json");
+ *  launcher's presence check matches). */
+async function installFakeAdapter(): Promise<void> {
 	const extFile = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
 	await mkdir(path.dirname(extFile), { recursive: true });
-	await writeFile(
-		extFile,
-		[
-			`import { writeFileSync } from "node:fs";`,
-			`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
-			`export default function (pi: ExtensionAPI) {`,
-			`\tpi.events.on("pi-mcp-adapter:runtime-snapshot:v1", (request: unknown) => {`,
-			`\t\t(request as { result: unknown }).result = { ok: false, error: new Error("unknown server") };`,
-			`\t});`,
-			`\tpi.events.on("pi-profile:mcp-allowlist:v1", (data: unknown) => {`,
-			`\t\twriteFileSync(${JSON.stringify(marker)}, JSON.stringify(data));`,
-			`\t});`,
-			`}`,
-			"",
-		].join("\n"),
-	);
-	return marker;
+	await writeFile(extFile, "export default function () {}\n");
 }
 
 function runLauncher(args: string[]): Promise<{ code: number; stderr: string }> {
@@ -103,10 +85,10 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"publishes the runtime allowlist in memory and never writes the adapter's mcp.json overlay",
+		"filters the instance mcp.json to only allowed servers and never writes the adapter's original mcp.json",
 		{ timeout: 45_000 },
 		async () => {
-			const marker = await installFakeAdapter();
+			await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
 			await writeMcpConfig(globalConfig);
 			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["github"] } });
@@ -122,12 +104,12 @@ describe("launcher integration: mcp coordination", () => {
 				await rpc.close();
 			}
 
-			// The adapter received the profile's allowlist at session start.
-			expect(existsSync(marker)).toBe(true);
-			expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({
-				version: 1,
-				profile: "review",
-				servers: ["github"],
+			// The generated instance mcp.json contains only the allowed server.
+			const instanceMcpPath = path.join(fixture.root, ".pi-profile-switch", "instances", "review", "agent", "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: {
+					github: { url: "https://x" },
+				},
 			});
 
 			// The adapter's own files were never written: the global config is
@@ -140,11 +122,12 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"a profile without mcp publishes no coordination even when the adapter is active",
+		"a profile without mcp preserves the full mcp config via symlink",
 		{ timeout: 45_000 },
 		async () => {
-			const marker = await installFakeAdapter();
-			await writeMcpConfig({ github: {} });
+			await installFakeAdapter();
+			const globalConfig = { github: { url: "https://x" } };
+			await writeMcpConfig(globalConfig);
 			await writeCatalog({ plain: { extensions: ["pi-mcp-adapter"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
@@ -157,7 +140,12 @@ describe("launcher integration: mcp coordination", () => {
 			} finally {
 				await rpc.close();
 			}
-			expect(existsSync(marker)).toBe(false);
+
+			// The instance mcp.json preserves the unrestricted config.
+			const instanceMcpPath = path.join(fixture.root, ".pi-profile-switch", "instances", "plain", "agent", "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: globalConfig,
+			});
 		},
 	);
 });

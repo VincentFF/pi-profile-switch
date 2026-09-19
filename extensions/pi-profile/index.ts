@@ -82,7 +82,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				setModel: (model) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0]),
 				setThinkingLevel: (level) =>
 					pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]),
-				events: pi.events,
 				notify: (message, level) => ctx.ui?.notify(message, level),
 			},
 		});

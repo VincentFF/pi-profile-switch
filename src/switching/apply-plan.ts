@@ -31,12 +31,6 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
-import {
-	MCP_ALLOWLIST_EVENT,
-	MCP_ALLOWLIST_VERSION,
-	MissingMcpAdapterError,
-	probeAdapterPresence,
-} from "../mcp-coordination.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { expandToolReferences } from "./tool-references.ts";
@@ -73,7 +67,6 @@ export interface PlanApplicationSurface {
 	modelRegistry: { find(provider: string, id: string): unknown | undefined };
 	setModel(model: unknown): Promise<boolean>;
 	setThinkingLevel(level: unknown): void;
-	events: { emit(channel: string, data: unknown): void };
 	notify?(message: string, level: "info" | "warning" | "error"): void;
 }
 
@@ -134,20 +127,6 @@ export async function applyLaunchPlan(input: {
 		if (plan.model.thinkingLevel !== undefined) {
 			surface.setThinkingLevel(plan.model.thinkingLevel);
 		}
-	}
-
-	// --- mcp coordination (ticket 04 contract) ---
-	if (plan.mcps !== undefined && plan.mcps.length > 0) {
-		if (!probeAdapterPresence(surface.events)) {
-			const error = new MissingMcpAdapterError(plan.profile);
-			surface.notify?.(error.message, "error");
-			throw error;
-		}
-		surface.events.emit(MCP_ALLOWLIST_EVENT, {
-			version: MCP_ALLOWLIST_VERSION,
-			profile: plan.profile,
-			servers: plan.mcps,
-		});
 	}
 
 	// --- persistence + rollback anchor (post-reload only) ---

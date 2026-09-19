@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applyLaunchPlan, type PlanApplicationSurface } from "../src/switching/apply-plan.ts";
-import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/fake-event-bus.ts";
 
 let root: string;
 let runtimeDir: string;
@@ -27,7 +26,6 @@ async function writePlan(plan: unknown): Promise<void> {
 
 interface FakeSurface extends PlanApplicationSurface {
 	activeTools: string[];
-	events: FakeEventBus;
 	notifications: Array<{ message: string; level: string }>;
 	setModelCalls: unknown[];
 	thinkingLevels: string[];
@@ -37,7 +35,6 @@ function fakeSurface(overrides?: { liveTools?: string[] }): FakeSurface {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const surface: FakeSurface = {
 		activeTools: [],
-		events: fakeEventBus(),
 		notifications,
 		setModelCalls: [],
 		thinkingLevels: [],
@@ -103,27 +100,6 @@ describe("applyLaunchPlan", () => {
 
 		expect(surface.setModelCalls).toEqual([{ provider: "openai", id: "gpt-5.4" }]);
 		expect(surface.thinkingLevels).toEqual(["high"]);
-	});
-
-	it("publishes the mcp allowlist when the adapter answers the probe", async () => {
-		await writePlan({ profile: "review", source: "global", mcps: ["github"] });
-		const surface = fakeSurface();
-		installFakeAdapter(surface.events);
-
-		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
-
-		const allowlist = surface.events.emitted.find((entry) => entry.channel === "pi-profile:mcp-allowlist:v1");
-		expect(allowlist?.data).toEqual({ version: 1, profile: "review", servers: ["github"] });
-	});
-
-	it("fails loudly when the plan declares mcp but the adapter is absent", async () => {
-		await writePlan({ profile: "review", source: "global", mcps: ["github"] });
-		const surface = fakeSurface();
-
-		await expect(applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface })).rejects.toThrow(
-			/pi-mcp-adapter is not active/,
-		);
-		expect(surface.notifications.some((entry) => entry.level === "error")).toBe(true);
 	});
 
 	it("persists the selection and rollback anchor to the global state file on reload", async () => {

@@ -4,8 +4,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import piProfileExtension from "../extensions/pi-profile/index.ts";
-import { MCP_ALLOWLIST_EVENT } from "../src/mcp-coordination.ts";
-import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/fake-event-bus.ts";
 
 let root: string;
 let savedAgentDir: string | undefined;
@@ -28,7 +26,7 @@ afterEach(async () => {
 interface FakePi {
 	handlers: Map<string, Array<(...args: never[]) => unknown>>;
 	commands: Map<string, { description: string; handler: (...args: never[]) => unknown }>;
-	events: FakeEventBus;
+	events: { on(event: string, handler: unknown): void; emit(event: string, data: unknown): void };
 	activeTools: string[];
 	sentMessages: Array<{ customType: string; content: unknown; display?: boolean }>;
 	on(event: string, handler: (...args: never[]) => unknown): void;
@@ -48,7 +46,7 @@ function fakePi(): FakePi {
 	const pi: FakePi = {
 		handlers,
 		commands,
-		events: fakeEventBus(),
+		events: { on() {}, emit() {} },
 		activeTools: [],
 		sentMessages: [],
 		on(event, handler) {
@@ -163,36 +161,6 @@ describe("pi-profile extension", () => {
 		expect(withSummary).toContain("review → impl");
 		// One-shot: the marker was consumed and cleared from the plan file.
 		expect(await runBeforeAgentStart(pi, "BASE")).not.toContain("→");
-	});
-
-	it("publishes the mcp allowlist at session start when the adapter answers", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcps: ["github"] });
-		const pi = fakePi();
-		installFakeAdapter(pi.events);
-		piProfileExtension(pi as never);
-
-		await fireSessionStart(pi);
-
-		const allowlist = pi.events.emitted.find((entry) => entry.channel === MCP_ALLOWLIST_EVENT);
-		expect(allowlist?.data).toEqual({ version: 1, profile: "review", servers: ["github"] });
-	});
-
-	it("fails loudly at session start when the plan declares mcp but the adapter is absent", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcps: ["github"] });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		await expect(fireSessionStart(pi)).rejects.toThrow(/pi-mcp-adapter is not active/);
-	});
-
-	it("publishes no coordination when the plan declares no mcp", async () => {
-		await writeLaunchPlan({ profile: "default", source: "builtin" });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		await fireSessionStart(pi);
-
-		expect(pi.events.emitted.some((entry) => entry.channel === MCP_ALLOWLIST_EVENT)).toBe(false);
 	});
 
 	it("registers the /profile command with use and reload subcommands", async () => {
