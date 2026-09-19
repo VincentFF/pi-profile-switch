@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.6...v0.4.7) (2026-09-19)
+
+
+### Bug Fixes
+
+* rework README around custom profiles ([#34](https://github.com/VincentFF/pi-profile-switch/issues/34)) ([c96727b](https://github.com/VincentFF/pi-profile-switch/commit/c96727befa586326848dd4a2afc173719cac017a))
+
 ## [0.4.6](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.5...v0.4.6) (2026-09-19)
 
 
