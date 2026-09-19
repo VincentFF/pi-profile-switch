@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.4...v0.4.5) (2026-09-19)
+
+
+### Bug Fixes
+
+* remove legacy extension-era mechanisms and harden switch rollback ([#29](https://github.com/VincentFF/pi-profile-switch/issues/29)) ([57da8ae](https://github.com/VincentFF/pi-profile-switch/commit/57da8aea24c4069a211f267c0371f47eec28ef9f))
+
 ## [0.4.4](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.3...v0.4.4) (2026-09-16)
 
 
