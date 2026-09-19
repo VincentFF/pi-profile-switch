@@ -422,12 +422,11 @@ describe("generateRuntimeDir (trusted project merge)", () => {
 });
 
 describe("generateRuntimeDir (default profile, unchanged)", () => {
-	it("does not set defaultProjectTrust and generates no flags for default", async () => {
+	it("does not set defaultProjectTrust for default", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		const settings = await generatedSettings(result.runtimeDir);
 
 		expect(settings.defaultProjectTrust).toBeUndefined();
-		expect(result.flags).toEqual([]);
 	});
 });
 

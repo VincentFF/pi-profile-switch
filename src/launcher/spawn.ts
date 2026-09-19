@@ -25,10 +25,10 @@ export interface SpawnPiOptions {
 
 const EXTENSION_ENTRY = fileURLToPath(new URL("../../extensions/pi-profile/index.ts", import.meta.url));
 
-/** Pure argv construction for the spawned pi: extension entry, generated
- *  flags, trust re-application, then user args verbatim. */
+/** Pure argv construction for the spawned pi: extension entry,
+ *  trust re-application, then user args verbatim. */
 export function buildPiArgs(options: SpawnPiOptions): string[] {
-	const args = ["-e", EXTENSION_ENTRY, ...options.generated.flags];
+	const args = ["-e", EXTENSION_ENTRY];
 	// default profile keeps trust behavior native: re-apply the recorded flag.
 	if (options.trustOverride === true) args.push("--approve");
 	if (options.trustOverride === false) args.push("--no-approve");

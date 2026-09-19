@@ -86,8 +86,6 @@ export interface GeneratedRuntime {
 	runtimeDir: string;
 	/** Environment variables for the spawned pi process. */
 	env: Record<string, string>;
-	/** Extra pi flags derived from the plan (e.g. --tools, --model). Empty for default. */
-	flags: string[];
 }
 
 /** Files managed explicitly by pi-profile in runtimeDir; excluded from auto-symlinking. */
@@ -542,13 +540,10 @@ export async function generateRuntimeDir(
 
 	await writeRuntimeFiles(runtimeDir, plan, options);
 
-	const flags: string[] = [];
-
 	return {
 		runtimeDir,
 		env: {
 			PI_CODING_AGENT_DIR: runtimeDir,
 		},
-		flags,
 	};
 }
