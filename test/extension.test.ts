@@ -35,9 +35,6 @@ interface FakePi {
 	setActiveTools(names: string[]): void;
 	getCommands(): Array<{ name: string; sourceInfo?: { path: string } }>;
 	sendMessage(message: { customType: string; content: unknown; display?: boolean }): void;
-	modelRegistry: { find(provider: string, id: string): unknown | undefined };
-	setModel(model: unknown): Promise<boolean>;
-	setThinkingLevel(level: string): void;
 }
 
 function fakePi(): FakePi {
@@ -63,9 +60,6 @@ function fakePi(): FakePi {
 		sendMessage(message) {
 			pi.sentMessages.push(message);
 		},
-		modelRegistry: { find: () => undefined },
-		setModel: async () => true,
-		setThinkingLevel: () => {},
 	};
 	return pi;
 }

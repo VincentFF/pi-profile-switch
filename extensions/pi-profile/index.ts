@@ -78,10 +78,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			surface: {
 				getAllTools: () => pi.getAllTools(),
 				setActiveTools: (names) => pi.setActiveTools(names),
-				modelRegistry: ctx.modelRegistry,
-				setModel: (model) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0]),
-				setThinkingLevel: (level) =>
-					pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]),
 				notify: (message, level) => ctx.ui?.notify(message, level),
 			},
 		});

@@ -39,7 +39,6 @@ export interface LaunchPlanFile {
 	profile: string;
 	source: string;
 	agentDir?: string;
-	model?: { provider: string; id: string; thinkingLevel?: string };
 	tools?: string[];
 	toolReferences?: string[];
 	mcps?: string[];
@@ -64,9 +63,6 @@ export interface LaunchPlanFile {
 export interface PlanApplicationSurface {
 	getAllTools(): Array<{ name: string }>;
 	setActiveTools(names: string[]): void;
-	modelRegistry: { find(provider: string, id: string): unknown | undefined };
-	setModel(model: unknown): Promise<boolean>;
-	setThinkingLevel(level: unknown): void;
 	notify?(message: string, level: "info" | "warning" | "error"): void;
 }
 
@@ -111,24 +107,6 @@ export async function applyLaunchPlan(input: {
 		surface.setActiveTools(expanded);
 	}
 
-	// --- model ---
-	if (plan.model !== undefined) {
-		const found = surface.modelRegistry.find(plan.model.provider, plan.model.id);
-		if (found === undefined) {
-			warnings.push(`profile "${plan.profile}": declared model ${plan.model.provider}/${plan.model.id} not found`);
-		} else {
-			const applied = await surface.setModel(found);
-			if (!applied) {
-				warnings.push(
-					`profile "${plan.profile}": model ${plan.model.provider}/${plan.model.id} has no configured auth`,
-				);
-			}
-		}
-		if (plan.model.thinkingLevel !== undefined) {
-			surface.setThinkingLevel(plan.model.thinkingLevel);
-		}
-	}
-
 	// --- persistence + rollback anchor (post-reload only) ---
 	if (plan.persistSelection === true && input.reason === "reload" && plan.agentDir !== undefined) {
 		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
@@ -160,7 +138,6 @@ function buildSwitchSummary(plan: LaunchPlanFile): string {
 		`profile switched: ${plan.switchedFrom} → ${plan.profile}`,
 		plan.tools !== undefined ? `tools: [${plan.tools.join(", ")}]` : undefined,
 		plan.mcps !== undefined && plan.mcps.length > 0 ? `mcp: [${plan.mcps.join(", ")}]` : undefined,
-		plan.model !== undefined ? `model: ${plan.model.provider}/${plan.model.id}` : undefined,
 	].filter((part): part is string => part !== undefined);
 	return parts.join("; ");
 }

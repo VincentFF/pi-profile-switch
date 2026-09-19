@@ -27,8 +27,6 @@ async function writePlan(plan: unknown): Promise<void> {
 interface FakeSurface extends PlanApplicationSurface {
 	activeTools: string[];
 	notifications: Array<{ message: string; level: string }>;
-	setModelCalls: unknown[];
-	thinkingLevels: string[];
 }
 
 function fakeSurface(overrides?: { liveTools?: string[] }): FakeSurface {
@@ -36,21 +34,9 @@ function fakeSurface(overrides?: { liveTools?: string[] }): FakeSurface {
 	const surface: FakeSurface = {
 		activeTools: [],
 		notifications,
-		setModelCalls: [],
-		thinkingLevels: [],
 		getAllTools: () => (overrides?.liveTools ?? ["read", "bash", "grep"]).map((name) => ({ name })),
 		setActiveTools(names) {
 			surface.activeTools = names;
-		},
-		modelRegistry: {
-			find: (provider, id) => (provider === "openai" && id === "gpt-5.4" ? { provider, id } : undefined),
-		},
-		setModel: async (model) => {
-			surface.setModelCalls.push(model);
-			return true;
-		},
-		setThinkingLevel(level) {
-			surface.thinkingLevels.push(level as string);
 		},
 		notify(message, level) {
 			notifications.push({ message, level });
@@ -86,20 +72,6 @@ describe("applyLaunchPlan", () => {
 		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
 
 		expect(surface.activeTools).toEqual([]);
-	});
-
-	it("applies a declared model and thinking level", async () => {
-		await writePlan({
-			profile: "review",
-			source: "global",
-			model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" },
-		});
-		const surface = fakeSurface();
-
-		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "startup", surface });
-
-		expect(surface.setModelCalls).toEqual([{ provider: "openai", id: "gpt-5.4" }]);
-		expect(surface.thinkingLevels).toEqual(["high"]);
 	});
 
 	it("persists the selection and rollback anchor to the global state file on reload", async () => {
