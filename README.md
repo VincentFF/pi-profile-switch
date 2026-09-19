@@ -54,7 +54,7 @@ On install, pi-profile-switch seeds the global file with a starter **`ask`** pro
 }
 ```
 
-One profile can use every field at once. This `impl` profile loads the TDD skill plus your internal skills, the MCP adapter, two MCP servers, an explicit tool allowlist, a pinned model, and standing instructions:
+One profile can use every field at once. This example `impl` profile loads the TDD skill plus your internal skills, the MCP adapter, two MCP servers, an explicit tool allowlist, a pinned model, and standing instructions:
 
 ```json
 {
@@ -114,12 +114,6 @@ In the TUI, the `/profile` command family manages everything in-session:
 | `/profile customize` / `/profile reset` | Narrow the active profile for this session only |
 
 All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizards are TUI-only.
-
-## Guarantees
-
-- **Reference, never copy** — profiles point at resources you already own and maintain.
-- **Pi-native** — anything a profile doesn't explicitly control keeps plain Pi behavior.
-- **Fail safe** — untrusted project directories are never read; a failed switch rolls back to the last working configuration.
 
 ## Docs
 

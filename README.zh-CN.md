@@ -115,12 +115,6 @@ profile 定义在两个 JSON 文件中，均可选：
 
 非交互模式（`--mode rpc|print|json`）下命令同样生效；CRUD 向导仅 TUI 可用。
 
-## 保证
-
-- **引用而非复制**——profile 指向你自己拥有和维护的资源。
-- **Pi 原生**——profile 未显式控制的一切保持原生 Pi 行为。
-- **失败安全**——未信任的项目目录从不读取；切换失败回滚到上一份可用配置。
-
 ## 文档
 
 - [架构设计](docs/architecture/overview.md) · [ADR](docs/adr/) · [术语表](CONTEXT.md)
