@@ -130,7 +130,7 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 ## 运行目录
 
-路径 `~/.pi-profile-switch/instances/<profile>/agent`（`PI_PROFILE_SWITCH_DIR` 可覆盖根），经 `PI_CODING_AGENT_DIR` 交给 pi。同一个 profile 每次启动复用同一路径，启动时会清扫 `pid` 已失效的陈旧目录。
+路径 `~/.pi-profile-switch/instances/<profile>/agent`（`PI_PROFILE_SWITCH_DIR` 可覆盖根），经 `PI_CODING_AGENT_DIR` 交给 pi。同一个 profile 每次启动复用同一路径。
 
 **受管文件**（`MANAGED_INSTANCE_FILES`，不由 symlink 镜像提供）：
 
@@ -177,7 +177,8 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 | 项目资源的信任判定只由 launcher 执行 | 绕过 launcher、直接以生成的 instance 启动 pi，会得到与原生 Pi 不同的资源可见性 |
 | 不咨询 extension 的 `project_trust` 事件 | 咨询需要在 launcher 里执行扩展代码；依赖该事件的第三方 extension 无法影响 trust 判定 |
 | `pi install` 与 `pi config` 在会话内写生成的 settings | 退出后丢失；持久改动需走 `/profile edit` 或原生 `pi` |
-| instance 路径固定为 `instances/<profile>/agent` | 并发启动同一 profile 时会互相重写该目录的文件 |
+| instance 路径固定为 `instances/<profile>/agent` | 并发启动同一 profile 时会互相重写该目录的文件；已删除或改名 profile 的 instance 目录不被清理，现存清扫实现扫的是 `<agentDir>/pi-profile/runtime/launch-*`，与 instance 路径不同因而不生效 |
+| 项目范围的 package skill 不可引用 | 其包装在项目 `.pi/npm` 下，生成的全局 settings 无法引用；项目 `.pi/skills` 与 ancestor `.agents/skills` 不受影响 |
 
 ## 包结构
 
