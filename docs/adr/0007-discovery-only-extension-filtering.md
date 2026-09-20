@@ -1,26 +1,30 @@
-# Discovery-only extension filtering; removal of resources.json and ResourceRegistry
+# 纯发现过滤；退役 resources.json 与 ResourceRegistry
 
-Supersedes ADR-0006.
+取代 ADR-0006。
 
-## Context
+## 背景
 
-ADR-0006 introduced auto-discovery for extensions (inspecting installed packages and extensions directories), but retained `resources.json` as an explicit override layer with `dependsOn` (dependency closures and cycle checks) and `alwaysOn` (immutable system extensions).
+ADR-0006 引入了 extension 自动发现，但保留了 `resources.json` 作为显式覆盖层，并带 `dependsOn`（依赖闭包与环检测）与 `alwaysOn`（不可禁用的系统 extension）。
 
-In practice, this retained unnecessary friction and architectural impedance mismatch:
-- Pi itself has no extension dependency graph or always-on concept. Attempting to manage extension dependencies within `pi-profile` turned the switcher into an ad-hoc package manager, violating the principle of *Pi compatibility first* and *minimalism like Pi*.
-- Maintaining two separate configuration surfaces (`profiles.json` and `resources.json`) and `/profile resource [list|create|edit|delete]` commands bloated the conceptual surface and CLI footprint.
+实践中的代价：
 
-## Decision
+- Pi 本身没有 extension 依赖图，也没有常驻 extension 概念。在 pi-profile 内管理依赖，等于把自己变成临时包管理器。
+- `profiles.json` 与 `resources.json` 两个配置面，加上 `/profile resource [list|create|edit|delete]` 命令族，显著扩大了概念与 CLI 面积。
 
-Completely retire `resources.json`, `resources.schema.json`, and `ResourceRegistry`. Adopt a pure **"Discover & Filter"** model for extensions, identical to how skills are handled:
+## 决策
 
-1. **Native Discovery**: `ExtensionDiscovery` reads installed user packages (`package.json#pi.extensions`) and loose extension files (`<agentDir>/extensions/*.{ts,js}` and trusted project `.pi/extensions/*.{ts,js}`).
-2. **Pure Profile Filtering**: Profiles declare extensions directly by package name, package source alias, multi-entry ID, filename stem, glob pattern, or absolute/home-relative file path. Resolution is a pure filter against discovered extensions without dependency closures or cycle checks.
-3. **Overlays Without Gating**: Runtime overlays (`/profile customize -e <ext>`) can disable any resolved extension; `alwaysOn` restrictions are removed.
-4. **Command Simplification**: The `/profile resource *` command family and its interactive wizards are deleted. `/profile` commands manage profiles exclusively.
+彻底退役 `resources.json`、`resources.schema.json` 与 `ResourceRegistry`。extension 采用与 skill 一致的纯「发现并过滤」模型：
 
-## Consequences
+1. 发现读取已安装的用户包与标准目录下的散装 extension 文件。
+2. profile 直接声明 extension 引用。解析是对已发现集合的纯过滤，没有依赖闭包，没有环检测。
+3. runtime overlay 可以禁用任意已解析的 extension，`alwaysOn` 限制被取消。
+4. `/profile resource *` 命令族及其向导被删除，`/profile` 只管理 profile。
 
-- Configuration is radically simplified: `profiles.json` is the sole configuration file in `pi-profile`.
-- Codebase size and complexity are reduced by eliminating the registry store, CRUD commands, dependency closure graph, and dual-file coordination.
-- Zero behavior drift from native Pi: extensions are either active (included in generated settings) or inactive (excluded).
+## 被否方案
+
+**保留 `resources.json` 作为覆盖层**（ADR-0006 的设计）。否掉的理由见背景两条代价。
+
+## 代价
+
+- extension 位于非标准路径时，只能由 profile 写绝对路径引用，不能再注册一个稳定 ID。
+- 没有依赖声明，profile 必须自己列全所需的 extension。

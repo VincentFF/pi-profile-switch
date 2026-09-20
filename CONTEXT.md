@@ -1,52 +1,27 @@
-# pi-profile-switch
+# 术语表
 
-`pi-profile-switch` is a Pi package that treats profiles as Pi's resource-selection mechanism: a profile references existing skills, extensions, configured MCP servers, and tools, and switches those references within a single running Pi instance.
+## 领域术语
 
-## Language
+| 术语 | 含义 | 避免使用 |
+| --- | --- | --- |
+| **Profile** | 命名的能力定义：引用 skills、extensions、MCP servers 与 tools，可选声明 model、thinking level 与 instructions。 | preset、config、bundle、capability |
+| **default profile** | 内建、不可删除、不出现在 catalog 文件中的 profile，加载 Pi 可发现的全部资源。 | built-in、内置 |
+| **Catalog** | 持有 profile 定义的 `profiles.json`：全局一份，每个项目一份。 | — |
+| **Source scope** | profile 的来源，取值为 `builtin`、`global` 或 `project`，决定其运行时状态与编辑写入哪个 scope。 | — |
+| **RuntimeOverlay** | 对活动 profile 的临时收窄：禁用已解析的 skill、extension 或 MCP server，或替换 tools 引用集合。通常简称 overlay。 | session profile、temporary profile |
+| **Runtime state** | 持久保存的活动 profile 选择与 overlay。 | — |
+| **Resource** | profile 可引用的任何能力：skill、extension、MCP server 或 tool。 | — |
+| **Project trust** | Pi 对项目目录的信任决定，决定项目级 catalog 与项目资源是否参与解析。 | — |
+| **pi-mcp-adapter** | 可选的 Pi 包，持有 MCP server 的配置、连接与凭证。 | — |
 
-**Profile**:
-A named workflow definition that references resources and optionally declares model, thinking level, and instructions. Lives in the global or project catalog.
-_Avoid_: preset, config
+## 内部术语
 
-**default profile**:
-The built-in, undeletable profile that loads Pi's full set of discoverable resources. Treated as global-sourced for state writes.
-
-**Catalog**:
-A `profiles.json` file holding profile definitions: `~/.pi-profile-switch/profiles.json` (global; legacy fallback reads `~/.pi/agent/profiles.json`) or `.pi/profiles.json` (project). A project profile with the same name fully replaces the global one; there is no inheritance.
-
-**Source scope**:
-Whether a profile came from the global or project catalog. Determines where runtime state and CRUD edits are written.
-
-**RuntimeOverlay**:
-A temporary adjustment to the active profile's resource and tool selections, usually called just "overlay". Never written to a catalog; `/profile reset` discards it.
-_Avoid_: session profile, temporary profile
-
-**Runtime state**:
-The persisted active profile selection and overlay, written to the state file of the profile's source scope.
-
-**ActivationPlan**:
-The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay. It is materialized as generated settings (launch) or a settings rewrite plus native reload (in-session switch).
-
-**Generated settings**:
-The pi-profile-switch-owned runtime directory under `~/.pi-profile-switch/instances/<profile>/agent`, holding a generated `settings.json` (the profile's resource selection encoded for Pi's native settings mechanism) and full-fidelity symlinks into the user's real `~/.pi/agent` (`auth.json`, `models.json`, `npm/`, sessions, etc.), pointed at via `PI_CODING_AGENT_DIR`. `trust.json` is linked only for the `default` profile — for named profiles the launcher is the sole project-trust gatekeeper. Never a user configuration file; regenerated on every launch, switch, or reload.
-
-**Runtime reload**:
-Pi's native `ctx.reload()`: re-reads the settings file from disk, rebuilds resources, re-executes extensions, and preserves the session. The mechanism behind `/profile use`, `/profile reload`, overlay application, and rollback.
-
-**Resource**:
-Any capability a profile references: skill, extension, MCP server, or tool.
-
-**SkillRegistry**:
-The mapping from skill name to final `SKILL.md`, mirroring Pi's current full discovery result. Re-resolved on every start or reload.
-
-**ExtensionDiscovery**:
-The discovery and selection view for extensions (ADR-0007/0008): configured user packages (referenced by package name or source alias) and loose files in the standard extensions directories (`<agentDir>/extensions` and trusted project `.pi/extensions`), referenced by filename stem, glob, or absolute/home-relative path. Zero extra configuration files required; pure discover-and-filter. Entry enumeration is Pi's own (`DefaultPackageManager.resolve` with `onMissing: "skip"`), so what a profile can reference is exactly what the spawned pi would load; pi-profile-switch only owns IDs, merging, selection, and error text.
-
-**McpServerRegistry**:
-The MCP server names and states discovered by `pi-mcp-adapter`. Owned by the adapter; pi-profile-switch only references server names.
-
-**pi-mcp-adapter**:
-The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile-switch integrates with it but never stores MCP connection details in profiles.
-
-**Project trust**:
-Pi's trust decision for a project directory. pi-profile-switch never reads or writes untrusted project directories. Because generated settings set `defaultProjectTrust: "never"`, the resolver is the sole gatekeeper: it reads the real `trust.json` and admits project resources only when trusted.
+| 术语 | 含义 | 避免使用 |
+| --- | --- | --- |
+| **ActivationPlan** | 由一个 profile 加一个 overlay 解析出的不可变资源与工具集合，由 ProfileResolver 产出。 | — |
+| **SkillRegistry** | skill 名到最终 `SKILL.md` 的映射，镜像 Pi 的完整发现结果。 | — |
+| **ExtensionDiscovery** | extension 的可引用视图：已安装包与标准目录下的散装文件，纯发现，无注册层。 | — |
+| **McpServerRegistry** | `pi-mcp-adapter` 发现的 MCP server 名称与状态。 | — |
+| **instance** | `pi-profile-switch` 为一次 Pi 进程生成的运行时目录，经 `PI_CODING_AGENT_DIR` 交给 Pi。 | — |
+| **Generated settings** | 写入 instance 的 `settings.json`，把 profile 的资源选择编码为 Pi 原生 settings。 | — |
+| **Runtime reload** | Pi 原生重新读取 settings 并重建资源，保留当前 session。 | — |

@@ -1,12 +1,22 @@
-# MCP integration locked to pi-mcp-adapter
+# MCP 集成锁定 pi-mcp-adapter
 
-Amended by [ADR-0005](0005-subprocess-host-with-generated-settings.md): the lock below stands, but the integration transport is no longer in-process host calls. pi-profile runs inside Pi as an extension and coordinates with the adapter over the `pi.events` event bus.
-Amended again (ticket 10): the assumed adapter "profile-scoped state store" does not exist (pi-mcp-adapter@2.33.0 exposes only the register/snapshot event pair — no allowlist, no profile-state API, no enable/disable/reload event). The profile's `mcp` array in its owning catalog IS the profile-scoped persistent store; `/mcp enable|disable` edit it via ProfileCatalogStore and take effect through the standard rewrite-settings-and-reload path, with the allowlist republished at session_start over the coordination channel. The lock's intent stands: connection parameters, OAuth, and tokens remain adapter-managed; pi-profile never writes them.
-Amended again (removal of `/mcp enable|disable`): `/mcp enable|disable` was removed. Registering `/mcp` in pi-profile collided with and hijacked `pi-mcp-adapter`'s native `/mcp` command namespace (TUI setup, status, tools, reconnect, etc.). Profile-scoped MCP selections are declared statically in `profiles.json` (`mcps` array) and enforced via runtime allowlisting. All `/mcp` commands are returned entirely to `pi-mcp-adapter`.
-Amended again (thin-shell refactor): the `pi.events` coordination channel (`pi-profile:mcp-allowlist:v1`) is retired. MCP server restrictions are enforced by generating an instance `<agentDir>/mcp.json` containing only the profile-allowed servers (or symlinking the real `mcp.json` when unrestricted). The lock to `pi-mcp-adapter` stands: connection parameters, OAuth, and tokens remain adapter-managed; pi-profile never writes credentials.
+## 背景
 
-MCP support is delegated entirely to the optional `pi-mcp-adapter` package. `profiles.json` never stores MCP connection parameters or credentials; server commands, addresses, OAuth, and tokens stay in adapter-managed configuration.
+MCP server 的连接参数、OAuth 与 token 是凭据，不是 profile 的资源配置。pi-profile 需要按 profile 限制可用 server，但不应该自己实现 server 管理。
 
-Considered alternative: pi-profile manages MCP configuration itself. Rejected because it would fork server management away from the adapter's single implementation and pull credentials into profile catalogs.
+## 决策
 
-Consequence: a profile that declares `mcp` fails to activate when the adapter is not installed; profiles without `mcp` work fine without it.
+MCP 支持完全委托给可选的 `pi-mcp-adapter` 包。profile 的 `mcps` 数组只声明启用哪些 server，并作为该 profile 的持久存储；连接参数、OAuth 与 token 全部留在 adapter 配置里，pi-profile 从不写入。
+
+pi-profile 不注册 `/mcp` 命令，不占用该命名空间。
+
+## 被否方案
+
+**pi-profile 自己管理 MCP 配置。** 否掉的理由：会把 server 管理从 adapter 的单一实现分叉出去，并把凭据引进 profile catalog。
+
+**曾实现的 `/mcp enable|disable` 命令已撤销。** 注册 `/mcp` 会与 `pi-mcp-adapter` 的原生命令命名空间冲突并劫持其 TUI setup、status、tools、reconnect 等子命令。所有 `/mcp` 命令返回 adapter。
+
+## 代价
+
+- profile 声明了 `mcps` 而 adapter 未安装时，该 profile 激活失败。不含 `mcps` 的 profile 不依赖 adapter。
+- profile 只能声明启用哪些 server，不能声明 server 的连接方式；新增或修改 server 必须走 adapter 自己的配置面。

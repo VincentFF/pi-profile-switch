@@ -1,5 +1,17 @@
-# No profile inheritance
+# 不做 profile 继承
 
-Profiles do not support inheritance: no `extends`, no deep merge, no array append. A project profile with the same name fully replaces the global one; variants are created by copying a complete definition in the CRUD wizard under a new name.
+## 背景
 
-Inheritance would be hard to retrofit once users depend on replacement semantics, so the simple rule is chosen now: every profile definition is self-contained and readable without resolving a parent chain.
+基于既有 profile 创建变体是常见需求。最省事的做法是让 profile 用 `extends` 指向一个父 profile，只写差异字段。
+
+## 决策
+
+profile 不支持继承：没有 `extends`，没有深度合并，没有数组追加。项目同名 profile 完整替换全局同名 profile。需要变体时，在 CRUD 向导里复制完整定义并以新名字创建。
+
+## 被否方案
+
+**`extends` 加深度合并。** 否掉的理由：继承一旦被用户依赖就难以回头；每个定义自包含，才能不解析父链就读懂一个 profile 实际选了什么。
+
+## 代价
+
+- 变体与原型重复字段，原型改动不会传播到变体。

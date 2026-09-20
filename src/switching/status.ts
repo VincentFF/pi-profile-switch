@@ -36,7 +36,7 @@ export interface StatusReport {
 	mcp: { enabled: string[]; disabled: string[]; missing: string[] };
 	/** Glob delta versus the previous activation (prefixed names). */
 	delta?: { added: string[]; removed: string[] };
-	/** Glob references that matched nothing at resolution (ADR-0006). */
+	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
 	conflicts: StatusConflict[];
 }

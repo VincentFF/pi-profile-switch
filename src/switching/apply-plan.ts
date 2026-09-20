@@ -48,7 +48,7 @@ export interface LaunchPlanFile {
 		skills: Array<{ name: string; filePath: string }>;
 		extensions: Array<{ id: string; entry: string }>;
 	};
-	/** Glob references that matched nothing at resolution (ADR-0006). */
+	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
 	previousResolved?: {
 		skills: string[];

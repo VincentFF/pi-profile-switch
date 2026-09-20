@@ -1,6 +1,6 @@
 /**
  * ExtensionDiscovery: implicit, read-only discovery of selectable extensions
- * (ADR-0006/0007), so profiles can reference extensions without any
+ * (ADR-0007/0008), so profiles can reference extensions without any
  * registration step.
  *
  * Two implicit sources, both resolved by Pi itself:

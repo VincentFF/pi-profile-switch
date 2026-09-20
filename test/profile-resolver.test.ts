@@ -298,7 +298,7 @@ describe("overlay application (ticket 06)", () => {
 	});
 });
 
-describe("discovery-first extension references (ADR-0006)", () => {
+describe("discovery-first extension references (ADR-0007)", () => {
 	async function registryWithPackage(name: string): Promise<{ registry: DiscoveredExtensions; entry: string }> {
 		const root = path.join(fixture.agentDir, "npm", "node_modules", name);
 		await mkdir(root, { recursive: true });

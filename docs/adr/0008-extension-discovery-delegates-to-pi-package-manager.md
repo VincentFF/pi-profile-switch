@@ -1,37 +1,35 @@
-# Extension discovery delegates entry enumeration to Pi's package manager
+# extension 发现把入口枚举委托给 Pi 的 package manager
 
-Refines [ADR-0006](0006-discovery-first-extension-references.md) and [ADR-0007](0007-discovery-only-extension-filtering.md): discovery stays, its entry enumeration does not.
+细化 [ADR-0007](0007-discovery-only-extension-filtering.md)：发现保留，入口枚举不再自己实现。
 
-## Context
+## 背景
 
-ADR-0007 established "discover & filter": `ExtensionDiscovery` reads configured packages and loose extension files, and profiles reference the result. Discovery is unavoidable — a profile stores symbolic references ("pi-web-access"), the generated settings need concrete entry paths, and Pi has no runtime extension-toggle API.
+ADR-0007 确立了「发现并过滤」，但没有定下**由谁拥有发现规则**。`extension-discovery.ts` 手工重新实现了它们：读 `package.json#pi.extensions`、`stat` 每个声明入口、扫描 extensions 目录下的 `*.{ts,js}`、推导文件名 stem。Pi 在 `package-manager.js` 里解析同样的事实（`collectAutoExtensionEntries` → `resolveExtensionEntries` → `collectFilesFromPaths`，外加自己的 `+`/`-`/`!` 过滤与 ignore 规则）。
 
-What ADR-0007 did not settle is *who owns the discovery rules*. `extension-discovery.ts` re-implemented them by hand: read `package.json#pi.extensions`, `stat` each declared entry, scan the extensions dirs for `*.{ts,js}`, derive stems. Pi resolves the same facts in `package-manager.js` (`collectAutoExtensionEntries` → `resolveExtensionEntries` → `collectFilesFromPaths`, plus its own `+`/`-`/`!` filter and ignore-file handling).
+两套实现静默且反复地漂移：
 
-The two implementations drifted, silently and repeatedly:
+- **目录入口被丢弃。** `"extensions": ["./dist"]` 是所有编译型 extension 包的惯例，而手工检查要求常规文件，于是 `pi-web-access` 解析为空，激活失败并报 `unknown extension: "pi-web-access"`，同时 Pi 自己加载该包是正常的。这是暴露问题的那个 bug。
+- **忽略规则缺失。** `.gitignore`、dot-file、`node_modules` 排除与包级 include/exclude 过滤都不存在，可引用名列表里因此包含 Pi 永远不会加载的条目。
+- **缺口不可测。** 之后每一个新的 Pi 约定都要在这里补一份实现，而测试只用手工规则互相验证，无法发现与 Pi 的不一致。
 
-- **Directory entries** (`"extensions": ["./dist"]`, the convention for every compiled extension package) were dropped: the hand-rolled check required a regular file, so `pi-web-access` resolved to nothing and activation failed with `unknown extension: "pi-web-access"` even though Pi itself loaded the package. This is the bug that surfaced the problem.
-- `.gitignore`, dot-file, and `node_modules` exclusions, and the package-level include/exclude filters, were absent — so the selectable name list contained entries the spawned pi would never load.
-- Each future Pi convention (a new entry shape, a new ignore rule, a new precedence rule) would need a matching change here, with no test able to notice the gap: the tests only asserted the hand-rolled rules against themselves.
+代价是 120 多行镜像逻辑，且只能被验证为内部自洽，永远无法被验证为与 Pi 一致。
 
-The cost of the duplication was 120+ lines of mirror logic that could only ever be verified as *internally* consistent — never as consistent with Pi.
+## 决策
 
-## Decision
+保留发现，删除重新实现的规则。`ExtensionDiscovery` 改为调用 Pi 自己的 resolver 并对其输出分类：
 
-Keep discovery, delete the re-implemented rules. `ExtensionDiscovery` now calls Pi's own resolver and classifies its output:
+1. **入口枚举交给 Pi。** `discoverImplicitExtensions` 构造 `DefaultPackageManager`（`SettingsManager.create(cwd, agentDir, { projectTrusted })`）并调用 `resolve(async () => "skip")`。包入口、散装文件、优先级与过滤全部来自 Pi 的实现。
+2. **`"skip"` 保持只读契约。** `onMissing: "skip"` 把缺失来源报告为不存在，而不是安装它们——不安装、不联网、不改文件系统。扩展模块仍从不 import。
+3. **pi-profile 只保留自己的概念。** 可引用 ID、项目覆盖全局的合并、`select()` 解析与错误文案。包来源的条目按配置来源分组，条目始终是具体文件，因为这是 Pi resolver 的输出形态。
+4. **路径引用指向文件。** profile 的绝对路径或 `~/` 引用必须指向 extension 文件，不做目录展开：loader 逐字 import 引用路径，生成的包 allowlist 也只匹配文件路径，接受目录只会把失败往后挪。
 
-1. **Entry enumeration is Pi's.** `discoverImplicitExtensions` builds a `DefaultPackageManager` (`SettingsManager.create(cwd, agentDir, { projectTrusted })`) and calls `resolve(async () => "skip")`. Package entries, loose files, precedence, and filters all come from Pi's implementation.
-2. **`"skip"` preserves the read-only contract.** `onMissing: "skip"` reports missing sources as absent instead of installing them: no install, no network, no filesystem mutation. Extension modules are still never imported (`resolve()` only reads files; `DefaultResourceLoader.getExtensions()`, which *does* execute code, remains off-limits and is not used).
-3. **pi-profile-switch keeps only its own concepts**: selectable IDs (package name / `name:relative-path` / loose stem), project-over-global merging, `select()` resolution (name, source alias, entry ID, glob, absolute path), and error messages. Package-origin entries are grouped per configured source; entries are always concrete files, because that is what Pi's resolver produces.
-4. **Path references name files.** A profile path reference (absolute or `~/`) must point at an extension file. Directory expansion is deliberately not added: the loader imports referenced paths verbatim, and the generated package allowlist matches file paths, so accepting a directory would only move the failure.
+## 被否方案
 
-## Consequences
+**继续手工实现发现规则**（ADR-0007 的实现）。否掉的理由见背景三条漂移。
 
-- Pi is the single source of truth for what is loadable, so the selectable list cannot disagree with what the spawned pi loads. Fixes to Pi's discovery (or new conventions) reach pi-profile-switch for free; the `./dist` class of bug cannot recur.
-- Additive: compiled packages (`./dist`), packages declaring subdirectory `index.ts` entries, and `<agentDir>/extensions/<dir>/index.ts` extensions become selectable for the first time.
-- Narrowing: entries excluded by `.gitignore`, dot-file or `node_modules` rules, or by a package's own `+`/`-`/`!` filter, are no longer advertised — they were never loadable, so the change removes names that could only fail at spawn.
-- Object-form settings package entries (`{ source, extensions: [...] }`) now honor their filters, matching Pi's behavior.
-- A package whose entries are all filtered out stays listed with zero entries, so selecting it reports "declares no extension entries" instead of "unknown extension".
-- Project-scope packages and untrusted projects are still excluded, from the same inputs as before (`cwd`, `agentDir`, `projectTrusted`); `resolve()` gates project directories on `isProjectTrusted()` exactly like Pi.
-- `resolve()` also resolves skills, prompts, and themes. That work is redundant with `SkillRegistry` (which reads the same sources through its own Pi-SDK path), but it is read-only, runs in parallel with skill discovery, and needs no subprocess or network — accepted rather than re-implementing a narrower resolver Pi does not expose.
-- Failure mode if the SDK changes: `resolve()` is public API (`PackageManager`), whereas the rules it replaces were not; the coupling is now to a supported contract instead of to unexported internals.
+## 代价
+
+- 耦合到 `resolve()`（`PackageManager` 的公开 API），而不是未导出的内部实现。SDK 变更会失败在明确的位置，而不是静默漂移。
+- `resolve()` 同时解析 skills、prompts 与 themes，这部分工作与 `SkillRegistry` 重复。它是只读的、与 skill 发现并行运行、不需要子进程或网络，因此接受，而不是重新实现一个 Pi 未暴露的更窄 resolver。
+- 被 `.gitignore`、dot-file、`node_modules` 规则或包自身过滤器排除的条目不再出现在可引用列表里。它们本来也无法加载。
+- 全部入口被过滤掉的包仍会列出，但入口为零；选中时报 `declares no extension entries`，而不是 `unknown extension`。

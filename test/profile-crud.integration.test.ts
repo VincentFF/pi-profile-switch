@@ -6,7 +6,7 @@
  * mode-aware message and the catalogs stay untouched; switching
  * (`/profile use`) is NOT CRUD and keeps working. The wizard flows are
  * unit-tested at the command handler with a TUI-mode fake context
- * (test/extension.test.ts); interactive TUI acceptance is manual.
+ * (test/extension.test.ts); no automated test drives the interactive wizard UI.
  */
 
 import { readFile, rm, writeFile } from "node:fs/promises";

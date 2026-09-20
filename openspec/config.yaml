@@ -1,0 +1,50 @@
+schema: spec-driven
+
+context: |
+  项目：pi-profile-switch，一个 Pi package。TypeScript ESM，Vitest，conventional commits。
+
+  语言：散文用中文，技术术语保留英文。OpenSpec 解析依赖的记号保持英文原文：
+  ## Purpose、## ADDED/MODIFIED/REMOVED/RENAMED Requirements、### Requirement:、
+  #### Scenario:、SHALL/MUST。术语以 CONTEXT.md 为准，其中标注的规避词不得使用。
+
+  OpenSpec 的 capability 指 openspec/specs/ 下的能力域，与本项目术语表中的 Resource 无关。
+
+  能力域（openspec/specs/ 的一级路径，不要新增）：
+  - profile-catalog：profile 定义、全局与项目 catalog、覆盖规则与 CRUD
+  - resource-reference：skills/extensions/MCP servers/tools 的发现与引用解析、失败分级
+  - launcher：CLI 参数、初始 profile 选择、trust 守门、instance 生成
+  - in-session-switch：/profile 命令族、runtime overlay、reload 与回滚
+
+  新事实的归属判据（一个事实只写一次）：
+  - 会因行为调整而变 → openspec/specs/ 的行为契约
+  - 只有换实现机制才变 → docs/architecture/overview.md
+  - 难以撤销、且有被否掉的有吸引力替代方案 → docs/adr/ 新增编号文件
+  - 产品定位、目标、非目标 → docs/prd.md
+  - 术语定义 → CONTEXT.md
+  - 安装与命令用法 → README.md
+  需要引用别处的事实时写链接，不重抄。
+
+rules:
+  proposal:
+    - '必须包含 "## Doc Impact" 段，逐项列出 docs/prd.md、docs/architecture/overview.md、CONTEXT.md、docs/adr/ 的影响；无影响写 "none: <理由>"。'
+    - '新增用户可见配置字段时，说明它为何不能由发现机制或默认值替代。'
+    - '纯文档或纯重构改动设 skip_specs: true，不为满足校验编造 requirement。'
+  specs:
+    - '不复述 docs/adr/ 的论证，也不复述 docs/architecture/overview.md 的机制；需要时写链接。'
+    - '只写可验证的行为：输入、输出、错误条件、边界。实现类名与库选择不写入。'
+    - 'requirement 与 scenario 的名称和正文用中文，SHALL/MUST 保留英文。'
+  design:
+    - '若设计引入难以撤销的决策（文件格式、进程架构、外部依赖锁），在该决策处写一行 "ADR required: <slug>"。'
+  tasks:
+    - '文档同步任务必须写出具体文件路径，不写“更新相关文档”。'
+
+operations:
+  apply:
+    guidance:
+      - '改完源码运行 npm run check 与 npm test。'
+  archive:
+    guidance:
+      - '归档前逐项核对 proposal 的 "## Doc Impact" 是否已落地；未落地不要归档。'
+      - 'design 里标了 "ADR required" 的，归档前必须在 docs/adr/ 新增编号文件。'
+      - '发现主 spec 与 docs/architecture/overview.md 复述同一事实时，保留更贴近读者的那一处，另一处改成链接。'
+      - '主 spec 的 ## Purpose 若与 docs/prd.md 的定位段重复，删掉 spec 里的重述，改为链接 PRD。'
