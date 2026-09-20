@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  项目：pi-profile-switch，一个 Pi package。TypeScript ESM，Node 20+，Vitest，conventional commits。
+  项目：pi-profile-switch，一个 Pi package。TypeScript ESM，Vitest，conventional commits。
 
   语言：散文用中文，技术术语保留英文。OpenSpec 解析依赖的记号保持英文原文：
   ## Purpose、## ADDED/MODIFIED/REMOVED/RENAMED Requirements、### Requirement:、
@@ -35,7 +35,6 @@ rules:
     - 'requirement 与 scenario 的名称和正文用中文，SHALL/MUST 保留英文。'
   design:
     - '若设计引入难以撤销的决策（文件格式、进程架构、外部依赖锁），在该决策处写一行 "ADR required: <slug>"。'
-    - '禁止改写既有 ADR 的决定。决策变化时新增编号文件，并在旧文件顶部加一行 "**Superseded by ADR-XXXX.**"。'
   tasks:
     - '文档同步任务必须写出具体文件路径，不写“更新相关文档”。'
 
@@ -43,7 +42,6 @@ operations:
   apply:
     guidance:
       - '改完源码运行 npm run check 与 npm test。'
-      - '新增 ADR 用 docs/adr/ 中下一个可用编号，不复用旧编号。'
   archive:
     guidance:
       - '归档前逐项核对 proposal 的 "## Doc Impact" 是否已落地；未落地不要归档。'
