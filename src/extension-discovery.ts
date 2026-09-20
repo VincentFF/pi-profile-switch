@@ -1,27 +1,34 @@
 /**
  * ExtensionDiscovery: implicit, read-only discovery of selectable extensions
- * (ADR-0006), so profiles can reference extensions without any
+ * (ADR-0006/0007), so profiles can reference extensions without any
  * registration step.
  *
- * Two implicit sources, both Pi-native and side-effect free:
- * - Configured user packages: each package's `package.json#pi.extensions`
- *   declares its extension entry files; the package name (or an alias like
- *   the `npm:` source string) is the profile-facing reference.
- * - Loose extension files: `<agentDir>/extensions/*.{ts,js}` and, for
- *   trusted projects, `<projectDir>/.pi/extensions/*.{ts,js}`, referenced by
- *   filename stem.
+ * Two implicit sources, both resolved by Pi itself:
+ * - Configured packages: `DefaultPackageManager.resolve()` expands each
+ *   package's `package.json#pi.extensions` (files, directories, globs, the
+ *   package's own `+`/`-`/`!` filters, `.gitignore` rules) exactly like the
+ *   spawned pi does at startup. The package name — or an alias such as the
+ *   `npm:` source string — is the profile-facing reference.
+ * - Loose extension files: `<agentDir>/extensions/**` and, for trusted
+ *   projects, `<projectDir>/.pi/extensions/**`, referenced by a path-derived
+ *   ID ("conventions", "guards/review").
  *
- * Discovery never executes extension code and never installs anything: a
- * package contributes entries only for declared files that exist on disk.
+ * This module owns naming, merging, selection, and glob expansion only. Entry
+ * enumeration is Pi's own, so a new Pi convention (or a fix to one) cannot
+ * silently diverge from what the spawned pi actually loads.
+ *
+ * Discovery stays side-effect free: `resolve()` is called with
+ * `onMissing: "skip"`, which never installs and never touches the network,
+ * and extension code is never imported.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { DefaultPackageManager, SettingsManager, type PackageManager } from "@earendil-works/pi-coding-agent";
 import { minimatch } from "minimatch";
 
 import { isRecord } from "./json-file.ts";
-import type { ConfiguredPackageRoot } from "./settings-generator.ts";
 
 export interface DiscoveredPackage {
 	/** Selectable package name: package.json "name", or the source minus its
@@ -32,12 +39,14 @@ export interface DiscoveredPackage {
 	source: string;
 	/** Absolute install/local root of the package. */
 	root: string;
-	/** Absolute paths of declared `pi.extensions` entries that exist on disk. */
+	/** Absolute paths of the package's enabled extension entries. */
 	entries: string[];
 }
 
 export interface DiscoveredLocalExtension {
-	/** Selectable ID: the filename stem ("conventions" for conventions.ts). */
+	/** Selectable ID: the path under the extensions dir, without the file
+	 *  extension and with a trailing "/index" collapsed ("conventions",
+	 *  "guards/review"). */
 	id: string;
 	entry: string;
 }
@@ -72,7 +81,7 @@ function toPosix(filePath: string): string {
 	return filePath.split(path.sep).join("/");
 }
 
-async function exists(filePath: string): Promise<boolean> {
+async function isFile(filePath: string): Promise<boolean> {
 	try {
 		return (await stat(filePath)).isFile();
 	} catch {
@@ -205,7 +214,7 @@ export class DiscoveredExtensions {
 				const pkgEntries = this.#packageEntries(pkg);
 				if (pkgEntries.length === 0) {
 					throw new ExtensionError(
-						`package "${reference}" declares no extension entries (its pi.extensions files are missing or shadowed by local files)`,
+						`package "${reference}" declares no extension entries (missing on disk, filtered out by its settings package entry, or shadowed by local files)`,
 					);
 				}
 				for (const pkgEntry of pkgEntries) add(pkgEntry);
@@ -220,7 +229,7 @@ export class DiscoveredExtensions {
 				const resolved = reference.startsWith("~/")
 					? path.join(process.env.HOME ?? "", reference.slice(1))
 					: path.resolve(reference);
-				if (!(await exists(resolved))) {
+				if (!(await isFile(resolved))) {
 					throw new ExtensionError(`extension path not found: ${resolved}`);
 				}
 				add({ id: resolved, entry: resolved, origin: "path" });
@@ -232,8 +241,6 @@ export class DiscoveredExtensions {
 		return { entries: [...byPath.values()], unmatched };
 	}
 }
-
-const LOOSE_FILE_PATTERN = /\.(ts|js)$/;
 
 /** Derives a package name from its source string when package.json is
  *  unreadable: strips the npm:/git:/github: prefix and any version spec
@@ -252,93 +259,141 @@ export function packageNameFromSource(source: string): string {
 	return name;
 }
 
-/** Reads one installed package's declared extension entries. Packages
- *  without a readable package.json or without `pi.extensions` contribute
- *  nothing (skills-only packages are the common case). Declared entries
- *  missing on disk are skipped — the spawned pi reports load errors itself. */
-async function readPackageExtensions(pkg: ConfiguredPackageRoot): Promise<DiscoveredPackage | undefined> {
-	if (pkg.root === undefined) return undefined;
-	let manifest: unknown;
-	try {
-		manifest = JSON.parse(await readFile(path.join(pkg.root, "package.json"), "utf8"));
-	} catch {
-		return undefined; // not installed yet or unreadable — nothing selectable
-	}
-	if (!isRecord(manifest)) return undefined;
-	const pi = manifest.pi;
-	const declared =
-		isRecord(pi) && Array.isArray(pi.extensions) ? pi.extensions.filter((e): e is string => typeof e === "string") : [];
-	if (declared.length === 0) return undefined;
-	const entries: string[] = [];
-	for (const rel of declared) {
-		const entry = path.resolve(pkg.root, rel);
-		if (await exists(entry)) entries.push(entry);
-	}
-	if (entries.length === 0) return undefined;
-	const name = typeof manifest.name === "string" && manifest.name.length > 0 ? manifest.name : packageNameFromSource(pkg.source);
-	return { name, source: pkg.source, root: pkg.root, entries };
+/** Selectable ID for a loose extension file: its path under the extensions
+ *  dir without the file extension, with a trailing "/index" collapsed so a
+ *  directory-style extension is referenced by its directory name. */
+function looseId(filePath: string, extensionsDir: string): string {
+	const rel = toPosix(path.relative(extensionsDir, filePath));
+	const collapsed = rel.replace(/(?:^|\/)index\.(ts|js)$/, "");
+	const base = collapsed === "" ? rel : collapsed;
+	return base.replace(/\.(ts|js)$/, "");
 }
 
-/** Lists loose extension files in one directory; missing dir → empty.
- *  A `.ts`/`.js` stem pair resolves to the `.ts` file (Pi's convention:
- *  TypeScript sources are the canonical form) and is reported, not silent. */
-async function scanLooseDir(dir: string, warnings: string[]): Promise<DiscoveredLocalExtension[]> {
-	let files: string[];
+/** Reads a package's display name from its manifest, falling back to the
+ *  source string when the manifest is missing or has no name. */
+async function readPackageName(root: string, source: string): Promise<string> {
 	try {
-		files = (await readdir(dir)).filter((name) => LOOSE_FILE_PATTERN.test(name));
+		const manifest: unknown = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+		if (isRecord(manifest) && typeof manifest.name === "string" && manifest.name.length > 0) return manifest.name;
 	} catch {
-		return [];
+		// Not installed (a skipped source) or unreadable — derive from source.
 	}
-	const byStem = new Map<string, string>();
-	for (const name of files.sort()) {
-		const stem = name.replace(LOOSE_FILE_PATTERN, "");
-		const full = path.join(dir, name);
-		const existing = byStem.get(stem);
-		if (existing !== undefined) {
-			if (!existing.endsWith(".ts") && name.endsWith(".ts")) {
-				warnings.push(`extension "${stem}" exists as both .ts and .js in ${dir}; the .ts file is used`);
-				byStem.set(stem, full);
+	return packageNameFromSource(source);
+}
+
+export interface DiscoverExtensionsOptions {
+	/** Project working directory (Pi's cwd). */
+	cwd: string;
+	/** The user's real agent dir (e.g. ~/.pi/agent). */
+	agentDir: string;
+	/**
+	 * Whether the project at `cwd` is trusted (the launcher's trust check).
+	 * Untrusted projects contribute nothing: no project settings packages, no
+	 * `.pi/extensions` files. Defaults to false.
+	 */
+	projectTrusted?: boolean;
+}
+
+/** Builds the Pi package manager that owns discovery for one cwd/agentDir. */
+function createPackageManager(options: DiscoverExtensionsOptions): PackageManager {
+	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, {
+		projectTrusted: options.projectTrusted ?? false,
+	});
+	return new DefaultPackageManager({
+		cwd: options.cwd,
+		agentDir: options.agentDir,
+		settingsManager,
+	});
+}
+
+interface PackageGroup {
+	source: string;
+	root: string;
+	entries: string[];
+	/** Some declared entry exists on disk, even if all are disabled — keeps
+	 *  "package is filtered out" distinguishable from "package has no
+	 *  extensions". */
+	known: boolean;
+}
+
+/** Runs Pi's own resolution once and classifies the result into pi-profile's
+ *  selectable model. */
+async function resolveImplicit(packageManager: PackageManager, agentDir: string): Promise<ImplicitExtensionDiscovery> {
+	const warnings: string[] = [];
+	// `skip` is the API's read-only mode: missing sources are reported as
+	// absent instead of triggering an install (no network, no mutation).
+	const resolved = await packageManager.resolve(async () => "skip");
+	// Sort for deterministic IDs and ordering: Pi preserves directory read
+	// order, which varies by filesystem.
+	const resources = [...resolved.extensions].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+	const groups = new Map<string, PackageGroup>();
+	const userLoose = new Map<string, DiscoveredLocalExtension>();
+	const projectLoose = new Map<string, DiscoveredLocalExtension>();
+
+	for (const resource of resources) {
+		const { source, scope, origin, baseDir } = resource.metadata;
+		if (origin === "package") {
+			// Project-scope packages install under the project's .pi/npm, which
+			// generated global-scope settings cannot reference.
+			if (scope === "project") continue;
+			if (baseDir === undefined) continue;
+			const group = groups.get(source) ?? { source, root: baseDir, entries: [], known: false };
+			// A local source with no manifest and no convention dir resolves to
+			// the directory itself; the loader imports paths verbatim, so it is
+			// not selectable and must not be advertised.
+			if (await isFile(resource.path)) {
+				group.known = true;
+				if (resource.enabled && !group.entries.includes(resource.path)) group.entries.push(resource.path);
 			}
+			groups.set(source, group);
 			continue;
 		}
-		byStem.set(stem, full);
-	}
-	return [...byStem.entries()].map(([id, entry]) => ({ id, entry }));
-}
-
-export async function discoverImplicitExtensions(options: {
-	agentDir: string;
-	/** Configured user-scope packages with resolved roots (launcher discovery). */
-	packages: ConfiguredPackageRoot[];
-	/** Trusted project dir; untrusted projects are never scanned. */
-	projectDir?: string;
-}): Promise<ImplicitExtensionDiscovery> {
-	const warnings: string[] = [];
-
-	const packages: DiscoveredPackage[] = [];
-	for (const pkg of options.packages) {
-		const discovered = await readPackageExtensions(pkg);
-		if (discovered !== undefined) packages.push(discovered);
-	}
-
-	const globalLocal = await scanLooseDir(path.join(options.agentDir, "extensions"), warnings);
-	const merged = new Map<string, DiscoveredLocalExtension>(globalLocal.map((entry) => [entry.id, entry]));
-	if (options.projectDir !== undefined) {
-		// Project loose files override same-ID global ones, mirroring the
-		// project-over-global catalog override convention.
-		for (const entry of await scanLooseDir(path.join(options.projectDir, ".pi", "extensions"), warnings)) {
-			merged.set(entry.id, entry);
+		// Settings-declared paths (`extensions: [...]`) are already concrete
+		// files, so profiles reference them directly instead of through a
+		// derived ID; only auto-discovered directory contents become IDs.
+		if (!resource.enabled || source !== "auto") continue;
+		const extensionsDir = path.join(baseDir ?? agentDir, "extensions");
+		const id = looseId(resource.path, extensionsDir);
+		const target = scope === "project" ? projectLoose : userLoose;
+		const existing = target.get(id);
+		if (existing === undefined) {
+			target.set(id, { id, entry: resource.path });
+			continue;
+		}
+		// Pi reports a `.ts`/`.js` stem pair as two entries; keep its
+		// TypeScript-first convention, but say so instead of silently
+		// shadowing the file the loader would pick.
+		if (!existing.entry.endsWith(".ts") && resource.path.endsWith(".ts")) {
+			warnings.push(`extension "${id}" exists as both .ts and .js in ${extensionsDir}; the .ts file is used`);
+			target.set(id, { id, entry: resource.path });
 		}
 	}
+
+	const packages: DiscoveredPackage[] = [];
+	for (const group of groups.values()) {
+		if (!group.known) continue;
+		packages.push({
+			name: await readPackageName(group.root, group.source),
+			source: group.source,
+			root: group.root,
+			entries: group.entries,
+		});
+	}
+
+	// Project loose files override same-ID global ones, mirroring the
+	// project-over-global catalog override convention.
+	const merged = new Map(userLoose);
+	for (const [id, entry] of projectLoose) merged.set(id, entry);
 
 	return { packages, local: [...merged.values()], warnings };
 }
 
-export async function discoverExtensions(options: {
-	agentDir: string;
-	packages: ConfiguredPackageRoot[];
-	projectDir?: string;
-}): Promise<DiscoveredExtensions> {
+export async function discoverImplicitExtensions(options: DiscoverExtensionsOptions): Promise<ImplicitExtensionDiscovery> {
+	return await resolveImplicit(createPackageManager(options), options.agentDir);
+}
+
+export async function discoverExtensions(options: DiscoverExtensionsOptions): Promise<DiscoveredExtensions> {
 	const raw = await discoverImplicitExtensions(options);
 	return new DiscoveredExtensions(raw.packages, raw.local, raw.warnings);
 }

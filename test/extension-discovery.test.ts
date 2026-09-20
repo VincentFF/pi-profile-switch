@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -20,26 +20,60 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-/** Creates a fake installed package under the fixture's npm root. */
+async function settingsPath(): Promise<string> {
+	return path.join(fixture.agentDir, "settings.json");
+}
+
+async function readSettings(): Promise<Record<string, unknown>> {
+	try {
+		return JSON.parse(await readFile(await settingsPath(), "utf8")) as Record<string, unknown>;
+	} catch {
+		return {};
+	}
+}
+
+/** Registers package entries in the global settings, the way a user configures
+ *  them: discovery reads Pi's settings, not a list handed to it. */
+async function addConfiguredPackages(entries: unknown[]): Promise<void> {
+	const settings = await readSettings();
+	const packages = Array.isArray(settings.packages) ? settings.packages : [];
+	await writeFile(await settingsPath(), JSON.stringify({ ...settings, packages: [...packages, ...entries] }));
+}
+
+/** Overwrites the configured package entries (used for object-form filters). */
+async function setConfiguredPackages(entries: unknown[]): Promise<void> {
+	const settings = await readSettings();
+	await writeFile(await settingsPath(), JSON.stringify({ ...settings, packages: entries }));
+}
+
+/** Creates a fake installed npm package under the fixture's npm root and
+ *  configures it, so Pi's own resolver finds it. Declared entries without a
+ *  .ts/.js suffix are created as directories holding index.js — the shape a
+ *  compiled extension package such as pi-web-access uses. */
 async function addPackage(
 	name: string,
-	options: { extensions?: string[]; manifestName?: string },
+	options: { extensions?: string[]; version?: string },
 ): Promise<{ source: string; root: string }> {
 	const root = path.join(fixture.agentDir, "npm", "node_modules", ...name.split("/"));
 	await mkdir(root, { recursive: true });
-	const manifest: Record<string, unknown> = {};
-	if (options.manifestName !== undefined) manifest.name = options.manifestName;
-	else manifest.name = name;
+	const manifest: Record<string, unknown> = { name, version: options.version ?? "1.0.0" };
 	if (options.extensions !== undefined) {
 		manifest.pi = { extensions: options.extensions };
 		for (const rel of options.extensions) {
-			const file = path.join(root, rel);
-			await mkdir(path.dirname(file), { recursive: true });
-			await writeFile(file, "export default function () {}\n");
+			const target = path.join(root, rel);
+			await mkdir(path.dirname(target), { recursive: true });
+			if (/\.(ts|js)$/.test(rel)) {
+				await writeFile(target, "export default function () {}\n");
+			} else {
+				await mkdir(target, { recursive: true });
+				await writeFile(path.join(target, "index.js"), "export default function () {}\n");
+			}
 		}
 	}
 	await writeFile(path.join(root, "package.json"), JSON.stringify(manifest));
-	return { source: `npm:${name}`, root };
+	const source = `npm:${name}`;
+	await addConfiguredPackages([source]);
+	return { source, root };
 }
 
 async function addLoose(dir: string, name: string): Promise<string> {
@@ -65,7 +99,7 @@ describe("discoverImplicitExtensions", () => {
 	it("discovers a package's declared pi.extensions entries", async () => {
 		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
 
-		const result = await discoverImplicitExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.warnings).toEqual([]);
 		expect(result.packages).toEqual([
@@ -78,22 +112,59 @@ describe("discoverImplicitExtensions", () => {
 		]);
 	});
 
+	it("discovers a directory entry, the shape compiled extension packages declare", async () => {
+		// pi-web-access declares "pi": { "extensions": ["./dist"] }; entry
+		// enumeration is Pi's, so the built file is what becomes selectable.
+		const pkg = await addPackage("pi-web-access", { extensions: ["./dist"] });
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.packages).toEqual([
+			{
+				name: "pi-web-access",
+				source: "npm:pi-web-access",
+				root: pkg.root,
+				entries: [path.join(pkg.root, "dist", "index.js")],
+			},
+		]);
+	});
+
 	it("lists every entry of a multi-entry package", async () => {
 		const pkg = await addPackage("pi-multi", { extensions: ["./index.ts", "./panel.ts"] });
 
-		const result = await discoverImplicitExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
-		expect(result.packages[0]?.entries).toHaveLength(2);
+		expect(result.packages[0]?.entries).toEqual([
+			path.join(pkg.root, "index.ts"),
+			path.join(pkg.root, "panel.ts"),
+		]);
 	});
 
-	it("skips skills-only packages and packages without readable manifests", async () => {
-		const skillsOnly = await addPackage("pi-skills", {});
-		const notInstalled = { source: "npm:ghost", root: path.join(fixture.agentDir, "npm", "node_modules", "ghost") };
+	it("honors the object form of a settings package entry", async () => {
+		const pkg = await addPackage("pi-multi", { extensions: ["./a.ts", "./b.ts"] });
+		await setConfiguredPackages([{ source: "npm:pi-multi", extensions: ["a.ts"] }]);
 
-		const result = await discoverImplicitExtensions({
-			agentDir: fixture.agentDir,
-			packages: [skillsOnly, notInstalled, { source: "npm:unresolved", root: undefined }],
-		});
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.packages[0]?.entries).toEqual([path.join(pkg.root, "a.ts")]);
+	});
+
+	it("keeps a package whose entries are all filtered out, without entries", async () => {
+		await addPackage("pi-multi", { extensions: ["./a.ts"] });
+		await setConfiguredPackages([{ source: "npm:pi-multi", extensions: [] }]);
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.packages.map((pkg) => ({ name: pkg.name, entries: pkg.entries }))).toEqual([
+			{ name: "pi-multi", entries: [] },
+		]);
+	});
+
+	it("skips skills-only packages and packages that are not installed", async () => {
+		await addPackage("pi-skills", {});
+		await addConfiguredPackages(["npm:pi-ghost", path.join(fixture.root, "absent")]);
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.packages).toEqual([]);
 	});
@@ -102,7 +173,7 @@ describe("discoverImplicitExtensions", () => {
 		const pkg = await addPackage("pi-partial", { extensions: ["./index.ts"] });
 		await rm(path.join(pkg.root, "index.ts"));
 
-		const result = await discoverImplicitExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.packages).toEqual([]);
 	});
@@ -111,14 +182,25 @@ describe("discoverImplicitExtensions", () => {
 		const root = path.join(fixture.agentDir, "npm", "node_modules", "pi-noname");
 		await mkdir(root, { recursive: true });
 		await writeFile(path.join(root, "index.ts"), "export default function () {}\n");
-		await writeFile(path.join(root, "package.json"), JSON.stringify({ pi: { extensions: ["./index.ts"] } }));
+		await writeFile(
+			path.join(root, "package.json"),
+			JSON.stringify({ version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
+		);
+		await addConfiguredPackages(["npm:pi-noname"]);
 
-		const result = await discoverImplicitExtensions({
-			agentDir: fixture.agentDir,
-			packages: [{ source: "npm:pi-noname", root }],
-		});
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.packages[0]?.name).toBe("pi-noname");
+	});
+
+	it("does not advertise a local source that resolves to a bare directory", async () => {
+		const dir = path.join(fixture.root, "not-a-package");
+		await mkdir(dir, { recursive: true });
+		await addConfiguredPackages([dir]);
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.packages).toEqual([]);
 	});
 
 	it("discovers loose files by filename stem, .ts preferred over a .js sibling", async () => {
@@ -127,7 +209,7 @@ describe("discoverImplicitExtensions", () => {
 		await addLoose(dir, "conventions.js");
 		const other = await addLoose(dir, "review-guard.js");
 
-		const result = await discoverImplicitExtensions({ agentDir: fixture.agentDir, packages: [] });
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.local).toEqual([
 			{ id: "conventions", entry: tsFile },
@@ -136,25 +218,82 @@ describe("discoverImplicitExtensions", () => {
 		expect(result.warnings.some((warning) => warning.includes("conventions"))).toBe(true);
 	});
 
+	it("names a directory-style loose extension after its directory", async () => {
+		const dir = path.join(fixture.agentDir, "extensions");
+		const entry = await addLoose(path.join(dir, "guards"), "index.ts");
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.local).toEqual([{ id: "guards", entry }]);
+	});
+
+	it("leaves dot-files and gitignored files unselectable", async () => {
+		const dir = path.join(fixture.agentDir, "extensions");
+		const kept = await addLoose(dir, "kept.ts");
+		await addLoose(dir, ".hidden.ts");
+		await addLoose(dir, "ignored.ts");
+		await writeFile(path.join(dir, ".gitignore"), "ignored.ts\n");
+
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		expect(result.local).toEqual([{ id: "kept", entry: kept }]);
+	});
+
 	it("project loose files override same-stem global ones for trusted projects", async () => {
 		await addLoose(path.join(fixture.agentDir, "extensions"), "shared.ts");
 		const projectFile = await addLoose(path.join(fixture.cwd, ".pi", "extensions"), "shared.ts");
 
 		const result = await discoverImplicitExtensions({
+			cwd: fixture.cwd,
 			agentDir: fixture.agentDir,
-			packages: [],
-			projectDir: fixture.cwd,
+			projectTrusted: true,
 		});
 
 		expect(result.local).toEqual([{ id: "shared", entry: projectFile }]);
 	});
 
-	it("never scans the project dir when it is not passed (untrusted)", async () => {
+	it("never scans the project when it is not trusted", async () => {
 		await addLoose(path.join(fixture.cwd, ".pi", "extensions"), "secret.ts");
+		const projectRoot = path.join(fixture.cwd, ".pi", "npm", "node_modules", "pi-project");
+		await mkdir(projectRoot, { recursive: true });
+		await writeFile(path.join(projectRoot, "index.ts"), "export default function () {}\n");
+		await writeFile(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ name: "pi-project", version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
+		);
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-project"] }),
+		);
 
-		const result = await discoverImplicitExtensions({ agentDir: fixture.agentDir, packages: [] });
+		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.local).toEqual([]);
+		expect(result.packages).toEqual([]);
+	});
+
+	it("excludes trusted project packages, which global-scope settings cannot reference", async () => {
+		const pkg = await addPackage("pi-user", { extensions: ["./index.ts"] });
+		const projectRoot = path.join(fixture.cwd, ".pi", "npm", "node_modules", "pi-project");
+		await mkdir(projectRoot, { recursive: true });
+		await writeFile(path.join(projectRoot, "index.ts"), "export default function () {}\n");
+		await writeFile(
+			path.join(projectRoot, "package.json"),
+			JSON.stringify({ name: "pi-project", version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
+		);
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-project"] }),
+		);
+
+		const result = await discoverImplicitExtensions({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			projectTrusted: true,
+		});
+
+		expect(result.packages.map((entry) => entry.name)).toEqual(["pi-user"]);
+		expect(result.packages[0]?.root).toBe(pkg.root);
 	});
 
 	it("an empty discovery result is a valid input", () => {
@@ -164,13 +303,10 @@ describe("discoverImplicitExtensions", () => {
 
 describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	it("selects extensions by package name, alias, and loose file stem", async () => {
-		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
-		const loose = await addLoose(path.join(fixture.agentDir, "extensions"), "conventions.ts");
+		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addLoose(path.join(fixture.agentDir, "extensions"), "conventions.ts");
 
-		const extensions = await discoverExtensions({
-			agentDir: fixture.agentDir,
-			packages: [pkg],
-		});
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		const selection = await extensions.select(["pi-mcp-adapter", "conventions"]);
 		expect(selection.unmatched).toEqual([]);
@@ -181,9 +317,33 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 		expect(aliasSelection.entries.map((e) => e.id)).toEqual(["pi-mcp-adapter"]);
 	});
 
+	it("selects a directory-declared package entry", async () => {
+		const pkg = await addPackage("pi-web-access", { extensions: ["./dist"] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		const selection = await extensions.select(["pi-web-access"]);
+
+		expect(selection.entries).toEqual([
+			{
+				id: "pi-web-access",
+				entry: path.join(pkg.root, "dist", "index.js"),
+				packageName: "pi-web-access",
+				origin: "package",
+			},
+		]);
+	});
+
+	it("reports a package whose settings filter disables every entry", async () => {
+		await addPackage("pi-multi", { extensions: ["./a.ts"] });
+		await setConfiguredPackages([{ source: "npm:pi-multi", extensions: [] }]);
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+
+		await expect(extensions.select(["pi-multi"])).rejects.toThrow(/declares no extension entries/);
+	});
+
 	it("selects multi-entry packages as a whole and by individual entry", async () => {
-		const pkg = await addPackage("multi-ext", { extensions: ["./a.ts", "./b.ts"] });
-		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		await addPackage("multi-ext", { extensions: ["./a.ts", "./b.ts"] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		const all = await extensions.select(["multi-ext"]);
 		expect(all.entries.map((e) => e.id).sort()).toEqual(["multi-ext:a.ts", "multi-ext:b.ts"]);
@@ -193,20 +353,20 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	});
 
 	it("expands glob patterns and records unmatched globs", async () => {
-		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
 		await addLoose(path.join(fixture.agentDir, "extensions"), "pi-guard.ts");
 		await addLoose(path.join(fixture.agentDir, "extensions"), "other.ts");
 
-		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		const selection = await extensions.select(["pi-*", "nonexistent-*"]);
 		expect(selection.entries.map((e) => e.id).sort()).toEqual(["pi-guard", "pi-mcp-adapter"]);
 		expect(selection.unmatched).toEqual(["nonexistent-*"]);
 	});
 
-	it("resolves absolute and home-relative paths directly, rejecting relative paths", async () => {
+	it("resolves absolute paths directly, rejecting relative and missing ones", async () => {
 		const absFile = await addLoose(path.join(fixture.root, "external"), "custom.ts");
-		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		const selection = await extensions.select([absFile]);
 		expect(selection.entries).toEqual([{ id: absFile, entry: absFile, origin: "path" }]);
@@ -217,7 +377,7 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 
 	it("fails on unknown literal with candidates and did-you-mean, never mentioning resources.json", async () => {
 		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
-		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		try {
 			await extensions.select(["pi-mcp-adaptr"]);
@@ -230,10 +390,10 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	});
 
 	it("resolves local file over package name collision, keeping package selectable by source", async () => {
-		const pkg = await addPackage("my-tool", { extensions: ["./index.ts"] });
+		await addPackage("my-tool", { extensions: ["./index.ts"] });
 		const localFile = await addLoose(path.join(fixture.agentDir, "extensions"), "my-tool.ts");
 
-		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 		expect(extensions.warnings().some((w) => w.includes("my-tool"))).toBe(true);
 
 		const localSelection = await extensions.select(["my-tool"]);

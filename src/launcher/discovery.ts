@@ -54,10 +54,12 @@ export async function discoverLauncherResources(
 		.map((pkg) => ({ source: pkg.source, root: resolvePackageRoot(pkg.source, pkg.installedPath, context.agentDir) }));
 	const [skills, extensions] = await Promise.all([
 		discoverSkills(context),
+		// Extension discovery resolves through Pi's own package manager, so it
+		// only needs the same cwd/agentDir/trust inputs as skill discovery.
 		discoverExtensions({
+			cwd: context.cwd,
 			agentDir: context.agentDir,
-			packages: configured,
-			projectDir: context.projectTrusted ? context.cwd : undefined,
+			projectTrusted: context.projectTrusted,
 		}),
 	]);
 	return { skills, packages: configured, extensions };
