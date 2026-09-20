@@ -148,22 +148,16 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 ### 运行时状态的 seed
 
-镜像是生成时刻的快照：只有生成时已存在于真实 agentDir 的条目会被链接。**运行时才被创建**的条目必须靠 seed，否则会落在 instance 内——既随 instance 被清扫，也让第三方记录写进 instance 路径。名单只收录有观察证据的条目（不能靠推断）；未被收录的条目由清扫保留并告警，不会静默销毁。
+镜像是生成时刻的快照：只有生成时已存在于真实 agentDir 的条目会被链接。**运行时才被创建**的条目必须靠 seed，否则会落在 instance 内——既随 instance 被清扫，也让第三方记录写进 instance 路径。
 
-| 路径 | 形态 | seed 方式与理由 |
-| --- | --- | --- |
-| `sessions/` | 目录 | 真实 agentDir 下缺失时创建；空目录语义无歧义 |
-| `missions/` | 目录 | 同上；pi-subagents 的 mission store 根 |
-| `auth.json` | 文件 | instance 内建立指向真实 agentDir 的软链，目标不存在时也建立（悬空） |
-| `models-store.json` | 文件 | 同上 |
+当前 seed 哪些路径、以什么形态，是行为契约，见 `openspec/specs/launcher/spec.md` 的「instance 运行时状态 seed」。这里只记两条维护规则：
 
-文件不能预先创建，因为内容属于 Pi：悬空软链让 Pi 的 `existsSync` 视为“不存在”，写入时穿透软链在真实 agentDir 落成真文件，格式始终由 Pi 拥有。seed 步骤放在失效链接清理之后，否则悬空链会被自身的清理逻辑删掉。
+- 名单只收录有**观察证据**的条目（某次真实运行确实在 agentDir 下创建了它），不能靠推断；未被收录的条目由清扫保留并告警，不会静默销毁。
+- 目录可以直接创建（空目录语义无歧义）；文件不能预先创建，因为内容属于 Pi。文件用**允许悬空**的软链：Pi 的 `existsSync` 视为“不存在”，写入时穿透软链在真实 agentDir 落成真文件，格式始终由 Pi 拥有。seed 步骤放在失效链接清理之后，否则悬空链会被自身的清理逻辑删掉。
 
 ### instance 清扫
 
-启动时（生成本次 instance 之前）清扫 instance 根下的 `launch-` 目录：`pid` 指向的进程已退出则回收，仍存活则保留；`pid` 缺失或不可解析时，mtime 超过宽限期才回收。退出时不做删除：任何退出方式都会结束 pid，下次启动的清扫必然收敛。
-
-目录内含 pi-profile 未生成的条目（既不是符号链接，也不是受管生成物，包括受管目录内部的条目）时保留该目录并把警告写到 stderr，绝不静默销毁：那可能是某个扩展写在 agentDir 下的状态。判定不比对真实 agentDir——seed 之后同名条目在两边都存在，拿它当“已有对应物”会把 instance 内的真实数据误当可删。
+清扫发生在启动时（生成本次 instance 之前），而不是退出时：任何退出方式都会结束 pid，下次启动的清扫必然收敛，因此不必在信号路径上放删除逻辑。判定规则、保留条件与警告要求是契约，见 `openspec/specs/launcher/spec.md` 的「陈旧 instance 清扫」；该判定为何不比对真实 agentDir，见 ADR-0010。
 
 ### 生成 settings.json 示例
 

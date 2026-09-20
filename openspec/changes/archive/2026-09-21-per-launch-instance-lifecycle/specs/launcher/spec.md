@@ -19,7 +19,7 @@ profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤�
 #### Scenario: instance 路径按 profile 固定
 
 - **WHEN** 连续两次以同一个 profile 启动
-- **THEN** 两次使用不同的 instance 路径（scenario 名保留自旧契约，断言已由本次变更反转）
+- **THEN** 两次使用不同的 instance 路径（scenario 名沿用旧契约的措辞，断言已反转）
 
 #### Scenario: 未受限制时 MCP 配置直接链接
 
