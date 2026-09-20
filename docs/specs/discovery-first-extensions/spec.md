@@ -54,8 +54,11 @@ Status: done
 
 - `/profile resource list` 仍只列显式条目（隐式发现结果经错误指引与 status 可见；列表合并展示留作后续）。
 - git:/github:/本地路径源的包按同一机制处理（root 可解析即可），不为它们引入额外语义。
-- Pi 的 extensions 目录加载子目录形态（含 index 的目录）不做隐式发现——仅文件。
+- 项目级 scope 的包不做隐式发现（其安装位置在项目 `.pi/npm` 下，全局 scope 的生成 settings 引用不到）。
+- 路径引用不展开目录——必须指向 extension 文件（见 ADR-0008）。
 
 ## Comments
+
+- 2026-10-05 修订（ADR-0008）：条目枚举改为委托 Pi 的 `DefaultPackageManager.resolve(() => "skip")`，删掉手写的 `package.json#pi.extensions` / 目录扫描逻辑。原实现漏掉目录型入口（`"extensions": ["./dist"]`，编译型包的通行写法），导致已安装的 `pi-web-access` 被判为 `unknown extension`。修订后新增：目录型入口、`<agentDir>/extensions/<dir>/index.ts`、包级过滤器与 ignore 规则（`.gitignore`/点文件/`node_modules`）语义一致。`discoverExtensions` 签名改为 `{ cwd, agentDir, projectTrusted }`（与 `discoverSkills` 同形），不再接收 `packages`。
 
 - 2026-09-13 实现完成：代码（extension-discovery.ts 新增；resource-registry.ts / profile-resolver.ts / discovery.ts / initial-profile.ts / settings-generator.ts / apply-plan.ts / status.ts / resource-registry-store.ts / resource-crud.ts 修改；schema 与 examples 更新）+ 测试（新增 extension-discovery.test.ts 与 registry/resolver 用例；全套 42 文件 327 测试通过，`tsc --noEmit` 干净）。配套文档：ADR-0006、PRD 资源引用一节、架构 ResourceRegistry 契约、CONTEXT.md 术语。

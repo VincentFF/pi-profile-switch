@@ -39,7 +39,7 @@ async function extensionsWith(names: string[] = []): Promise<DiscoveredExtension
 		const entry = path.join(extensionsDir, `${name}.ts`);
 		await writeFile(entry, "export default function () {}\n");
 	}
-	return discoverExtensions({ agentDir: fixture.agentDir, packages: [] });
+	return discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 }
 
 describe("resolveProfile", () => {
@@ -304,11 +304,17 @@ describe("discovery-first extension references (ADR-0006)", () => {
 		await mkdir(root, { recursive: true });
 		const entry = path.join(root, "index.ts");
 		await writeFile(entry, "export default function () {}\n");
-		await writeFile(path.join(root, "package.json"), JSON.stringify({ name, pi: { extensions: ["./index.ts"] } }));
-		const registry = await discoverExtensions({
-			agentDir: fixture.agentDir,
-			packages: [{ source: `npm:${name}`, root }],
-		});
+		await writeFile(
+			path.join(root, "package.json"),
+			JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
+		);
+		// Discovery reads Pi's configured packages, so the package has to be
+		// configured in the fixture's settings like a real installation.
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ packages: [`npm:${name}`] }),
+		);
+		const registry = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 		return { registry, entry };
 	}
 

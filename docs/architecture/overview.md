@@ -77,7 +77,9 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `ExtensionDiscovery`
 
-**Interface**：只读发现可引用的 extension 并提供 `select()` 筛选（ADR-0007）——已配置 user 包的 `package.json#pi.extensions` 入口（存在才计入）与 `<agentDir>/extensions`、已信任项目 `.pi/extensions` 的散装 `.ts`/`.js` 文件。从不执行扩展代码，从不安装包。`select()` 支持包名、source 别名、多入口条目 ID、散装文件名 stem、glob 与绝对/主目录路径。
+**Interface**：只读发现可引用的 extension 并提供 `select()` 筛选（ADR-0007/0008）——条目枚举完全交给 Pi 自己的 `DefaultPackageManager.resolve(() => "skip")`：已配置 user 包的 `package.json#pi.extensions` 入口（文件、目录、glob、包级 `+`/`-`/`!` 过滤器、ignore 规则均按 Pi 语义）与 `<agentDir>/extensions`、已信任项目 `.pi/extensions` 下 Pi 实际会加载的文件。从不执行扩展代码，从不安装包（`"skip"` 即只读语义）。`select()` 支持包名、source 别名、多入口条目 ID、散装文件名 stem、glob 与绝对/主目录路径。
+
+**Implementation**：`discoverExtensions({ cwd, agentDir, projectTrusted })` 与 `discoverSkills` 同形，内部自建 `SettingsManager` + `DefaultPackageManager`；本模块只拥有自己的概念——可引用 ID、项目覆盖全局的合并、`select()` 解析与错误文案。路径引用必须指向 extension 文件（目录不展开：loader 逐字 import 路径，生成的包 allowlist 也只匹配文件路径）。
 
 **Rules**：散装/包 ID 碰撞由散装胜出并记录 warning（包经 source 别名仍可选）；未知字面量错误必须可行动（候选列表 + did-you-mean）；零匹配 glob 进入 `unmatched` 警告而非静默；相对路径引用报错（需用绝对路径或 `~/`）。无 `resources.json`，无 `dependsOn` 或 `alwaysOn` 概念。
 

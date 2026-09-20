@@ -40,7 +40,7 @@ Any capability a profile references: skill, extension, MCP server, or tool.
 The mapping from skill name to final `SKILL.md`, mirroring Pi's current full discovery result. Re-resolved on every start or reload.
 
 **ExtensionDiscovery**:
-The discovery and selection view for extensions (ADR-0007): configured packages (`pi.extensions` entries, referenced by package name or source alias) and loose files in the standard extensions directories (`<agentDir>/extensions/*.{ts,js}` and trusted project `.pi/extensions/*.{ts,js}`), referenced by filename stem, glob, or absolute/home-relative path. Zero extra configuration files required; pure discover-and-filter.
+The discovery and selection view for extensions (ADR-0007/0008): configured user packages (referenced by package name or source alias) and loose files in the standard extensions directories (`<agentDir>/extensions` and trusted project `.pi/extensions`), referenced by filename stem, glob, or absolute/home-relative path. Zero extra configuration files required; pure discover-and-filter. Entry enumeration is Pi's own (`DefaultPackageManager.resolve` with `onMissing: "skip"`), so what a profile can reference is exactly what the spawned pi would load; pi-profile-switch only owns IDs, merging, selection, and error text.
 
 **McpServerRegistry**:
 The MCP server names and states discovered by `pi-mcp-adapter`. Owned by the adapter; pi-profile-switch only references server names.
