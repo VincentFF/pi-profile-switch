@@ -34,7 +34,7 @@ profile 只接管四类资源（skills、extensions、MCP servers、tools），�
 | --- | --- | --- |
 | agentDir 级（`skills`、`extensions`） | 发现根随 `PI_CODING_AGENT_DIR` 移走，天然不发现；settings 数组写入选中的绝对路径 | 白名单（附加路径） |
 | `~/.agents/skills`（HOME 级，无法抑制） | 始终自动发现，因此 settings 数组写入 `-<绝对路径>` 强制排除未选中项 | 补集排除 |
-| 项目级（`.pi/skills`、`.pi/extensions`、ancestor `.agents/skills`） | 归 Pi：instance 的 `trust.json` 链接指向真实 trust store，Pi 按已存储决定自动发现。命名 profile 的生成 settings 仍置 `defaultProjectTrust: "never"`，但那只是不发起信任询问（已存储决定优先于它） | 不由 profile 收窄 |
+| 项目级（`.pi/skills`、`.pi/extensions`、ancestor `.agents/skills`） | 归 Pi：instance 的 `trust.json` 链接指向真实 trust store，Pi 按已存储决定自动发现。命名 profile 的生成 settings 仍置 `defaultProjectTrust: "never"`，但那只是不发起信任询问（已存储决定优先于它）。收窄契约见 `openspec/specs/resource-reference/spec.md` 的「项目级资源的收窄边界」 | 不由 profile 收窄 |
 | packages（用户已配置包） | settings `packages` 数组改为对象形式，按类型写 allowlist glob | 白名单 |
 | packages（项目） | 由 Pi 原生读取项目 `.pi/settings.json` 并装到项目 `.pi/npm` 下；generated settings 不合并项目 settings，因此不会成为全局 npm 根的安装副作用 | 原生 |
 | tools | settings `defaultTools` 作为内置工具 boot 基线；extension 在 `session_start` 与 reload 后按 `pi-profile.json` 里的 tool 引用对 Pi 实时注册表展开并 `setActiveTools` | 白名单 |
@@ -140,7 +140,7 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 | `pi-profile.json` | 本轮 ActivationPlan，供 pi 内 extension 在 `session_start` 读取 |
 | `mcp.json` | 过滤后的 MCP server 集合 |
 | `APPEND_SYSTEM.md` | profile 的 `instructions`，Pi 原生追加到 system prompt |
-| `trust.json` | 指向真实 trust store 的符号链接，每种 profile 都建立（目标不存在时同样建立）；Pi 的项目级发现以它为准，会话内切换不改动它 |
+| `trust.json` | 指向真实 trust store 的符号链接，Pi 的项目级发现以它为准，会话内切换不改动它；形态与建立条件见 `openspec/specs/launcher/spec.md` 的「instance 目录契约」 |
 | `pid` | 子进程活性标记，上次启动的清扫据此判定回收 |
 | `extensions` | 受管目录，使 agentDir 级 extension 只经白名单进入 |
 

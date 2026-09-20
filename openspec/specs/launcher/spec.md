@@ -1,7 +1,7 @@
 # launcher Specification
 
 ## Purpose
-定义 `pi-profile` 启动器在 Pi 进程出现之前做了什么：如何划分哪些参数属于启动器、哪些属于 Pi，如何选定初始 profile，什么情况必须在启动前失败，以及项目资源在什么条件下才被读取。
+定义 `pi-profile` 启动器在 Pi 进程出现之前做了什么：如何划分哪些参数属于启动器、哪些属于 Pi，如何选定初始 profile，什么情况必须在启动前失败，以及项目范围中哪些内容由 pi-profile 读取。
 
 ## Requirements
 
@@ -73,7 +73,9 @@
 
 ### Requirement: 项目信任守门
 
-项目范围的一切——catalog、运行时状态、资源、MCP 配置——SHALL 只在项目已受信任时才被读取。
+项目范围中由 pi-profile 自己读取的内容——项目 catalog、项目运行时状态、项目 MCP 配置——SHALL 只在项目已受信任时才被读取。
+
+项目级资源（`.pi/skills`、`.pi/extensions`、ancestor `.agents/skills`、`.pi/prompts`、`.pi/themes`、`.pi/settings.json`）的可见性 SHALL 由 Pi 自己按项目信任判定决定。pi-profile MUST NOT 通过 Generated settings 收窄、附加或排除这些资源。
 
 信任判定 SHALL 按以下顺序取第一个成立的结果：一次性的 `--approve` 或 `--no-approve` 输入；项目不含任何需要信任的资源时视为受信任；真实 `trust.json` 中最近祖先的已存储决定；用户的全局 `defaultProjectTrust` 设置为 `always`；否则不受信任。
 
@@ -81,17 +83,22 @@
 
 信任判定 MUST NOT 执行任何 extension 代码。
 
-`default` profile SHALL 保持 Pi 原生的信任行为：启动器记录的信任 flag SHALL 重新附加给 Pi 进程。命名 profile MUST NOT 转发该 flag。
+启动器记录的信任 flag SHALL 重新附加给被启动的 Pi 进程，且 SHALL 对所有 profile 一致：一次性信任输入在任何 profile 下都 SHALL 同时决定项目 catalog 的可读性与 Pi 的项目级可见性，MUST NOT 出现两者分歧。
 
 #### Scenario: 一次性信任输入优先于已存储决定
 
 - **WHEN** `trust.json` 对当前项目记录了不受信任，而本次启动带 `--approve`
 - **THEN** 项目资源在本次启动可读
 
+#### Scenario: 命名 profile 同样转发信任 flag
+
+- **WHEN** 以 `pi-profile doc -- --no-approve` 启动
+- **THEN** Pi 进程收到 `--no-approve`，且该 flag 不出现在用户参数中
+
 #### Scenario: 项目的 defaultProjectTrust 为 ask
 
 - **WHEN** 用户全局设置为 `ask`，且 `trust.json` 无当前项目的记录
-- **THEN** 项目视为不受信任，项目范围的文件与资源都不被读取
+- **THEN** 项目 catalog 与项目运行时状态都不被读取，命名 profile 的项目级资源也不可见
 
 #### Scenario: 只存在 pi-profile 的项目文件
 
@@ -115,9 +122,9 @@
 
 instance 中的受管文件（`settings.json`、`pi-profile.json`、`mcp.json`、`APPEND_SYSTEM.md`、`trust.json`、`pid`、`extensions`）由 pi-profile 生成；`pid` SHALL 记录本次启动的 Pi 子进程号。真实 agentDir 下的其余文件与目录 SHALL 以符号链接镜像进 instance，并在链接时清理已失效的链接。
 
-`trust.json` SHALL 只在 `default` profile 下链接；命名 profile MUST NOT 链接它。
+`trust.json` SHALL 是指向真实 agentDir 对应路径的符号链接，且 SHALL 对每一种 profile 都成立：MUST NOT 因为 profile 不是 `default` 而省略或移除，也 MUST NOT 因为目标文件尚不存在而不建立（Pi 通过该链接写入的信任决定落在真实 agentDir）。
 
-profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤结果，只包含被允许的 server 定义。对于配置来源中的共享位置（用户级标准 MCP 配置、项目 `.mcp.json`）里未被允许的 server，instance 配置 SHALL 显式标记其被禁用，MUST NOT 仅靠省略：这些位置由 adapter 直接读取，不省略不标记就不会失效。
+profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤结果，只包含被允许的 server 定义。对于用户级共享位置（`~/.config/mcp/mcp.json`、`~/.agents/mcp.json`、`~/.agents/mcp/mcp.json`）里未被允许的 server，instance 配置 SHALL 显式标记其被禁用，MUST NOT 仅靠省略：这些位置由 adapter 直接读取，不省略不标记就不会失效。项目级位置（项目 `.mcp.json`、项目 `.pi/mcp.json`）定义的 server SHALL 保持启用，MUST NOT 被标记禁用。
 
 用户配置文件 MUST NOT 被修改。
 
@@ -134,12 +141,17 @@ profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤�
 #### Scenario: 命名 profile 不链接 trust.json
 
 - **WHEN** 以命名 profile 启动
-- **THEN** instance 内不存在 `trust.json` 链接
+- **THEN** instance 内存在 `trust.json` 链接，且它指向真实 agentDir 对应路径（scenario 名沿用旧契约的措辞，断言已反转）
 
 #### Scenario: 受限的 MCP 配置令未选中的共享 server 失效
 
 - **WHEN** profile 声明 `mcps` 只允许 server A，而用户级共享配置中还定义了 server B
 - **THEN** instance 的 `mcp.json` 含 A 的定义，并以禁用标记含 B，B 不连接
+
+#### Scenario: 项目来源的 MCP server 不被禁用
+
+- **WHEN** profile 声明 `mcps` 只允许 server A，而项目 `.mcp.json` 定义了 server P
+- **THEN** instance 的 `mcp.json` 中 P 不带禁用标记，P 仍可用
 
 ### Requirement: 陈旧 instance 清扫
 
@@ -223,7 +235,7 @@ profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤�
 #### Scenario: 参数顺序
 
 - **WHEN** 启动器构建 Pi 的 argv
-- **THEN** 依序为 extension 参数、`default` profile 下的信任 flag、用户参数
+- **THEN** 依序为 extension 参数、记录到的一次性信任 flag（存在时）、用户参数
 
 #### Scenario: 退出码转发
 
