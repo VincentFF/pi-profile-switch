@@ -118,6 +118,8 @@ instance 中的受管文件（`settings.json`、`pi-profile.json`、`mcp.json`�
 
 `trust.json` SHALL 只在 `default` profile 下链接；命名 profile MUST NOT 链接它。
 
+profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤结果，只包含被允许的 server 定义。对于配置来源中的共享位置（用户级标准 MCP 配置、项目 `.mcp.json`）里未被允许的 server，instance 配置 SHALL 显式标记其被禁用，MUST NOT 仅靠省略：这些位置由 adapter 直接读取，不省略不标记就不会失效。
+
 用户配置文件 MUST NOT 被修改。
 
 #### Scenario: instance 路径按 profile 固定
@@ -134,6 +136,11 @@ instance 中的受管文件（`settings.json`、`pi-profile.json`、`mcp.json`�
 
 - **WHEN** 以命名 profile 启动
 - **THEN** instance 内不存在 `trust.json` 链接
+
+#### Scenario: 受限的 MCP 配置令未选中的共享 server 失效
+
+- **WHEN** profile 声明 `mcps` 只允许 server A，而用户级共享配置中还定义了 server B
+- **THEN** instance 的 `mcp.json` 含 A 的定义，并以禁用标记含 B，B 不连接
 
 ### Requirement: 子进程启动
 
