@@ -132,7 +132,7 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 路径 `~/.pi-profile-switch/instances/<profile>/agent`（`PI_PROFILE_SWITCH_DIR` 可覆盖根），经 `PI_CODING_AGENT_DIR` 交给 pi。同一个 profile 每次启动复用同一路径。
 
-**受管文件**（`MANAGED_INSTANCE_FILES`，不由 symlink 镜像提供）：
+受管文件与镜像规则是契约，见 `openspec/specs/launcher/spec.md` 的「instance 目录契约」。以下是每个受管文件的用途：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -141,10 +141,10 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 | `mcp.json` | 过滤后的 MCP server 集合 |
 | `APPEND_SYSTEM.md` | profile 的 `instructions`，Pi 原生追加到 system prompt |
 | `trust.json` | 只在 `default` profile 下链接；命名 profile 不链接，项目资源的信任判定由 launcher 独占 |
-| `pid` | 子进程活性标记，供下一次启动的清扫判定 |
+| `pid` | 子进程活性标记，当前无消费者 |
 | `extensions` | 受管目录，使 agentDir 级 extension 只经白名单进入 |
 
-**其余全部镜像**：`syncAgentSymlinks` 把真实 agentDir 下的所有其他文件与目录逐个软链进 instance，并清理断链。`auth.json`、`models.json`、`npm/`、`git/`、`bin/`、`sessions/` 都由此进入——`sessions/` 因此保留 Pi 原生的分目录结构，且 session 文件始终写在真实 agentDir。用户配置文件从不被修改。
+真实 agentDir 下的其余条目都保持原位，靠符号链接进入 instance。`auth.json`、`models.json`、`npm/`、`git/`、`bin/`、`sessions/` 因此不被复制，`sessions/` 保留 Pi 原生的分目录结构，session 文件始终写在真实 agentDir。用户配置文件从不被修改。
 
 ### 生成 settings.json 示例
 
