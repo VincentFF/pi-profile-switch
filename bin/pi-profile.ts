@@ -16,7 +16,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ExtensionError } from "../src/extension-discovery.ts";
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
-import { sweepStaleRuntimeDirs } from "../src/launcher/runtime-cleanup.ts";
+import { sweepStaleInstances } from "../src/launcher/runtime-cleanup.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
 import { McpConfigError, MissingMcpAdapterError } from "../src/mcp-config.ts";
 import { CatalogError } from "../src/profile-catalog.ts";
@@ -36,10 +36,13 @@ try {
 	for (const warning of warnings) {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
-	// Stale per-launch runtime dirs (dead pid, or no pid past the grace
-	// window) are swept before this launch materializes its own. Best-effort:
-	// sweep errors never block the launch.
-	await sweepStaleRuntimeDirs(agentDir);
+	// Stale per-launch instance dirs (dead pid, or no pid past the grace
+	// window) are swept before this launch materializes its own. Directories
+	// holding state pi-profile did not generate are kept and reported instead of
+	// deleted (ADR-0010). Best-effort: sweep errors never block the launch.
+	for (const warning of await sweepStaleInstances()) {
+		console.error(`pi-profile: warning: ${warning}`);
+	}
 	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings, projectDir });
 	process.exitCode = await spawnPi({
 		generated,

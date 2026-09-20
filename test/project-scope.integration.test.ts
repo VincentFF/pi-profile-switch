@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 const BIN = path.resolve("bin/pi-profile.ts");
@@ -142,7 +142,7 @@ describe("launcher integration: project scope and trust", () => {
 
 			// The generated settings merged the trusted project's unmanaged keys
 			// and still suppress project auto-discovery.
-			const runtimeDir = path.join(fixture.profileSwitchDir, "instances", "impl", "agent");
+			const runtimeDir = await soleInstanceDir(fixture);
 			const generated = JSON.parse(
 				await readFile(path.join(runtimeDir, "settings.json"), "utf8"),
 			);

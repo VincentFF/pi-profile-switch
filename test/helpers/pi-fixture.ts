@@ -35,6 +35,30 @@ export async function createPiFixture(): Promise<PiFixture> {
 	return { root, cwd, agentDir, profileSwitchDir };
 }
 
+/** Absolute paths of the per-launch instance dirs under the fixture's
+ *  instances root, sorted. */
+export async function launchInstanceDirs(fixture: PiFixture): Promise<string[]> {
+	const root = path.join(fixture.profileSwitchDir, "instances");
+	try {
+		const entries = await readdir(root, { withFileTypes: true });
+		return entries
+			.filter((entry) => entry.isDirectory() && entry.name.startsWith("launch-"))
+			.map((entry) => path.join(root, entry.name))
+			.sort();
+	} catch {
+		return [];
+	}
+}
+
+/** The single per-launch instance dir a fixture run produced. */
+export async function soleInstanceDir(fixture: PiFixture): Promise<string> {
+	const dirs = await launchInstanceDirs(fixture);
+	if (dirs.length !== 1) {
+		throw new Error(`expected exactly one instance dir, found ${dirs.length}: ${dirs.join(", ")}`);
+	}
+	return dirs[0]!;
+}
+
 /** Registers a skill in the fixture agent dir's global skills directory. */
 export async function addGlobalSkill(fixture: PiFixture, name: string): Promise<void> {
 	const dir = path.join(fixture.agentDir, "skills", name);

@@ -126,14 +126,14 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 	);
 });
 
-describe("launcher integration: runtime dir cleanup", () => {
-	function runtimeRoot(): string {
-		return path.join(fixture.agentDir, "pi-profile", "runtime");
+describe("launcher integration: instance dir cleanup", () => {
+	function instancesRoot(): string {
+		return path.join(fixture.profileSwitchDir, "instances");
 	}
 
-	async function launchDirNames(): Promise<string[]> {
+	async function instanceDirNames(): Promise<string[]> {
 		try {
-			return (await readdir(runtimeRoot())).filter((entry) => entry.startsWith("launch-")).sort();
+			return (await readdir(instancesRoot())).filter((entry) => entry.startsWith("launch-")).sort();
 		} catch {
 			return [];
 		}
@@ -148,10 +148,10 @@ describe("launcher integration: runtime dir cleanup", () => {
 	}
 
 	it(
-		"sweeps a pre-seeded stale launch dir (dead pid) at startup",
+		"sweeps a pre-seeded stale instance dir (dead pid) at startup",
 		{ timeout: 45_000 },
 		async () => {
-			const stale = path.join(runtimeRoot(), "launch-staleTest");
+			const stale = path.join(instancesRoot(), "launch-staleTest");
 			await mkdir(stale, { recursive: true });
 			await writeFile(path.join(stale, "pid"), String(await deadPid()));
 
@@ -162,9 +162,10 @@ describe("launcher integration: runtime dir cleanup", () => {
 			try {
 				await rpc.commandNames();
 				expect(existsSync(stale)).toBe(false);
-				// Under the new architecture, no new launch dirs are created in the legacy root.
-				const names = await launchDirNames();
-				expect(names).toHaveLength(0);
+				// Only this launch's own instance dir remains.
+				const names = await instanceDirNames();
+				expect(names).toHaveLength(1);
+				expect(existsSync(path.join(instancesRoot(), names[0]!, "settings.json"))).toBe(true);
 			} finally {
 				await rpc.close();
 				await rpc.waitForExit();
@@ -173,14 +174,27 @@ describe("launcher integration: runtime dir cleanup", () => {
 	);
 
 	it(
-		"converges across launches: the previous session's dir is swept by the next launch",
+		"converges across launches: the previous dir is reclaimed or explicitly reported, never silently dropped",
 		{ timeout: 90_000 },
 		async () => {
-			// This test is testing the legacy cleanup mechanism. We can mock a
-			// legacy dir with a dead PID and show it gets swept.
-			const stale = path.join(runtimeRoot(), "launch-previousSession");
-			await mkdir(stale, { recursive: true });
-			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+			const first = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await first.commandNames();
+			} finally {
+				await first.close();
+				await first.waitForExit();
+			}
+			const before = await instanceDirNames();
+			expect(before).toHaveLength(1);
+			const previousName = before[0]!;
+			const previousPath = path.join(instancesRoot(), previousName);
+			// The launched process is gone; its pid may however have been recycled
+			// by then (pid reuse keeps the dir one round longer by design), so pin
+			// a known-dead pid to make the convergence assertion deterministic.
+			await writeFile(path.join(previousPath, "pid"), String(await deadPid()));
 
 			const second = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -188,10 +202,23 @@ describe("launcher integration: runtime dir cleanup", () => {
 			});
 			try {
 				await second.commandNames();
-				const afterSecond = await launchDirNames();
-				// The dead legacy dir is swept.
-				expect(afterSecond).toHaveLength(0);
-				expect(existsSync(stale)).toBe(false);
+				const afterSecond = await instanceDirNames();
+				const stderr = second.stderr.join("");
+
+				// This launch always gets its own dir, never a reused one.
+				expect(afterSecond.filter((name) => !before.includes(name))).toHaveLength(1);
+
+				// A previous dir is only kept when it holds state pi-profile did not
+				// generate — Pi itself materializes auth.json / models-store.json
+				// inside the instance when the real agent dir lacks them. Either way
+				// the outcome is explicit: reclaimed, or reported on stderr.
+				if (existsSync(previousPath)) {
+					expect(stderr).toContain(`${previousPath} was not reclaimed`);
+					expect(afterSecond).toHaveLength(2);
+				} else {
+					expect(stderr).not.toContain(previousPath);
+					expect(afterSecond).toHaveLength(1);
+				}
 			} finally {
 				await second.close();
 				await second.waitForExit();

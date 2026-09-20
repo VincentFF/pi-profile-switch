@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { defaultPlan } from "../src/profile-resolver.ts";
-import { generateRuntimeDir } from "../src/settings-generator.ts";
+import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -74,22 +74,55 @@ describe("generateRuntimeDir (default profile)", () => {
 		);
 	});
 
-	it("places the runtime dir under the instances root", async () => {
-		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
-		expect(result.runtimeDir.startsWith(path.join(fixture.profileSwitchDir, "instances", "default", "agent"))).toBe(true);
+	it("creates a unique runtime dir per launch under the instances root", async () => {
+		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const second = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		const root = path.join(fixture.profileSwitchDir, "instances");
+		for (const result of [first, second]) {
+			expect(path.dirname(result.runtimeDir)).toBe(root);
+			expect(path.basename(result.runtimeDir).startsWith("launch-")).toBe(true);
+		}
+		expect(first.runtimeDir).not.toBe(second.runtimeDir);
 	});
 
-	it("cleans up dangling symlinks in the runtime dir when targets are deleted", async () => {
+	it("seeds the real agent dir's missions store and links it into the instance", async () => {
+		expect(existsSync(path.join(fixture.agentDir, "missions"))).toBe(false);
+
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		expect(existsSync(path.join(fixture.agentDir, "missions"))).toBe(true);
+		expect(await realpath(path.join(result.runtimeDir, "missions"))).toBe(
+			await realpath(path.join(fixture.agentDir, "missions")),
+		);
+	});
+
+	it("links an existing missions store without touching its content", async () => {
+		const store = path.join(fixture.agentDir, "missions", "projects", "abc");
+		await mkdir(store, { recursive: true });
+		const record = path.join(store, "mission.json");
+		await writeFile(record, "{}");
+
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		expect(await realpath(path.join(result.runtimeDir, "missions"))).toBe(
+			await realpath(path.join(fixture.agentDir, "missions")),
+		);
+		expect(await readFile(record, "utf8")).toBe("{}");
+	});
+
+	it("cleans up dangling symlinks when the runtime dir is rewritten in place (switch path)", async () => {
 		const tempFile = path.join(fixture.agentDir, "temp-file.txt");
 		await writeFile(tempFile, "hello");
 
-		const result1 = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
-		const linkedPath = path.join(result1.runtimeDir, "temp-file.txt");
-		expect(existsSync(linkedPath)).toBe(true);
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const linkedPath = path.join(result.runtimeDir, "temp-file.txt");
+		expect((await lstat(linkedPath)).isSymbolicLink()).toBe(true);
 
-		// Delete source file and re-sync
+		// Delete the source and rewrite the SAME runtime dir (what an in-session
+		// switch does: PI_CODING_AGENT_DIR cannot move).
 		await rm(tempFile);
-		await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
-		expect(existsSync(linkedPath)).toBe(false);
+		await writeRuntimeFiles(result.runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
+		await expect(lstat(linkedPath)).rejects.toThrow();
 	});
 });
