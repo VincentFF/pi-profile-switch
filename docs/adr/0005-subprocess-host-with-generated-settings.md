@@ -1,6 +1,6 @@
 # 子进程宿主与生成式 settings
 
-取代 ADR-0001。
+取代 ADR-0001。项目级资源的处置改由 [ADR-0011](0011-project-scope-belongs-to-pi.md) 决定。
 
 ## 背景
 

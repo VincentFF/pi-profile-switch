@@ -17,18 +17,20 @@
  * the spawned pi behaves exactly like native `pi`.
  *
  * For named profiles the generated settings encode the profile's selection
- * per the filtering model (see docs/architecture/overview.md):
+ * over user-scope resources only (see docs/architecture/overview.md):
  * - agentDir-scope resources: additive allowlist paths (the discovery root
  *   moved, so nothing auto-discovered from the real agent dir)
  * - `~/.agents` skills: always auto-discovered, so unselected ones are
  *   force-excluded with `-<path>` entries
  * - packages: user-configured package entries rewritten to object form with
  *   per-type allowlists (unmanaged types keep the user's key or Pi's default)
- * - `defaultProjectTrust: "never"` suppresses all project auto-discovery
- *   (project resources enter only through the trust-gated resolver)
- * - project `packages` are stripped from the settings merge (project
- *   packages are unsupported — the key would install into the global npm
- *   root as a launch side effect)
+ * - project-scope resources (project `.pi/skills`, project `.pi/extensions`,
+ *   ancestor `.agents/skills`) are never encoded: Pi discovers them natively
+ *   whenever the project is trusted, and the profile neither adds nor
+ *   excludes them
+ * - `defaultProjectTrust: "never"` only suppresses Pi's interactive trust
+ *   prompt (a stored decision in the real trust.json still applies); the
+ *   project's `.pi/settings.json` is not merged here — Pi reads it natively
  * - unmanaged kinds (prompts, themes) pass through: the user's arrays are
  *   preserved and the real agent dir's prompts/themes dirs re-included
  * - tools/model are written to generated settings (defaultTools,
@@ -74,11 +76,6 @@ export interface GenerateOptions {
 	projectDir?: string;
 	/** Required for selection plans; unused for the default profile. */
 	discovery?: DiscoveryContext;
-	/** The trusted project's `.pi/settings.json` content (already parsed).
-	 *  Only pass when the resolver's trust check passed; merged into the
-	 *  generated base per Pi's merge rules for selection plans. Ignored for
-	 *  the default profile (Pi reads project settings natively there). */
-	projectSettings?: Record<string, unknown>;
 }
 
 export interface GeneratedRuntime {
@@ -150,21 +147,6 @@ function toPosix(filePath: string): string {
 	return filePath.split(path.sep).join("/");
 }
 
-/** Mirrors Pi's own deepMergeSettings: plain objects merge recursively,
- *  everything else (arrays, primitives) is replaced by the override. */
-function deepMergeSettings(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
-	const result: Record<string, unknown> = { ...base };
-	for (const [key, overrideValue] of Object.entries(overrides)) {
-		if (overrideValue === undefined) continue;
-		const baseValue = result[key];
-		result[key] =
-			isRecord(baseValue) && isRecord(overrideValue)
-				? deepMergeSettings(baseValue, overrideValue)
-				: overrideValue;
-	}
-	return result;
-}
-
 function tryRealpath(p: string): string {
 	try {
 		return realpathSync(p);
@@ -194,27 +176,28 @@ function buildSelectionSettings(
 	agentDir: string,
 	discovery: DiscoveryContext,
 	runtimeDir: string,
+	projectDir?: string,
 ): Record<string, unknown> {
 	const settings = { ...userSettings };
 
 	// --- skills ---
-	// Project-scope selections are emitted before user-scope ones: Pi's
-	// same-name collision rule is first-wins, and project resources must keep
-	// their native priority (ticket 03).
-	const orderedSelectedSkills = [...plan.skills].sort((a, b) => {
-		const aProject = a.scope === "project" ? 0 : 1;
-		const bProject = b.scope === "project" ? 0 : 1;
-		return aProject - bProject;
-	});
+	// Only user-scope entries are encoded. Project-scope selections are
+	// skipped below: their visibility is Pi's, so the order they would have
+	// been emitted in carries no meaning.
 	const selectedPaths = new Set(plan.skills.map((skill) => skill.filePath));
 	const skillEntries: string[] = [];
-	for (const skill of orderedSelectedSkills) {
+	for (const skill of plan.skills) {
 		if (skill.origin === "package") continue; // encoded in the packages allowlist
+		// Project scope belongs to Pi: a trusted project's skills are discovered
+		// natively, so selecting one here would duplicate it and excluding one
+		// would contradict the profile's boundary.
+		if (skill.scope === "project") continue;
 		if (isUnderPath(skill.filePath, homeAgentsSkillsDir())) continue; // auto-discovered anyway
 		skillEntries.push(skill.filePath);
 	}
 	for (const skill of discovery.skills) {
 		if (skill.origin === "package") continue;
+		if (skill.scope === "project") continue;
 		if (selectedPaths.has(skill.filePath)) continue;
 		
 		// If the skill is in the real agentDir, Pi will discover it via the symlink.
@@ -240,7 +223,13 @@ function buildSelectionSettings(
 		.map((pkg) => ({ ...pkg, root: pkg.root }));
 	const packageExtensions = new Map<string, string[]>();
 	const extensionEntries: string[] = [];
+	const projectExtensionsDir =
+		projectDir !== undefined ? path.join(projectDir, ".pi", "extensions") : undefined;
 	for (const extension of plan.extensions) {
+		// Loose project extensions are discovered natively by Pi; an explicit
+		// path reference inside the project (outside `.pi/extensions`) is the
+		// profile's own selection and stays.
+		if (projectExtensionsDir !== undefined && isUnderPath(extension.entry, projectExtensionsDir)) continue;
 		const owner = packageRoots.find((pkg) => isUnderPath(extension.entry, pkg.root));
 		if (owner === undefined) {
 			extensionEntries.push(extension.entry);
@@ -316,8 +305,6 @@ export interface RuntimeFileOptions {
 	projectDir?: string;
 	/** Required for selection plans; unused for the default profile. */
 	discovery?: DiscoveryContext;
-	/** The trusted project's `.pi/settings.json` content (already parsed). */
-	projectSettings?: Record<string, unknown>;
 	/** Extra launch-plan fields written by the in-session switch path:
 	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
 	 *  tells the post-reload extension instance to save the selection;
@@ -363,21 +350,20 @@ async function computeSettings(
 		return settings;
 	}
 
-	// Selection plans: the trusted project's settings merge into the base
-	// per Pi's merge rules (project wins, nested objects merge), then the
-	// filtering encoding replaces the managed keys on top. With
-	// defaultProjectTrust: "never", Pi itself never reads project settings.
-	//
-	// The project's `packages` key is stripped: project packages install
-	// under the project's .pi/npm and are unreferenceable in generated
-	// global-scope settings — merging the key would make Pi install them
-	// into the (symlinked) global npm root as a launch side effect.
-	let base = { ...userSettings };
-	if (options.projectSettings !== undefined) {
-		const { packages: _stripped, ...mergeable } = options.projectSettings;
-		base = deepMergeSettings(base, mergeable);
-	}
-	return buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] }, runtimeDir);
+	// Selection plans: only user-scope encoding is layered onto the user's own
+	// settings. The trusted project's `.pi/settings.json` is deliberately NOT
+	// merged here — Pi reads it natively for the same trust decision this
+	// process's Pi applies, and merging it would turn the project's `packages`
+	// into global-scope packages (installing them into the real agent dir's npm
+	// root as a launch side effect).
+	return buildSelectionSettings(
+		plan,
+		{ ...userSettings },
+		agentDir,
+		options.discovery ?? { skills: [], packages: [] },
+		runtimeDir,
+		options.projectDir,
+	);
 }
 
 /** Resolved name sets, carried in the launch plan for glob-delta reporting. */
@@ -389,10 +375,9 @@ export interface ResolvedNames {
 }
 
 /** Writes settings.json + pi-profile.json into an existing runtime dir and
- *  transitions the trust.json link to the plan's filter mode: linked for
- *  `default` (native trust behavior), absent for named profiles (a stored
- *  trust decision would beat the generated `defaultProjectTrust: "never"`
- *  inside Pi and re-enable unfiltered project auto-discovery). */
+ *  keeps the trust.json link in place for every profile: Pi reads its
+ *  project-scope decision from that path, and project-level resources belong
+ *  to Pi's trust gate rather than to the profile. */
 export async function writeRuntimeFiles(
 	runtimeDir: string,
 	plan: ActivationPlan,
@@ -433,18 +418,14 @@ export async function writeRuntimeFiles(
 		)}\n`,
 	);
 
+	// Every profile gets the link, dangling allowed: Pi's stored trust decision
+	// is what makes a trusted project's resources visible, and a decision Pi
+	// writes through the link must land in the real agent dir (same shape as the
+	// auth.json seed in ADR-0010). An entry that already exists is left alone —
+	// a real file Pi wrote during this session carries its own decision.
 	const trustLink = path.join(runtimeDir, "trust.json");
-	const trustTarget = path.join(options.agentDir, "trust.json");
-	if (plan.filter === "none") {
-		if ((await exists(trustTarget)) && !(await existsLexical(trustLink))) {
-			await symlink(trustTarget, trustLink);
-		}
-	} else if (await existsLexical(trustLink)) {
-		// Lexical check: a dangling trust.json symlink (real trust.json deleted
-		// after the link was made) must still be removed — otherwise a later
-		// re-created real trust.json silently resurrects stored trust inside a
-		// named profile, defeating defaultProjectTrust: "never".
-		await rm(trustLink);
+	if (!(await existsLexical(trustLink))) {
+		await symlink(path.join(options.agentDir, "trust.json"), trustLink);
 	}
 
 	// MCP Servers generation (Ticket 04)
@@ -459,7 +440,7 @@ export async function writeRuntimeFiles(
 	} else {
 		// Filter MCP servers
 		try { await rm(mcpInstancePath); } catch {}
-		const { servers, sharedServers, baseConfig } = await loadMergedMcpServers(
+		const { servers, sharedServers, projectServers, baseConfig } = await loadMergedMcpServers(
 			options.agentDir,
 			options.projectDir,
 			options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
@@ -478,6 +459,9 @@ export async function writeRuntimeFiles(
 
 		for (const sharedName of sharedServers) {
 			if (!allowedSet.has(sharedName)) {
+				// Project-level servers are not the profile's to narrow (the same
+				// boundary as project skills and extensions).
+				if (projectServers.has(sharedName)) continue;
 				filteredServers[sharedName] = { disabled: true };
 			}
 		}

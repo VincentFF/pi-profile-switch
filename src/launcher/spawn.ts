@@ -29,7 +29,8 @@ const EXTENSION_ENTRY = fileURLToPath(new URL("../../extensions/pi-profile/index
  *  trust re-application, then user args verbatim. */
 export function buildPiArgs(options: SpawnPiOptions): string[] {
 	const args = ["-e", EXTENSION_ENTRY];
-	// default profile keeps trust behavior native: re-apply the recorded flag.
+	// Re-apply the recorded one-run trust input for every profile: the same input
+	// decided the launcher's project reads, so Pi must decide the same way.
 	if (options.trustOverride === true) args.push("--approve");
 	if (options.trustOverride === false) args.push("--no-approve");
 	args.push(...options.piArgs);

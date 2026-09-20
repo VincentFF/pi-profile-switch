@@ -310,20 +310,29 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		);
 	});
 
-	it("symlinks auth state but never trust.json for named profiles", async () => {
+	it("symlinks auth state and links trust.json for named profiles", async () => {
 		await writeFile(path.join(fixture.agentDir, "auth.json"), "{}");
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
 
 		const result = await generateRuntimeDir(selectionPlan({}), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
 
 		expect(await realpath(path.join(result.runtimeDir, "auth.json"))).toBe(await realpath(path.join(fixture.agentDir, "auth.json")));
-		// A stored trust decision would beat defaultProjectTrust: "never" inside
-		// Pi and re-enable project auto-discovery — so it must not be linked.
-		expect(existsSync(path.join(result.runtimeDir, "trust.json"))).toBe(false);
+		// Pi reads its project-scope decision from this path: project-level
+		// resources belong to Pi's trust gate, not to the profile.
+		expect(await realpath(path.join(result.runtimeDir, "trust.json"))).toBe(await realpath(path.join(fixture.agentDir, "trust.json")));
+	});
+
+	it("links trust.json even when the real agent dir has no trust store yet", async () => {
+		const result = await generateRuntimeDir(selectionPlan({}), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+
+		const link = path.join(result.runtimeDir, "trust.json");
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
+		expect(existsSync(link)).toBe(false); // dangling on purpose: Pi writes through it
+		expect(existsSync(path.join(fixture.agentDir, "trust.json"))).toBe(false);
 	});
 });
 
-describe("generateRuntimeDir (trusted project merge)", () => {
+describe("generateRuntimeDir (project scope belongs to Pi)", () => {
 	const projectSettingsPath = () => path.join(fixture.cwd, ".pi", "settings.json");
 
 	function projectSkill(name: string): SkillEntry {
@@ -336,88 +345,90 @@ describe("generateRuntimeDir (trusted project merge)", () => {
 		};
 	}
 
-	it("merges trusted project settings into the base, project wins, nested objects merge", async () => {
+	it("never merges the trusted project's settings into generated settings", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "settings.json"),
 			JSON.stringify({ theme: "dark", retry: { enabled: true, maxRetries: 3 }, globalOnly: 1 }),
 		);
 		await writeFile(
 			projectSettingsPath(),
-			JSON.stringify({ theme: "light", retry: { maxRetries: 1 }, projectOnly: true }),
+			JSON.stringify({
+				theme: "light",
+				retry: { maxRetries: 1 },
+				projectOnly: true,
+				packages: ["npm:evil-package"],
+				skills: ["/evil/skills"],
+				extensions: ["/evil/ext.ts"],
+			}),
 		);
 
-		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
 		const result = await generateRuntimeDir(selectionPlan({}), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
-			projectSettings,
+			projectDir: fixture.cwd,
 		});
 		const settings = await generatedSettings(result.runtimeDir);
 
-		expect(settings.theme).toBe("light");
-		expect(settings.retry).toEqual({ enabled: true, maxRetries: 1 });
+		// Merging project settings would turn the project's packages into
+		// global-scope packages (installing them into the real agent dir's npm
+		// root) and would duplicate what Pi reads natively.
+		expect(settings.theme).toBe("dark");
+		expect(settings.retry).toEqual({ enabled: true, maxRetries: 3 });
 		expect(settings.globalOnly).toBe(1);
-		expect(settings.projectOnly).toBe(true);
-	});
-
-	it("project resource arrays in project settings never leak into generated settings", async () => {
-		await writeFile(projectSettingsPath(), JSON.stringify({ skills: ["/evil/skills"], extensions: ["/evil/ext.ts"] }));
-		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
-
-		const result = await generateRuntimeDir(selectionPlan({}), {
-			agentDir: fixture.agentDir,
-			discovery: { skills: [], packages: [] },
-			projectSettings,
-		});
-		const settings = await generatedSettings(result.runtimeDir);
-
+		expect(settings.projectOnly).toBeUndefined();
+		expect(settings.packages).toBeUndefined();
 		expect(settings.skills).toEqual([]);
 		expect(settings.extensions).toEqual([]);
 		expect(settings.defaultProjectTrust).toBe("never");
 	});
 
-	it("strips the project packages key so project packages never install into the global npm root", async () => {
-		await writeFile(projectSettingsPath(), JSON.stringify({ packages: ["npm:evil-package"], theme: "light" }));
-		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
-
-		const result = await generateRuntimeDir(selectionPlan({}), {
-			agentDir: fixture.agentDir,
-			discovery: { skills: [], packages: [] },
-			projectSettings,
-		});
-		const settings = await generatedSettings(result.runtimeDir);
-
-		expect(settings.packages).toBeUndefined();
-		expect(settings.theme).toBe("light");
-	});
-
-	it("additively includes selected project-scope skills, ordered before user-scope ones", async () => {
-		// Reference order is user-first on purpose: the generator must still
-		// emit project paths first so Pi's first-wins collision rule keeps
-		// project priority.
+	it("never writes project-scope skills into generated settings", async () => {
 		const plan = selectionPlan({ skills: [agentDirSkill("alpha-skill"), projectSkill("proj-skill")] });
 		const discovery: DiscoveryContext = {
-			skills: [agentDirSkill("alpha-skill"), projectSkill("proj-skill")],
+			skills: [agentDirSkill("alpha-skill"), projectSkill("proj-skill"), projectSkill("proj-unselected")],
 			packages: [],
 		};
 
-		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery });
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery, projectDir: fixture.cwd });
 		const settings = await generatedSettings(result.runtimeDir);
 
-		expect(settings.skills).toEqual([
-			path.join(fixture.cwd, ".pi", "skills", "proj-skill", "SKILL.md"),
-			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
-		]);
+		// Project scope is discovered by Pi itself: the profile neither adds the
+		// selected project skill nor excludes the unselected one.
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
 	});
 
-	it("ignores project settings for the default profile (Pi reads them natively)", async () => {
-		const result = await generateRuntimeDir(defaultPlan(), {
+	it("never writes project .pi/extensions entries into generated settings", async () => {
+		const projectExtension = {
+			id: "proj-ext",
+			entry: path.join(fixture.cwd, ".pi", "extensions", "proj-ext.ts"),
+			origin: "local" as const,
+		};
+		const result = await generateRuntimeDir(selectionPlan({ extensions: [projectExtension] }), {
 			agentDir: fixture.agentDir,
-			projectSettings: { theme: "light" },
+			discovery: { skills: [], packages: [] },
+			projectDir: fixture.cwd,
 		});
 		const settings = await generatedSettings(result.runtimeDir);
 
-		expect(settings.theme).toBeUndefined();
+		expect(settings.extensions ?? []).toEqual([]);
+	});
+
+	it("keeps project-defined MCP servers enabled when the allowlist omits them", async () => {
+		await mkdir(path.join(fixture.agentDir), { recursive: true });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { "agent-a": { url: "http://a" } } }));
+		await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { "proj-p": { url: "http://p" } } }));
+
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["agent-a"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectDir: fixture.cwd,
+		});
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+
+		expect(mcpInstance.mcpServers["agent-a"]).toEqual({ url: "http://a" });
+		// Same boundary as project skills and extensions: the profile does not
+		// narrow project-level servers.
+		expect(mcpInstance.mcpServers["proj-p"]).toBeUndefined();
 	});
 });
 
@@ -460,7 +471,7 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 		expect(plan.persistSelection).toBe(true);
 	});
 
-	it("removes the trust.json link when switching from default to a named profile", async () => {
+	it("keeps the trust.json link when switching from default to a named profile", async () => {
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
 		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(true);
@@ -470,18 +481,15 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 			discovery: { skills: [], packages: [] },
 		});
 
-		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+		expect(await realpath(path.join(first.runtimeDir, "trust.json"))).toBe(await realpath(path.join(fixture.agentDir, "trust.json")));
 	});
 
-	it("removes a dangling trust.json symlink when switching to a named profile", async () => {
-		// The real trust.json was deleted after a default-profile run left the
-		// link behind: the link is now dangling (stat-based existence checks
-		// report it as absent). Removal must still happen — otherwise a later
-		// re-created real trust.json silently resurrects stored trust inside a
-		// named profile, defeating defaultProjectTrust: "never".
+	it("keeps a dangling trust.json symlink when switching to a named profile", async () => {
+		// The real trust store may be created later (Pi writes through the link);
+		// the link itself is profile-independent.
 		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		const trustLink = path.join(first.runtimeDir, "trust.json");
-		await symlink(path.join(fixture.agentDir, "trust.json"), trustLink);
+		expect((await lstat(trustLink)).isSymbolicLink()).toBe(true);
 		expect(existsSync(trustLink)).toBe(false); // dangling: target absent
 
 		await writeRuntimeFiles(first.runtimeDir, selectionPlan({}), {
@@ -489,16 +497,17 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 			discovery: { skills: [], packages: [] },
 		});
 
-		await expect(lstat(trustLink)).rejects.toMatchObject({ code: "ENOENT" });
+		expect((await lstat(trustLink)).isSymbolicLink()).toBe(true);
+		expect(existsSync(path.join(fixture.agentDir, "trust.json"))).toBe(false);
 	});
 
-	it("restores the trust.json link when switching back to default", async () => {
+	it("keeps the trust.json link pointing at the real store when switching to default", async () => {
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
 		const first = await generateRuntimeDir(selectionPlan({}), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
 		});
-		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(true);
 
 		await writeRuntimeFiles(first.runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
 

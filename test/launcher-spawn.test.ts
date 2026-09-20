@@ -16,7 +16,7 @@ describe("buildPiArgs", () => {
 		expect(args.slice(2)).toEqual(["--mode", "rpc", "--continue"]);
 	});
 
-	it("re-applies a recorded --approve so the default profile keeps native trust behavior", () => {
+	it("re-applies a recorded --approve to the spawned pi", () => {
 		const args = buildPiArgs({ generated, piArgs: [], trustOverride: true });
 		expect(args).toContain("--approve");
 	});

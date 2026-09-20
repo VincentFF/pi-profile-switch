@@ -53,9 +53,6 @@ export interface InitialProfile {
 	/** Full discovery results for the settings generator. Undefined for the
 	 *  default profile (which applies no filtering). */
 	discovery?: LauncherDiscovery;
-	/** The trusted project's `.pi/settings.json` content, when trusted and
-	 *  present. The generator merges it into the base for selection plans. */
-	projectSettings?: Record<string, unknown>;
 	/** The trusted project directory, when trusted. */
 	projectDir?: string;
 	/** Non-fatal notices for the user (e.g. a dangling restored profile that
@@ -63,13 +60,12 @@ export interface InitialProfile {
 	warnings: string[];
 }
 
-/** Reads the real global `defaultProjectTrust` setting (a trust input) and,
- *  when trusted, the project's `.pi/settings.json`. Exported for the
- *  session-side surfaces (selector/list/status) that need the same trust
- *  gate the launcher uses. */
+/** Reads the real global `defaultProjectTrust` setting (a trust input) and
+ *  resolves the project trust decision from Pi's own trust store. Exported
+ *  for the session-side surfaces (selector/list/status) that need the same
+ *  trust gate the launcher uses. */
 export async function readTrustInputs(context: LauncherContext): Promise<{
 	projectTrusted: boolean;
-	projectSettings?: Record<string, unknown>;
 }> {
 	const globalSettingsPath = path.join(context.agentDir, "settings.json");
 	const globalSettings = await readJsonFile(globalSettingsPath);
@@ -86,10 +82,9 @@ export async function readTrustInputs(context: LauncherContext): Promise<{
 	if (!projectTrusted) {
 		return { projectTrusted };
 	}
-	const projectSettingsResult = await readJsonFile(path.join(context.cwd, ".pi", "settings.json"));
-	const projectSettings =
-		projectSettingsResult.ok && isRecord(projectSettingsResult.value) ? projectSettingsResult.value : undefined;
-	return { projectTrusted, projectSettings };
+	// The project's own `.pi/settings.json` is Pi's to read (natively, for the
+	// same trust decision): pi-profile neither merges nor narrows it.
+	return { projectTrusted };
 }
 
 export async function resolveInitialProfile(
@@ -97,7 +92,7 @@ export async function resolveInitialProfile(
 	context: LauncherContext,
 	options?: { overlay?: RuntimeOverlay },
 ): Promise<InitialProfile> {
-	const { projectTrusted, projectSettings } = await readTrustInputs(context);
+	const { projectTrusted } = await readTrustInputs(context);
 	const projectDir = projectTrusted ? context.cwd : undefined;
 	const catalog = await ProfileCatalog.load(context.agentDir, { projectDir });
 
@@ -156,7 +151,7 @@ export async function resolveInitialProfile(
 			overlay,
 		});
 		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
-		return { plan, discovery, projectSettings, projectDir, warnings };
+		return { plan, discovery, projectDir, warnings };
 	}
 
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
@@ -177,5 +172,5 @@ export async function resolveInitialProfile(
 		// silently do nothing or leak through unfiltered.
 		throw new MissingMcpAdapterError(plan.profile);
 	}
-	return { plan, discovery, projectSettings, projectDir, warnings };
+	return { plan, discovery, projectDir, warnings };
 }
