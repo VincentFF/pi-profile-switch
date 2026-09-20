@@ -4,7 +4,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 const BIN = path.resolve("bin/pi-profile.ts");
@@ -105,7 +105,7 @@ describe("launcher integration: mcp coordination", () => {
 			}
 
 			// The generated instance mcp.json contains only the allowed server.
-			const instanceMcpPath = path.join(fixture.root, ".pi-profile-switch", "instances", "review", "agent", "mcp.json");
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
 					github: { url: "https://x" },
@@ -142,7 +142,7 @@ describe("launcher integration: mcp coordination", () => {
 			}
 
 			// The instance mcp.json preserves the unrestricted config.
-			const instanceMcpPath = path.join(fixture.root, ".pi-profile-switch", "instances", "plain", "agent", "mcp.json");
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: globalConfig,
 			});

@@ -314,7 +314,13 @@ describe("launcher integration: named global profiles", () => {
 			const created = agentDirAfter.filter((file) => !agentDirBefore.includes(file));
 			for (const file of created) {
 				const relative = path.relative(fixture.agentDir, file);
-				expect(relative.startsWith(path.join("pi-profile", "runtime")) || relative.startsWith("sessions")).toBe(true);
+				// Only Pi's own session storage and the state paths pi-profile seeds
+				// (so Pi writes them into the real agent dir rather than the instance).
+				expect(
+					["sessions", "missions", "auth.json", "models-store.json"].some(
+						(seed) => relative === seed || relative.startsWith(`${seed}${path.sep}`),
+					),
+				).toBe(true);
 			}
 			const files = await listFiles(fixture.root);
 			expect(files.filter((file) => file.endsWith("pi-profile-state.json"))).toEqual([]);
