@@ -27,7 +27,7 @@
 - [ ] 4.1 改写 `docs/architecture/overview.md` 的「运行目录」整段：路径形态改为每次启动唯一目录、`pid` 位置、seed 规则、清扫规则，并同步受管文件表
 - [ ] 4.2 改写 `docs/architecture/overview.md` 的「已知限制」：删除"instance 路径固定导致并发互相重写""已删除或改名 profile 的 instance 目录不被清理"两处，新增一行"0.4.x 遗留 instance 目录不被新清扫触及，需用户自行处置"
 - [ ] 4.3 在 `docs/architecture/overview.md` 增补 seed 名单小表（当前仅 `missions`），并注明"加条目必须有观察证据，不能靠推断"
-- [ ] 4.4 新增 `docs/adr/0010-per-launch-instance-lifecycle.md`：记录 instance 生命周期为 per-launch，逐条列出被否方案（持久 per-profile 目录、回收时吸收、软链到项目 `.pi/subagents/missions`、枚举更多第三方状态目录）与各项代价
+- [x] 4.4 新增 `docs/adr/0010-per-launch-instance-lifecycle.md`（已随本变更落盘）；验证：其决策与 `design.md` 一致，apply 阶段若有设计修订需同步更新该文件
 - [ ] 4.5 核对 `docs/prd.md` 与 `CONTEXT.md` 确实无需改动（`instance` 定义已描述 per-launch）；验证：`git diff --stat` 显示这两个文件未被触碰
 - [ ] 4.6 运行 `openspec validate per-launch-instance-lifecycle --strict` 通过
 
