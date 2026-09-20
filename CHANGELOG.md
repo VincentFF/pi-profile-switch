@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.9...v0.5.0) (2026-09-20)
+
+
+### Features
+
+* per-launch instance lifecycle ([#41](https://github.com/VincentFF/pi-profile-switch/issues/41)) ([5662a65](https://github.com/VincentFF/pi-profile-switch/commit/5662a65ad97ff741522092821ef47d5842bc384a))
+
 ## [0.4.9](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.8...v0.4.9) (2026-09-20)
 
 
