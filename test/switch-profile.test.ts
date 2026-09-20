@@ -195,7 +195,7 @@ describe("switchProfile", () => {
 			reloads += 1;
 			if (reloads === 1) {
 				// Observe the generator's mid-switch state before failing: the
-				// default profile links trust.json into the runtime dir.
+				// trust.json link is kept in place for every profile.
 				trustLinkCreated = (await lstat(path.join(runtimeDir, "trust.json"))).isSymbolicLink();
 				throw new Error("boom");
 			}
@@ -204,11 +204,10 @@ describe("switchProfile", () => {
 		await expect(switchProfile("default", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
 
 		// The default profile's generator swapped mcp.json for a symlink to the
-		// real config, deleted APPEND_SYSTEM.md, and created the trust.json
-		// link; rollback must replace the mcp link — never writeFile through
-		// it, which would clobber the user's real mcp.json — recreate the
-		// deleted file with the exact content, and remove the trust link
-		// again (the snapshot recorded it as absent).
+		// real config and deleted APPEND_SYSTEM.md; rollback must replace the mcp
+		// link — never writeFile through it, which would clobber the user's real
+		// mcp.json — and recreate the deleted file with the exact content. The
+		// trust.json link is profile-independent, so it survives untouched.
 		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(realMcpBefore);
 		const mcpStat = await lstat(path.join(runtimeDir, "mcp.json"));
 		expect(mcpStat.isSymbolicLink()).toBe(false);
@@ -216,7 +215,9 @@ describe("switchProfile", () => {
 		expect(await readFile(path.join(runtimeDir, "mcp.json"), "utf8")).toBe(filteredMcp);
 		expect(await readFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), "utf8")).toBe("Be terse.");
 		expect(trustLinkCreated).toBe(true);
-		await expect(lstat(path.join(runtimeDir, "trust.json"))).rejects.toMatchObject({ code: "ENOENT" });
+		const trustStat = await lstat(path.join(runtimeDir, "trust.json"));
+		expect(trustStat.isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(path.join(fixture.agentDir, "trust.json"));
 	});
 
 	it("restores the pre-switch file mode, not just the content", async () => {

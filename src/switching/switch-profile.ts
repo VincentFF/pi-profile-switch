@@ -204,7 +204,6 @@ export async function switchProfile(
 		agentDir: deps.realAgentDir,
 		projectDir: resolved.projectDir,
 		discovery: resolved.discovery,
-		projectSettings: resolved.projectSettings,
 		planExtras: {
 			...(isSwitch && current.profile !== undefined ? { switchedFrom: current.profile } : {}),
 			// `/profile use` persists; `/profile reload` keeps the current

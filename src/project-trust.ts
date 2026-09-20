@@ -1,27 +1,31 @@
 /**
- * Project trust resolution for the launcher — pi-profile is the sole
- * gatekeeper for project resources, because generated settings carry
- * `defaultProjectTrust: "never"` and Pi therefore never auto-discovers them.
+ * Project trust resolution for the launcher — pi-profile's gate for the
+ * project-scope content it reads itself: the project catalog, the project
+ * runtime state, and the project MCP config. Project-level resources
+ * (skills, extensions, prompts, themes, settings) are Pi's own business: its
+ * trust store decision, exposed through the linked `trust.json`, decides
+ * their visibility (see ADR-0011).
  *
  * Mirrors Pi's own trust decision order (`resolveProjectTrusted`), with
  * pi-profile's catalog/state files added to the trust-requiring
  * resource set (they are pi-profile's project attack surface; Pi doesn't
  * know about them):
  *   1. one-run `--approve` / `--no-approve` override (consumed by the
- *      launcher, never forwarded for named profiles)
+ *      launcher and re-applied to the spawned pi for every profile)
  *   2. a project with no trust-requiring resources at all is trusted —
  *      there is nothing project-scoped to gate
  *   3. the stored decision in the real `trust.json` (nearest ancestor wins)
  *   4. the user's `defaultProjectTrust` setting — but only "always" grants;
  *      "ask" cannot prompt here (the launcher has no trust UI), so it falls
  *      through to untrusted
- *   5. otherwise untrusted: project catalogs, registries, resources, and
- *      state files are not read at all
+ *   5. otherwise untrusted: project catalogs, project state, and project MCP
+ *      config are not read at all
  *
  * Known divergence from Pi: extension `project_trust` event handlers are not
  * consulted — that would require executing extension code in the launcher,
- * which pi-profile never does. In named-profile sessions the event is moot
- * anyway (generated settings carry `defaultProjectTrust: "never"`).
+ * which pi-profile never does. A spawned Pi still runs those handlers with
+ * its own settings, so an extension that answers yes/no can decide the
+ * project scope of that session.
  */
 
 import { existsSync, readFileSync } from "node:fs";

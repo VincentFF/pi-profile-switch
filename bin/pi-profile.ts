@@ -28,7 +28,7 @@ try {
 	const agentDir = getAgentDir();
 	// Fails before spawning when the profile is unknown or cannot activate.
 	// --approve/--no-approve are consumed here as a one-run trust input.
-	const { plan, discovery, projectSettings, projectDir, warnings } = await resolveInitialProfile(args.profile, {
+	const { plan, discovery, projectDir, warnings } = await resolveInitialProfile(args.profile, {
 		agentDir,
 		cwd: process.cwd(),
 		trustOverride: args.trustOverride,
@@ -43,13 +43,14 @@ try {
 	for (const warning of await sweepStaleInstances()) {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
-	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings, projectDir });
+	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectDir });
 	process.exitCode = await spawnPi({
 		generated,
 		piArgs: args.piArgs,
-		// Only the default profile keeps trust behavior native (flag re-applied);
-		// named profiles never forward it — the resolver is the trust gatekeeper.
-		trustOverride: plan.filter === "none" ? args.trustOverride : undefined,
+		// Re-applied for every profile: the one-run trust input must decide both
+		// the resolver's project reads and Pi's project-scope visibility — two
+		// different answers in one launch would be a divergence, not a policy.
+		trustOverride: args.trustOverride,
 	});
 } catch (error) {
 	// Launcher input/selection failures (unknown profile, unresolvable

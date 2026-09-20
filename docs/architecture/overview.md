@@ -28,18 +28,18 @@ launcher 与 extension 之间的唯一通道是 instance 目录：launcher 写�
 
 ## 过滤模型
 
-profile 只接管四类资源（skills、extensions、MCP servers、tools），其余类别原样穿过。每一类都用 Pi 已有的机制实现，不新增拦截层。
+profile 只接管四类资源（skills、extensions、MCP servers、tools），其余类别原样穿过。每一类都用 Pi 已有的机制实现，不新增拦截层。收窄只作用于用户级资源（真实 agentDir 与 `~/.agents/skills`）：项目级资源由 Pi 的项目信任判定决定，见下表。
 
 | 作用域 | Pi 机制 | 形态 |
 | --- | --- | --- |
 | agentDir 级（`skills`、`extensions`） | 发现根随 `PI_CODING_AGENT_DIR` 移走，天然不发现；settings 数组写入选中的绝对路径 | 白名单（附加路径） |
 | `~/.agents/skills`（HOME 级，无法抑制） | 始终自动发现，因此 settings 数组写入 `-<绝对路径>` 强制排除未选中项 | 补集排除 |
-| 项目级（`.pi/*`、项目 ancestor `.agents/skills`） | 生成 settings 置 `defaultProjectTrust: "never"` 抑制全部项目自动发现（已存储的 trust 决定在 Pi 侧优先于 never）；launcher 用 `project-trust.ts` 镜像 Pi 的判定序自读真实 `trust.json`，仅已信任时把选中项绝对路径写入 settings 数组 | 白名单（附加路径）+ trust 守门 |
+| 项目级（`.pi/skills`、`.pi/extensions`、ancestor `.agents/skills`） | 归 Pi：instance 的 `trust.json` 链接指向真实 trust store，Pi 按已存储决定自动发现。命名 profile 的生成 settings 仍置 `defaultProjectTrust: "never"`，但那只是不发起信任询问（已存储决定优先于它） | 不由 profile 收窄 |
 | packages（用户已配置包） | settings `packages` 数组改为对象形式，按类型写 allowlist glob | 白名单 |
-| packages（项目） | 从 settings 合并中剥除——该键会让包装进全局 npm 根，成为启动副作用 | 剥除 |
+| packages（项目） | 由 Pi 原生读取项目 `.pi/settings.json` 并装到项目 `.pi/npm` 下；generated settings 不合并项目 settings，因此不会成为全局 npm 根的安装副作用 | 原生 |
 | tools | settings `defaultTools` 作为内置工具 boot 基线；extension 在 `session_start` 与 reload 后按 `pi-profile.json` 里的 tool 引用对 Pi 实时注册表展开并 `setActiveTools` | 白名单 |
-| MCP servers | instance 的 `mcp.json` 只保留允许的 server；未声明 `mcps` 时软链真实 `mcp.json` | 白名单（文件过滤） |
-| prompts、themes（未接管） | 用户数组原样保留，并重新包含真实 agentDir 的对应目录 | 穿过 |
+| MCP servers | instance 的 `mcp.json` 只保留允许的 server，并把未允许的用户级共享 server 显式标为禁用；项目 `.mcp.json` / `.pi/mcp.json` 的 server 不由 profile 收窄。未声明 `mcps` 时软链真实 `mcp.json` | 白名单（文件过滤） |
+| prompts、themes（未接管） | 用户数组原样保留，并重新包含真实 agentDir 的对应目录；项目级的那份由 Pi 原生发现 | 穿过 |
 
 `default` profile 不生成任何过滤：settings 是用户全局 settings 的逐字拷贝，重新包含真实 agentDir 的 `skills`/`extensions`/`prompts`/`themes` 四个目录（因为发现根已移走），不置 `defaultProjectTrust`，行为与原生 Pi 一致。
 
@@ -63,7 +63,7 @@ profile 只接管四类资源（skills、extensions、MCP servers、tools），�
 | --- | --- |
 | `profile-catalog.ts` | catalog 只读面：`ProfileCatalog` 列出并解析 winning 定义，输出 `ResolvedProfile`（含 `source: builtin \| global \| project`） |
 | `profile-catalog-store.ts` | catalog 写入侧（`profiles.json`），只在 TUI CRUD 路径使用 |
-| `project-trust.ts` | `resolveProjectTrust(input)` → boolean；镜像 Pi 判定序，是项目资源的唯一守门人 |
+| `project-trust.ts` | `resolveProjectTrust(input)` → boolean；镜像 Pi 判定序，决定 pi-profile 是否读取项目 catalog、项目状态与项目 MCP 配置（项目级资源本身归 Pi） |
 | `skill-registry.ts` | `discoverSkills(options)` → `SkillEntry[]`；只读调用 Pi SDK 的 discovery，不自行扫描目录 |
 | `extension-discovery.ts` | `discoverExtensions(options)` → `DiscoveredExtensions`（只读，从不执行扩展代码）；`.select(refs)` 解析包名、别名、散装文件 stem、glob、绝对路径 |
 | `mcp-config.ts` | `discoverAdapterServerNames()` → adapter 已配置的 server 名；`loadMergedMcpServers()` 供 instance `mcp.json` 生成 |
@@ -118,7 +118,7 @@ pi-profile review -- --mode rpc
   ├─ 校验与 resolve（与启动同一路径）
   ├─ ctx.waitForIdle()
   ├─ 快照受管运行时文件（settings / plan / mcp / appendSystem / trust）
-  ├─ 就地重写 settings.json、pi-profile.json、mcp.json、APPEND_SYSTEM.md，并切换 trust.json 链接状态
+  ├─ 就地重写 settings.json、pi-profile.json、mcp.json、APPEND_SYSTEM.md，trust.json 链接保持不变
   ├─ ctx.reload()：Pi 重读磁盘、重建资源、重新执行 extension
   │    ├─ extension 重新应用 tools 白名单
   │    └─ state.activeProfile 由 reload 后的新 extension 实例按 source scope 写入
@@ -136,11 +136,11 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 | 文件 | 内容 |
 | --- | --- |
-| `settings.json` | 用户全局 settings + 按过滤模型的数组改写；已信任项目的 `.pi/settings.json` 按 Pi 的合并规则（项目覆盖全局、嵌套按键合并）并入 |
+| `settings.json` | 用户全局 settings + 按过滤模型的数组改写（只含用户级资源，不并入项目 settings） |
 | `pi-profile.json` | 本轮 ActivationPlan，供 pi 内 extension 在 `session_start` 读取 |
 | `mcp.json` | 过滤后的 MCP server 集合 |
 | `APPEND_SYSTEM.md` | profile 的 `instructions`，Pi 原生追加到 system prompt |
-| `trust.json` | 只在 `default` profile 下链接；命名 profile 不链接，项目资源的信任判定由 launcher 独占 |
+| `trust.json` | 指向真实 trust store 的符号链接，每种 profile 都建立（目标不存在时同样建立）；Pi 的项目级发现以它为准，会话内切换不改动它 |
 | `pid` | 子进程活性标记，上次启动的清扫据此判定回收 |
 | `extensions` | 受管目录，使 agentDir 级 extension 只经白名单进入 |
 
@@ -187,12 +187,13 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 | 限制 | 代价 |
 | --- | --- |
-| 项目资源的信任判定只由 launcher 执行 | 绕过 launcher、直接以生成的 instance 启动 pi，会得到与原生 Pi 不同的资源可见性 |
+| profile 不参与项目级资源 | 已信任项目的 skill、extension 与 MCP server 在任何 profile 下都可用，只读风格的 profile 也不能隐藏它们——项目信任是唯一闸门；未受信任时项目级资源一律不可见 |
+| 项目 `.pi/settings.json` 的行为键覆盖 profile 声明 | Pi 的合并顺序是项目覆盖 global，因此项目的 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 会压过 profile 的声明；`defaultTools` 只影响启动基线（extension 在 session start 会重新收紧工具） |
 | 不咨询 extension 的 `project_trust` 事件 | 咨询需要在 launcher 里执行扩展代码；依赖该事件的第三方 extension 无法影响 trust 判定 |
 | `pi install` 与 `pi config` 在会话内写生成的 settings | 退出后丢失；持久改动需走 `/profile edit` 或原生 `pi` |
 | 0.4.x 遗留的 `instances/<profile>/agent` 目录不被新清扫触及 | 既不清理也不迁移，需用户自行处置；其中的 pi-subagents mission 记录带指向旧 instance 路径的绝对路径，无法修复（见 ADR-0010） |
 | 并发 instance 对凭据文件的写入不互相串行化 | `auth.json` 与 `models-store.json` 通过 seed 软链共享，但 Pi 的锁落在软链路径旁，两个会话不会互相串行化，可能丢失一次并发刷新（见 ADR-0010） |
-| 项目范围的 package skill 不可引用 | 其包装在项目 `.pi/npm` 下，生成的全局 settings 无法引用；项目 `.pi/skills` 与 ancestor `.agents/skills` 不受影响 |
+| 项目 package 提供的 skill 不可引用 | 它随 Pi 原生加载而可见，但不出现在 profile 的引用词汇表里；项目 `.pi/skills` 与 ancestor `.agents/skills` 可引用 |
 
 ## 包结构
 

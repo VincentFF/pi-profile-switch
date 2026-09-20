@@ -44,9 +44,9 @@ export interface DiscoverSkillsOptions {
 }
 
 export async function discoverSkills(options: DiscoverSkillsOptions): Promise<SkillEntry[]> {
-	// Project trust comes from the caller's trust check; generated settings
-	// carry defaultProjectTrust: "never", so discovery is the only place
-	// project resources can enter a plan.
+	// Project trust comes from the caller's trust check: discovery is the only
+	// place project resources enter a plan's reference vocabulary (their
+	// visibility in the session is Pi's, not the plan's).
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, {
 		projectTrusted: options.projectTrusted ?? false,
 	});
@@ -73,10 +73,10 @@ export async function discoverSkills(options: DiscoverSkillsOptions): Promise<Sk
 		else process.env.PI_OFFLINE = savedOffline;
 	}
 	return loader.getSkills().skills.flatMap((skill) => {
-		// Project-scoped package skills are excluded: their packages install
-		// under the project's .pi/npm, which generated global-scope settings
-		// cannot reference. Project .pi/skills and ancestor .agents/skills are
-		// unaffected. (Limitation documented in ticket 03's comments.)
+		// Project-scoped package skills stay out of the reference vocabulary:
+		// their packages live under the project's .pi/npm and Pi discovers their
+		// skills natively, so a profile reference would add nothing. Project
+		// .pi/skills and ancestor .agents/skills are referenceable.
 		if (skill.sourceInfo.origin === "package" && skill.sourceInfo.scope === "project") {
 			return [];
 		}

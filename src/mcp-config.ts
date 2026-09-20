@@ -40,6 +40,9 @@ export interface McpDiscoveryOptions {
 export interface MergedMcpResult {
 	servers: Record<string, Record<string, unknown>>;
 	sharedServers: Set<string>;
+	/** Servers defined in a trusted project's own config (`.mcp.json`,
+	 *  `.pi/mcp.json`). They are not the profile's to narrow. */
+	projectServers: Set<string>;
 	baseConfig?: Record<string, unknown>;
 }
 
@@ -47,6 +50,9 @@ export interface McpConfigSource {
 	path: string;
 	isShared: boolean;
 	isAgentDir?: boolean;
+	/** Project-scope source: only read for a trusted project, and its servers
+	 *  stay enabled regardless of a profile's `mcps` declaration. */
+	isProject?: boolean;
 }
 
 /**
@@ -71,8 +77,8 @@ export function getStandardMcpConfigSources(
 		{ path: path.join(agentDir, "mcp.json"), isShared: false, isAgentDir: true },
 	];
 	if (projectDir !== undefined) {
-		sources.push({ path: path.join(projectDir, ".mcp.json"), isShared: true });
-		sources.push({ path: path.join(projectDir, ".pi", "mcp.json"), isShared: false });
+		sources.push({ path: path.join(projectDir, ".mcp.json"), isShared: true, isProject: true });
+		sources.push({ path: path.join(projectDir, ".pi", "mcp.json"), isShared: false, isProject: true });
 	}
 	return sources;
 }
@@ -86,6 +92,7 @@ export async function loadMergedMcpServers(
 	const seenPaths = new Set<string>();
 	const servers: Record<string, Record<string, unknown>> = {};
 	const sharedServers = new Set<string>();
+	const projectServers = new Set<string>();
 	let baseConfig: Record<string, unknown> | undefined;
 
 	for (const source of sources) {
@@ -112,6 +119,9 @@ export async function loadMergedMcpServers(
 			if (source.isShared) {
 				sharedServers.add(name);
 			}
+			if (source.isProject === true) {
+				projectServers.add(name);
+			}
 			if (isRecord(def)) {
 				servers[name] = { ...(servers[name] ?? {}), ...def };
 			} else {
@@ -120,7 +130,7 @@ export async function loadMergedMcpServers(
 		}
 	}
 
-	return { servers, sharedServers, baseConfig };
+	return { servers, sharedServers, projectServers, baseConfig };
 }
 
 /** Server names the adapter would discover: standard global MCP configs,

@@ -21,7 +21,7 @@ SkillRegistry
 ## 使用场景
 
 - **按任务切换**：`review` 只带复核类 skill 与只读工具，`implement` 带完整编辑与测试能力。
-- **按项目切换**：在项目目录内使用项目专属 skill 与 MCP server，离开项目后回到全局能力。
+- **按项目切换**：项目 catalog 覆盖同名全局定义，在项目目录内按该项目所需收窄用户级资源；离开项目后回到全局定义。
 - **按权限收窄**：只读问答、受限环境、对外演示时用 profile 收窄能力面。
 - **共享实现**：修好一个 skill，所有引用它的 profile 在下一次启动或 reload 得到新内容。
 
@@ -63,11 +63,12 @@ profile 只改变它显式声明控制的东西，其余一切走 Pi 原生机�
 - **不做 extension 依赖图。** 没有依赖声明、依赖闭包或常驻 extension 概念。Pi 本身没有这些概念，在 profile 层引入会把切换器变成半个包管理器。
 - **不做包管理器。** 不安装、不升级、不卸载 extension，只发现已安装的东西并从中筛选。
 - **不管理 MCP 连接参数与凭证。** server 地址、启动命令、OAuth 与 token 全部留在 `pi-mcp-adapter` 的配置里；profile 只声明启用哪些 server。
+- **不收窄项目级资源。** profile 的选择只作用于用户级资源（真实 agentDir 与 `~/.agents/skills`）。项目级 skill、extension、prompt、theme、settings 与 MCP server 由 Pi 的项目信任判定决定可见性，任何 profile 都不能藏起其中一项。原因是 Pi 的项目级开关是全或全无的，而"选中即生效"的范围必须落在 profile 有权处置的范围内；强行收窄会连带屏蔽不属于隔离面的项目内容，并让会话内切换失效（见 [架构](architecture/overview.md) 的过滤模型）。
 - **不改 Pi 默认行为。** 未被 profile 声明控制的设置、发现与会话行为一律按 Pi 原生规则工作。
 
 ## 成功标准
 
-1. 用指定 profile 启动时，第一个 agent turn 只看到该 profile 选中的资源，未被选中的资源不可见。
+1. 用指定 profile 启动时，第一个 agent turn 只看到该 profile 选中的用户级资源，加上已在信任判定中放行的项目级资源；其余用户级资源不可见。
 2. 切换 profile 不重启 Pi 进程，当前 session 的 sessionId 与历史保持不变。
 3. 修改一个被多个 profile 引用的 skill 或 extension 后，这些 profile 在下一次启动或 reload 得到新内容，无需改动任何 profile 定义。
 4. profile 未声明 model、thinking level 或 instructions 时，激活后 Pi 的模型、thinking level 与 system prompt 与原生启动一致。

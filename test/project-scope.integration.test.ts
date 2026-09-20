@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readlink, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -114,7 +114,7 @@ describe("launcher integration: project scope and trust", () => {
 	);
 
 	it(
-		"a trusted project gets its selected resources included and its settings merged",
+		"a trusted project's resources are visible whatever the profile selects, and its settings stay Pi's",
 		{ timeout: 45_000 },
 		async () => {
 			await addProjectSkill("proj-skill");
@@ -133,26 +133,33 @@ describe("launcher integration: project scope and trust", () => {
 			});
 			try {
 				const names = (await rpc.commandNames()).map((command) => command.name);
+				// Project scope belongs to Pi: a trusted project's resources are
+				// visible even when the profile does not select them.
 				expect(names).toContain("skill:proj-skill");
-				expect(names).not.toContain("skill:proj-unselected");
+				expect(names).toContain("skill:proj-unselected");
 				expect(names).toContain("proj-ext");
 			} finally {
 				await rpc.close();
 			}
 
-			// The generated settings merged the trusted project's unmanaged keys
-			// and still suppress project auto-discovery.
+			// The generated settings neither merge the project's settings (that
+			// would make its packages global-scope) nor encode its resources.
 			const runtimeDir = await soleInstanceDir(fixture);
 			const generated = JSON.parse(
 				await readFile(path.join(runtimeDir, "settings.json"), "utf8"),
 			);
-			expect(generated.projectManagedKey).toBe("from-project");
+			expect(generated.projectManagedKey).toBeUndefined();
 			expect(generated.defaultProjectTrust).toBe("never");
+			expect(generated.skills).toEqual([]);
+			// Pi reads its project-scope decision from the linked store.
+			expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(
+				path.join(fixture.agentDir, "trust.json"),
+			);
 		},
 	);
 
 	it(
-		"--approve is a one-run trust input: project profile resolves, resources stay filtered, nothing is persisted",
+		"--approve is a one-run trust input: the project profile resolves, project resources become visible, nothing is persisted",
 		{ timeout: 45_000 },
 		async () => {
 			await addProjectSkill("proj-skill");
@@ -166,9 +173,10 @@ describe("launcher integration: project scope and trust", () => {
 			try {
 				const names = (await rpc.commandNames()).map((command) => command.name);
 				expect(names).toContain("skill:proj-skill");
-				// Filtered even though this run is trusted: --approve is the
-				// resolver's input, never a Pi-side auto-discovery switch.
-				expect(names).not.toContain("skill:proj-unselected");
+				// The one-run input decides both sides of the trust question: the
+				// resolver reads the project catalog and Pi receives `--approve`,
+				// so the project's own resources are visible for this run only.
+				expect(names).toContain("skill:proj-unselected");
 			} finally {
 				await rpc.close();
 			}

@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -30,6 +30,16 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
 }
 
+async function addProjectSkill(name: string): Promise<void> {
+	const dir = path.join(fixture.cwd, ".pi", "skills", name);
+	await mkdir(dir, { recursive: true });
+	await writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: project skill ${name}\n---\n`);
+}
+
+async function trustProject(): Promise<void> {
+	await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+}
+
 interface RpcState {
 	sessionId: string;
 	sessionFile?: string;
@@ -48,6 +58,43 @@ async function skillCommands(rpc: RpcDriver): Promise<Array<{ name: string; desc
 }
 
 describe("launcher integration: in-session switching", () => {
+	it(
+		"project-level visibility is the same before and after switching to default",
+		{ timeout: 60_000 },
+		async () => {
+			await addProjectSkill("proj-skill");
+			await addProjectSkill("proj-unselected");
+			await writeCatalog({ doc: { skills: [] } });
+			await trustProject();
+
+			const rpc = new RpcDriver("node", [BIN, "doc", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				const before = await getState(rpc);
+				// Already visible under the named profile: project scope is Pi's,
+				// so the profile's selection neither adds nor hides it.
+				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
+					"skill:proj-skill",
+					"skill:proj-unselected",
+				]);
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use default" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				// No restart, same session, unchanged project-level visibility.
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
+					"skill:proj-skill",
+					"skill:proj-unselected",
+				]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 	it(
 		"/profile use switches without restarting: same session, new resources, state persisted",
 		{ timeout: 60_000 },

@@ -122,6 +122,18 @@ describe("discoverAdapterServerNames", () => {
 		expect(result.baseConfig?.settings).toEqual({ custom: true });
 	});
 
+	it("marks servers defined by the trusted project as project servers", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { "agent-a": {} } }));
+		await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { "proj-shared": {} } }));
+		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { "proj-owned": {} } }));
+
+		const result = await loadMergedMcpServers(fixture.agentDir, fixture.cwd);
+
+		expect([...result.projectServers].sort()).toEqual(["proj-owned", "proj-shared"]);
+		expect(result.projectServers.has("agent-a")).toBe(false);
+	});
+
 	it("fails loudly on a malformed config instead of reading it as empty", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: ["not-an-object"] }));
 
