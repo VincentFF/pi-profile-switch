@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -109,6 +109,47 @@ describe("generateRuntimeDir (default profile)", () => {
 			await realpath(path.join(fixture.agentDir, "missions")),
 		);
 		expect(await readFile(record, "utf8")).toBe("{}");
+	});
+
+	it("links the runtime state files Pi creates, even before they exist", async () => {
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		for (const name of ["auth.json", "models-store.json"]) {
+			const linkPath = path.join(result.runtimeDir, name);
+			expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+			expect(await readlink(linkPath)).toBe(path.join(fixture.agentDir, name));
+			// Deliberately dangling: the content is Pi's to create, not pi-profile's.
+			expect(existsSync(path.join(fixture.agentDir, name))).toBe(false);
+		}
+	});
+
+	it("routes writes through the seeded links into the real agent dir", async () => {
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		await writeFile(path.join(result.runtimeDir, "auth.json"), "{}");
+
+		expect(await readFile(path.join(fixture.agentDir, "auth.json"), "utf8")).toBe("{}");
+		expect((await lstat(path.join(result.runtimeDir, "auth.json"))).isSymbolicLink()).toBe(true);
+	});
+
+	it("links an existing state file to the real one", async () => {
+		await writeFile(path.join(fixture.agentDir, "auth.json"), '{"provider":{}}');
+
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		const linkPath = path.join(result.runtimeDir, "auth.json");
+		expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+		expect(await realpath(linkPath)).toBe(await realpath(path.join(fixture.agentDir, "auth.json")));
+	});
+
+	it("keeps the seeded links when the runtime dir is rewritten in place", async () => {
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+
+		await writeRuntimeFiles(result.runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
+
+		for (const name of ["auth.json", "models-store.json"]) {
+			expect((await lstat(path.join(result.runtimeDir, name))).isSymbolicLink()).toBe(true);
+		}
 	});
 
 	it("cleans up dangling symlinks when the runtime dir is rewritten in place (switch path)", async () => {

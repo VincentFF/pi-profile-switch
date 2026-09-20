@@ -75,7 +75,16 @@ profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤�
 
 ### Requirement: instance 运行时状态 seed
 
-在把真实 agentDir 镜像进 instance 之前，启动器 SHALL 在真实 agentDir 下确保 `missions` 目录（pi-subagents 的 mission store 根）存在：缺失时创建，已存在时保持原样。该目录 SHALL 以符号链接形式进入 instance，使运行时新建的状态写入真实 agentDir。启动器 SHALL 只创建该目录本身，MUST NOT 写入其内容。
+在把真实 agentDir 镜像进 instance 之前，启动器 SHALL 把 Pi 在运行时创建的状态路径指向真实 agentDir，使这些写入不落在 instance 内：
+
+| 路径 | 形态 | seed 方式 |
+| --- | --- | --- |
+| `sessions`、`missions` | 目录 | 真实 agentDir 下缺失时创建，已存在时保持原样；启动器 MUST NOT 写入其内容 |
+| `auth.json`、`models-store.json` | 文件 | instance 内建立指向真实 agentDir 对应路径的符号链接；目标文件不存在时 SHALL 同样建立 |
+
+对文件类路径，启动器 SHALL NOT 因为真实 agentDir 下没有对应文件而删除 instance 内的该链接，也 MUST NOT 自己创建或写入该文件；文件的内容与格式由 Pi 决定。
+
+未被 seed 的路径仍按「陈旧 instance 清扫」处理。
 
 #### Scenario: 首次启动即建立软链
 
@@ -86,3 +95,18 @@ profile 声明了 `mcps` 时，instance 的 `mcp.json` SHALL 是生成的过滤�
 
 - **WHEN** 真实 agentDir 下已存在含记录的 `missions` 目录
 - **THEN** 该目录内容不变，instance 内 `missions` 是它的符号链接
+
+#### Scenario: 目标文件尚不存在时仍建立软链
+
+- **WHEN** 真实 agentDir 下不存在 `auth.json` 时启动任一 profile
+- **THEN** instance 内 `auth.json` 是指向真实 agentDir 对应路径的符号链接，且真实 agentDir 下没有被创建出来的 `auth.json`
+
+#### Scenario: 通过软链写入落在真实 agentDir
+
+- **WHEN** 进程在 instance 内写入 `auth.json`
+- **THEN** 真实 agentDir 的 `auth.json` 得到该内容，instance 内该条目仍是符号链接
+
+#### Scenario: 重写同一 instance 目录后软链仍在
+
+- **WHEN** 同一 instance 目录被就地重写（会话内切换）
+- **THEN** `auth.json` 与 `models-store.json` 仍是符号链接

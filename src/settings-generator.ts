@@ -109,6 +109,14 @@ export const MANAGED_INSTANCE_FILES = new Set([
  *  up as an unrecognized entry in the sweep (src/launcher/runtime-cleanup.ts). */
 const SEEDED_STATE_DIRS = ["sessions", "missions"] as const;
 
+/** State FILES Pi creates at runtime (same evidence rule as the dirs). They
+ *  cannot be created up front — the content is Pi's, not pi-profile's — so the
+ *  instance gets a symlink into the real agent dir that is deliberately allowed
+ *  to dangle: Pi sees no file, writes through the link, and the real agent dir
+ *  gets the file. A real file left here instead would be unrecognized state and
+ *  would strand credentials in a directory the sweep refuses to delete. */
+const SEEDED_STATE_FILES = ["auth.json", "models-store.json"] as const;
+
 /** Resource dirs rooted at the real agent dir, re-included for the default
  *  profile because PI_CODING_AGENT_DIR moves the discovery root. */
 const RESOURCE_DIR_KINDS = ["skills", "extensions", "prompts", "themes"] as const;
@@ -504,13 +512,6 @@ export async function syncAgentSymlinks(agentDir: string, runtimeDir: string): P
 	if (!existsSync(agentDir)) return;
 	if (path.resolve(agentDir) === path.resolve(runtimeDir)) return;
 
-	// Seed the state dirs that Pi and its extensions resolve under the agent
-	// dir, so the mirror below turns them into symlinks instead of letting
-	// runtime writes create instance-local copies (ADR-0010).
-	for (const name of SEEDED_STATE_DIRS) {
-		await mkdir(path.join(agentDir, name), { recursive: true });
-	}
-
 	// 1. Clean up dangling or obsolete symlinks in runtimeDir
 	try {
 		const runtimeEntries = await readdir(runtimeDir);
@@ -531,7 +532,13 @@ export async function syncAgentSymlinks(agentDir: string, runtimeDir: string): P
 		}
 	} catch {}
 
-	// 2. Mirror files and directories from agentDir to runtimeDir
+	// 2. Seed the state paths this process's Pi will create at runtime, so their
+	// writes land in the real agent dir instead of an instance-local copy
+	// (ADR-0010). Runs after the cleanup above, which would otherwise remove the
+	// deliberately dangling file links.
+	await seedRuntimeState(agentDir, runtimeDir);
+
+	// 3. Mirror files and directories from agentDir to runtimeDir
 	try {
 		const entries = await readdir(agentDir);
 		for (const name of entries) {
@@ -559,6 +566,33 @@ export async function syncAgentSymlinks(agentDir: string, runtimeDir: string): P
 			}
 		}
 	} catch {}
+}
+
+/** Ensures the runtime state paths exist (or are linked) in the real agent dir
+ *  and the instance. Best-effort: a failure here leaves the path unseeded, and
+ *  the sweep's unrecognized-entry warning names it later. */
+async function seedRuntimeState(agentDir: string, runtimeDir: string): Promise<void> {
+	for (const name of SEEDED_STATE_DIRS) {
+		try {
+			await mkdir(path.join(agentDir, name), { recursive: true });
+		} catch {
+			// Best-effort: the mirror then simply links nothing for this name.
+		}
+	}
+
+	for (const name of SEEDED_STATE_FILES) {
+		const linkPath = path.join(runtimeDir, name);
+		// A real file here belongs to an earlier run of a different layout, and a
+		// link may already point somewhere else: leave both alone rather than
+		// replacing state pi-profile cannot attribute.
+		if (await existsLexical(linkPath)) continue;
+		try {
+			await symlink(path.join(agentDir, name), linkPath);
+		} catch {
+			// Best-effort: Pi then creates the file inside the instance, and the
+			// sweep keeps that directory instead of deleting it silently.
+		}
+	}
 }
 
 export async function generateRuntimeDir(

@@ -6,6 +6,8 @@
 - [x] 1.2 `src/settings-generator.ts` 在镜像前 seed 真实 agentDir 的 `missions` 目录（缺失时 `mkdir`，已存在时不动，不写入内容）；验证：新增用例断言首次生成后真实 agentDir 下出现该目录、instance 内是指向它的软链，第二次生成后目录内容不变
 - [x] 1.3 `bin/pi-profile.ts` 的清扫调用改为在生成本次 instance 之前针对 instance 根执行；验证：手动启动一次后 `instances/` 下只保留本次的 `launch-*` 目录
 - [x] 1.4 核对 `src/workspace.ts` 的 `getInstancesRootDir` 与注释仍与 per-launch 语义一致，确认无需改动；验证：`npm run check` 通过
+- [x] 1.5 `src/settings-generator.ts` 把 Pi 运行时创建的状态文件（`auth.json`、`models-store.json`）以允许悬空的软链 seed 进 instance，且 seed 步骤位于失效链接清理之后；验证：`test/settings-generator.test.ts` 断言悬空软链存在、写入穿透到真实 agentDir、就地重写后链接仍在
+- [x] 1.6 集成验证真实启动的落点；验证：`test/instance-lifecycle.integration.test.ts` 断言启动后 instance 内两者是软链、且真实 agentDir 得到这两个文件
 
 ## 2. 清扫与未识别条目保护
 
@@ -24,12 +26,12 @@
 
 ## 4. Doc Impact 落地
 
-- [ ] 4.1 改写 `docs/architecture/overview.md` 的「运行目录」整段：路径形态改为每次启动唯一目录、`pid` 位置、seed 规则、清扫规则，并同步受管文件表
-- [ ] 4.2 改写 `docs/architecture/overview.md` 的「已知限制」：删除"instance 路径固定导致并发互相重写""已删除或改名 profile 的 instance 目录不被清理"两处，新增一行"0.4.x 遗留 instance 目录不被新清扫触及，需用户自行处置"
-- [ ] 4.3 在 `docs/architecture/overview.md` 增补 seed 名单小表（当前仅 `missions`），并注明"加条目必须有观察证据，不能靠推断"
+- [x] 4.1 改写 `docs/architecture/overview.md` 的「运行目录」整段：路径形态改为每次启动唯一目录、`pid` 位置、seed 规则、清扫规则，并同步受管文件表
+- [x] 4.2 改写 `docs/architecture/overview.md` 的「已知限制」：删除"instance 路径固定导致并发互相重写""已删除或改名 profile 的 instance 目录不被清理"两处，新增一行"0.4.x 遗留 instance 目录不被新清扫触及，需用户自行处置"
+- [x] 4.3 在 `docs/architecture/overview.md` 增补 seed 名单小表（当前仅 `missions`），并注明"加条目必须有观察证据，不能靠推断"
 - [x] 4.4 新增 `docs/adr/0010-per-launch-instance-lifecycle.md`（已随本变更落盘）；验证：其决策与 `design.md` 一致，apply 阶段若有设计修订需同步更新该文件
-- [ ] 4.5 核对 `docs/prd.md` 与 `CONTEXT.md` 确实无需改动（`instance` 定义已描述 per-launch）；验证：`git diff --stat` 显示这两个文件未被触碰
-- [ ] 4.6 运行 `openspec validate per-launch-instance-lifecycle --strict` 通过
+- [x] 4.5 核对 `docs/prd.md` 与 `CONTEXT.md` 确实无需改动（`instance` 定义已描述 per-launch）；验证：`git diff --stat` 显示这两个文件未被触碰
+- [x] 4.6 运行 `openspec validate per-launch-instance-lifecycle --strict` 通过
 
 ## 5. 本变更范围外
 

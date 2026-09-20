@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -69,6 +69,33 @@ describe("instance lifecycle", () => {
 			} finally {
 				await first.close();
 				await second.close();
+			}
+		},
+	);
+
+	it(
+		"keeps Pi's runtime state in the real agent dir instead of the instance",
+		{ timeout: 45_000 },
+		async () => {
+			await writeCatalog({ impl: {} });
+
+			const rpc = new RpcDriver("node", [BIN, "impl", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				expect((await rpc.send({ type: "get_state" })).success).toBe(true);
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+
+			const [instance] = await launchInstanceDirs(fixture);
+			for (const name of ["auth.json", "models-store.json"]) {
+				// Pi resolves these under the agent dir; seeded as links, its writes
+				// land in the real agent dir and the instance stays reclaimable.
+				expect((await lstat(path.join(instance!, name))).isSymbolicLink()).toBe(true);
+				expect(existsSync(path.join(fixture.agentDir, name))).toBe(true);
 			}
 		},
 	);

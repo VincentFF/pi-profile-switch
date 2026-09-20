@@ -49,11 +49,17 @@ ADR required: per-launch-instance-lifecycle
 
 ### 4. 用 seed 软链把运行时状态锚在真实 agentDir
 
-镜像之前先在真实 agentDir 里确保 `missions` 存在，再由既有的全量镜像逻辑生成 instance 内的软链。效果是第三方从第一次启动起写入的就是真实路径，台账里的 `recordPath`、记录里的 `ownerSessionId` 与 artifacts 路径永不包含 instance 路径。`sessions` 已经是同一形态的先例（镜像前 `mkdir`）。
+镜像之前先把 Pi 会在运行时创建的状态路径 seed 出去，再由既有的全量镜像逻辑生成 instance 内的软链：
+
+- 目录（`sessions`、`missions`）在真实 agentDir 下缺失时创建（空目录无内容语义，安全），镜像后 instance 内即为软链。`sessions` 已是同一形态的先例。
+- 文件（`auth.json`、`models-store.json`）不能预先创建，因为内容是 Pi 的；改为在 instance 内建立**允许悬空**的软链。Pi 对不存在采用 `existsSync`，悬空链因此被看作“没有文件”，写入时穿透软链在真实 agentDir 落成真文件（已核实 Pi 用 `writeFileSync` 原地写、不 rename，`normalizePath` 也不做 realpath）。seed 步骤放在失效链接清理之后，否则悬空链会被清掉。
+
+效果是第三方与 Pi 从第一次启动起写入的就是真实路径，台账里的 `recordPath`、记录里的 `ownerSessionId` 与 artifacts 路径永不包含 instance 路径。
 
 被否方案 A：回收时吸收（把未识别条目搬进真实 agentDir）。已落盘的 `recordPath` / `ownerSessionId` / `artifacts[].path` 指向被删除的 instance 路径，搬走之后台账会把指针当 stale 清空；要修就得改写第三方文件格式，且需要一套冲突合并策略。
 被否方案 B：把 `missions` 指向项目 `.pi/subagents/missions`。launcher 会替未受管、甚至未受信任的项目创建文件，破坏信任守门。
 被否方案 C：枚举更多第三方状态目录。名单是兼容债，扩展换路径就静默失效；只收录有观察证据的条目，其余交给决策 3 的警告兜底。
+被否方案 D：按 Pi 的空值把 `auth.json` / `models-store.json` 自己建出来（内容是 `{}`）。锁会落在真实路径上，但把 Pi 的内部空值形状写死：Pi 以后换格式而不重写文件时会留下陈旧文件，而软链方案让 Pi 自己拥有文件格式。
 
 ADR required: per-launch-instance-lifecycle
 
@@ -64,10 +70,12 @@ ADR required: per-launch-instance-lifecycle
 ## Risks / Trade-offs
 
 - seed 名单随第三方改路径而静默失效 → 决策 3 的警告把它变成可见、可行动的失败；架构文档中的名单表注明"加条目必须有观察证据"。
+- 文件类 seed 用悬空软链：Pi 对 `auth.json` / `models-store.json` 用 `proper-lockfile` 锁在 `<instance>/auth.json.lock`（软链路径旁），两个并发 instance 因此不会串行化对同一个真实文件的写，理论上可能丢一次凭据刷新。这是本变更之前 per-profile 副本就有的同类缺口，尚未观察到实际影响；若需要锁的强一致，只能改回“自己按 Pi 的空值建文件”（被否方案 D）。
 - 宽限期内的死目录暂时残留 → 下次启动回收，磁盘代价为 KB 级。
 - PID 复用导致应回收的目录被误保留 → 自愈：该 pid 结束后即被回收。
 - 启动失败（写出 pid 之前崩溃）留下的目录与并发启动竞争 → 宽限期覆盖，不会被另一个 launcher 误删。
-- seed 会在真实 agentDir 下创建空目录 → 与 `sessions` 的既有行为一致，只创建目录本身，不写入内容。
+- seed 会在真实 agentDir 下创建空目录（`sessions`、`missions`）→ 与既有行为一致，只创建目录本身，不写入内容；文件类路径不创建。
+- 进程被强杀时 `proper-lockfile` 可能留下 `<auth.json>.lock` 之类的条目 → 被当作未识别条目保留并告警，不会静默删除。
 - 升级后 0.4.x 目录永久残留，其中的 mission 记录带旧绝对路径 → 由架构文档的已知限制与迁移说明覆盖。
 
 ## Migration Plan

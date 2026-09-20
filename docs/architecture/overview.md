@@ -105,7 +105,7 @@ pi-profile review -- --mode rpc
   ├─ skill-registry + extension-discovery + mcp-config 只读发现
   ├─ resolveProfile → ActivationPlan（glob 展开、overlay 应用、unmatched 收集）
   ├─ 校验：声明的模型已认证、extension 入口存在、MCP adapter 与 server 存在
-  ├─ generateRuntimeDir → instances/review/agent（生成文件 + symlink 镜像 + env）
+  ├─ generateRuntimeDir → 本次 instance 目录（生成文件 + seed + symlink 镜像 + env）
   └─ spawnPi：-e <extension> [trust flag] <用户参数原样>
        └─ extension 在 session_start 读 pi-profile.json，展开 tools 并 setActiveTools
 ```
@@ -130,9 +130,9 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 ## 运行目录
 
-路径 `~/.pi-profile-switch/instances/<profile>/agent`（`PI_PROFILE_SWITCH_DIR` 可覆盖根），经 `PI_CODING_AGENT_DIR` 交给 pi。同一个 profile 每次启动复用同一路径。
+每次启动生成一个 instance 目录，路径为 `<PI_PROFILE_SWITCH_DIR>/instances/launch-<随机标识>`（工作区根默认为 `~/.pi-profile-switch`，`PI_PROFILE_SWITCH_DIR` 可覆盖），经 `PI_CODING_AGENT_DIR` 交给 pi。路径与一次启动绑定、不复用：`PI_CODING_AGENT_DIR` 在子进程内不可变更，固定路径既无法跟随会话内切换，也会让并发启动互相重写文件（ADR-0010）。
 
-受管文件与镜像规则是契约，见 `openspec/specs/launcher/spec.md` 的「instance 目录契约」。以下是每个受管文件的用途：
+受管文件、镜像与清扫规则是契约，见 `openspec/specs/launcher/spec.md` 的「instance 目录契约」「陈旧 instance 清扫」「instance 运行时状态 seed」。以下是每个受管文件的用途：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -141,10 +141,29 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 | `mcp.json` | 过滤后的 MCP server 集合 |
 | `APPEND_SYSTEM.md` | profile 的 `instructions`，Pi 原生追加到 system prompt |
 | `trust.json` | 只在 `default` profile 下链接；命名 profile 不链接，项目资源的信任判定由 launcher 独占 |
-| `pid` | 子进程活性标记，当前无消费者 |
+| `pid` | 子进程活性标记，上次启动的清扫据此判定回收 |
 | `extensions` | 受管目录，使 agentDir 级 extension 只经白名单进入 |
 
-真实 agentDir 下的其余条目都保持原位，靠符号链接进入 instance。`auth.json`、`models.json`、`npm/`、`git/`、`bin/`、`sessions/` 因此不被复制，`sessions/` 保留 Pi 原生的分目录结构，session 文件始终写在真实 agentDir。用户配置文件从不被修改。
+真实 agentDir 下的其余条目都保持原位，靠符号链接进入 instance；生成时还不存在、却在运行时被创建的条目由下节的 seed 处理。这些状态因此从不被复制：`npm/`、`git/`、`bin/` 是包安装根，`sessions/` 保留 Pi 原生的分目录结构、session 文件始终写在真实 agentDir。用户配置文件从不被修改。
+
+### 运行时状态的 seed
+
+镜像是生成时刻的快照：只有生成时已存在于真实 agentDir 的条目会被链接。**运行时才被创建**的条目必须靠 seed，否则会落在 instance 内——既随 instance 被清扫，也让第三方记录写进 instance 路径。名单只收录有观察证据的条目（不能靠推断）；未被收录的条目由清扫保留并告警，不会静默销毁。
+
+| 路径 | 形态 | seed 方式与理由 |
+| --- | --- | --- |
+| `sessions/` | 目录 | 真实 agentDir 下缺失时创建；空目录语义无歧义 |
+| `missions/` | 目录 | 同上；pi-subagents 的 mission store 根 |
+| `auth.json` | 文件 | instance 内建立指向真实 agentDir 的软链，目标不存在时也建立（悬空） |
+| `models-store.json` | 文件 | 同上 |
+
+文件不能预先创建，因为内容属于 Pi：悬空软链让 Pi 的 `existsSync` 视为“不存在”，写入时穿透软链在真实 agentDir 落成真文件，格式始终由 Pi 拥有。seed 步骤放在失效链接清理之后，否则悬空链会被自身的清理逻辑删掉。
+
+### instance 清扫
+
+启动时（生成本次 instance 之前）清扫 instance 根下的 `launch-` 目录：`pid` 指向的进程已退出则回收，仍存活则保留；`pid` 缺失或不可解析时，mtime 超过宽限期才回收。退出时不做删除：任何退出方式都会结束 pid，下次启动的清扫必然收敛。
+
+目录内含 pi-profile 未生成的条目（既不是符号链接，也不是受管生成物，包括受管目录内部的条目）时保留该目录并把警告写到 stderr，绝不静默销毁：那可能是某个扩展写在 agentDir 下的状态。判定不比对真实 agentDir——seed 之后同名条目在两边都存在，拿它当“已有对应物”会把 instance 内的真实数据误当可删。
 
 ### 生成 settings.json 示例
 
@@ -177,7 +196,8 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 | 项目资源的信任判定只由 launcher 执行 | 绕过 launcher、直接以生成的 instance 启动 pi，会得到与原生 Pi 不同的资源可见性 |
 | 不咨询 extension 的 `project_trust` 事件 | 咨询需要在 launcher 里执行扩展代码；依赖该事件的第三方 extension 无法影响 trust 判定 |
 | `pi install` 与 `pi config` 在会话内写生成的 settings | 退出后丢失；持久改动需走 `/profile edit` 或原生 `pi` |
-| instance 路径固定为 `instances/<profile>/agent` | 并发启动同一 profile 时会互相重写该目录的文件；已删除或改名 profile 的 instance 目录不被清理，现存清扫实现扫的是 `<agentDir>/pi-profile/runtime/launch-*`，与 instance 路径不同因而不生效 |
+| 0.4.x 遗留的 `instances/<profile>/agent` 目录不被新清扫触及 | 既不清理也不迁移，需用户自行处置；其中的 pi-subagents mission 记录带指向旧 instance 路径的绝对路径，无法修复（见 ADR-0010） |
+| 并发 instance 对凭据文件的写入不互相串行化 | `auth.json` 与 `models-store.json` 通过 seed 软链共享，但 Pi 的锁落在软链路径旁，两个会话不会互相串行化，可能丢失一次并发刷新（见 ADR-0010） |
 | 项目范围的 package skill 不可引用 | 其包装在项目 `.pi/npm` 下，生成的全局 settings 无法引用；项目 `.pi/skills` 与 ancestor `.agents/skills` 不受影响 |
 
 ## 包结构

@@ -62,12 +62,18 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 			// User's real settings are never rewritten.
 			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "settings.json"), "utf8"))).toEqual(userSettings);
 			// New files in the real agent dir stay inside pi-profile-owned runtime
-			// dirs and pi's own session storage — nothing else appears.
+			// dirs, Pi's own session storage, and the state paths pi-profile seeds
+			// so that Pi writes them there instead of into the instance
+			// (ADR-0010) — nothing else appears.
 			const agentDirAfter = await listFiles(fixture.agentDir);
 			const created = agentDirAfter.filter((file) => !agentDirBefore.includes(file));
 			for (const file of created) {
 				const relative = path.relative(fixture.agentDir, file);
-				expect(relative.startsWith(path.join("pi-profile", "runtime")) || relative.startsWith("sessions")).toBe(true);
+				expect(
+					["sessions", "missions", "auth.json", "models-store.json"].some(
+						(seed) => relative === seed || relative.startsWith(`${seed}${path.sep}`),
+					),
+				).toBe(true);
 			}
 			// If session files were created, verify they are placed inside project subdirectories,
 			// never directly under sessions/
@@ -209,9 +215,10 @@ describe("launcher integration: instance dir cleanup", () => {
 				expect(afterSecond.filter((name) => !before.includes(name))).toHaveLength(1);
 
 				// A previous dir is only kept when it holds state pi-profile did not
-				// generate — Pi itself materializes auth.json / models-store.json
-				// inside the instance when the real agent dir lacks them. Either way
-				// the outcome is explicit: reclaimed, or reported on stderr.
+				// generate (a leftover lock dir, or state from another package). The
+				// runtime state Pi resolves under the agent dir is seeded instead, so
+				// the expected outcome is reclamation. Either way the outcome is
+				// explicit: reclaimed, or reported on stderr.
 				if (existsSync(previousPath)) {
 					expect(stderr).toContain(`${previousPath} was not reclaimed`);
 					expect(afterSecond).toHaveLength(2);
