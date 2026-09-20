@@ -47,10 +47,12 @@ pi-profile-switch 是给 Pi 加命名 profile 的 Pi package。一个 profile �
 
 ## 变更流程
 
-改动走 OpenSpec，不直接改代码或文档：
+会改变可观察行为、规范内容或决策的改动走 OpenSpec，不直接改代码或文档：
 
 ```text
 /opsx-new <name> → /opsx-continue → /opsx-apply → /opsx-archive
 ```
 
 其余流程为 `/opsx-propose`、`/opsx-ff`、`/opsx-explore`、`/opsx-sync`、`/opsx-verify`、`/opsx-update`，定义见 `.pi/prompts/opsx-*.md`。artifact 规则与归档门禁在 `openspec/config.yaml` 的 `rules` 与 `operations` 段。
+
+不改变上述任何一项的修正直接提交，不必开 change：增删文档文件、修链接与错字、改注释与用例名、重命名纯调整文件。判据是它会不会改变读者对行为的理解：会，就走流程。
