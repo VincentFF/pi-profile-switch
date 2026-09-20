@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.5.0...v0.6.0) (2026-09-20)
+
+
+### Features
+
+* delegate project-level visibility to Pi's trust store ([#43](https://github.com/VincentFF/pi-profile-switch/issues/43)) ([4018f3b](https://github.com/VincentFF/pi-profile-switch/commit/4018f3b83f607a5b391dac67b7e4f703209b49ac))
+
 ## [0.5.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.9...v0.5.0) (2026-09-20)
 
 
