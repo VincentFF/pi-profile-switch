@@ -76,8 +76,4 @@ profile 只改变它显式声明控制的东西，其余一切走 Pi 原生机�
 
 ## 关联文档
 
-- `CONTEXT.md`：术语定义与规避词。
-- `openspec/specs/`：行为契约。产品目标与非目标在此展开为可验证的 spec。
-- `docs/architecture/overview.md`：模块边界、数据契约与激活流程。
-- `docs/adr/`：难以撤销的决策及其被否方案。
-- `README.md`：安装、配置语法与命令用法。
+[CONTEXT.md](../CONTEXT.md) · [openspec/specs/](../openspec/specs/) · [架构](architecture/overview.md) · [ADR](adr/) · [手动验收](acceptance.md) · [README](../README.md)
