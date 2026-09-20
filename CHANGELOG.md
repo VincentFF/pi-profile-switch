@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.9](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.8...v0.4.9) (2026-09-20)
+
+
+### Bug Fixes
+
+* delegate extension entry discovery to Pi package manager ([#38](https://github.com/VincentFF/pi-profile-switch/issues/38)) ([0f2f6eb](https://github.com/VincentFF/pi-profile-switch/commit/0f2f6eb93375e99bc13add350029f8d14cd15139))
+
 ## [0.4.8](https://github.com/VincentFF/pi-profile-switch/compare/v0.4.7...v0.4.8) (2026-09-19)
 
 
