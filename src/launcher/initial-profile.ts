@@ -31,7 +31,7 @@ export class UnknownProfileError extends Error {
 	}
 }
 
-/** Zero-match glob references surface as launch warnings (ADR-0006):
+/** Zero-match glob references surface as launch warnings (ADR-0009):
  *  visible, but never blocking — globs re-expand on every resolution. */
 function unmatchedWarnings(plan: ActivationPlan): string[] {
 	return (plan.unmatched ?? []).map(
