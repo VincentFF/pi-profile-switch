@@ -1,24 +1,30 @@
-# Subprocess host with per-profile generated Pi settings
+# 子进程宿主与生成式 settings
 
-Supersedes ADR-0001.
+取代 ADR-0001。
 
-ADR-0001 concluded that Pi has no pre-start resource-filter seam, because the public Extension API offers none, and therefore the launcher must build the Pi runtime itself through the SDK. Spikes against Pi 0.85.1 disproved the premise: the seam exists, it is just not the Extension API. Pi's own settings mechanism filters resources before the first agent turn:
+## 背景
 
-- Settings arrays (`skills`, `extensions`, `prompts`, `themes`) apply `!glob` exclusions and `-path` force-exclusions to auto-discovered resources (`~/.agents/skills` verified), and additive absolute paths re-include selected entries.
-- Project-scope resources ignore global settings patterns, but `defaultProjectTrust: "never"` suppresses all project auto-discovery, after which additive absolute paths restore exactly the selected entries.
-- `PI_CODING_AGENT_DIR` points Pi at a pi-profile-owned settings directory; symlinking sessions into the runtime directory keeps session storage in the real location with native directory structure. User configuration files are never modified.
-- `ctx.reload()` re-reads the settings file from disk and rebuilds the runtime while preserving the session (sessionId, session file, and message history verified unchanged).
+资源过滤必须发生在第一个 agent turn 之前：向模型暴露全量资源再收回是不可接受的。
 
-Decision: `pi-profile` spawns the real `pi` binary as a subprocess with the user's arguments passed through verbatim, a generated per-launch agent directory — a `settings.json` encoding the profile's resource selection plus symlinks to the user's real `trust.json`, `auth.json`, `models.json`, `models-store.json`, and `npm/` — and generated flags for tools and model. The pi-profile extension inside Pi orchestrates in-session profile switches by regenerating the settings file and calling `ctx.reload()`.
+ADR-0001 断言 Pi 没有 pre-start 过滤接缝，据此选择由 pi-profile 用 Pi SDK 自行构建 runtime。针对 Pi 0.85.1 的验证推翻了该前提：接缝存在，只是不在 Extension API 里。四项事实被逐条验证：
 
-Filtering model: agentDir-scope resources become additive allowlists (the discovery root moves with the generated dir, so nothing is auto-discovered); `~/.agents` skills use exclusion patterns; project resources use `defaultProjectTrust: "never"` plus additive allowlists gated by the resolver's own `trust.json` check (pi-profile becomes the trust gatekeeper for project resources); packages use the object-form allowlist. Resource kinds pi-profile does not manage (prompt templates, themes, context files, Pi settings themselves) pass through untouched.
+- settings 的资源数组支持排除 pattern 与附加绝对路径，可在 Pi 的自动发现之上做白名单。
+- 项目级自动发现可被 `defaultProjectTrust: "never"` 完全抑制，再由附加绝对路径恢复选中项。
+- `PI_CODING_AGENT_DIR` 可把 Pi 指向 pi-profile 自有的 settings 目录，session 文件仍留在真实位置。
+- `ctx.reload()` 重读磁盘上的 settings 并重建 runtime，session 的 sessionId、session 文件与消息历史均保持不变。
 
-Consequences:
+## 决策
 
-- All Pi CLI flags pass through natively; Pi's startup behavior (modes, changelog, updates, session resume) needs no re-implementation. The launcher only intercepts the positional profile name and `--approve` (which it reinterprets as trust input for profile resolution instead of letting Pi auto-discover project resources unfiltered).
-- `ProfileHost`, `RuntimeApplier`, and `ResourceFilterAdapter` are deleted; the remaining core is domain logic (catalog, registries, resolver, state store) plus a settings generator.
-- `/profile use` switches in-session without process restart via settings regeneration plus `ctx.reload()`; extensions re-execute on reload, so no stale extension context survives.
-- Coupling moves from the SDK host API to Pi's settings schema, pattern semantics, env vars, and reload behavior (verified on 0.85.1; the integration suite spawns real Pi and guards drift).
-- Known limitation: `pi install` / `pi config` inside a pi-profile session write the generated settings and are lost on exit; use `/profile edit` or plain `pi` for persistent package changes.
+`pi-profile` 以子进程方式启动真实 `pi` 二进制，用户参数原样透传，并为其生成一个 profile 专属 agent 目录，其中 `settings.json` 编码该 profile 的资源选择。pi 内的 pi-profile extension 通过重写该文件并调用 `ctx.reload()` 完成会话内切换。
 
-Evidence: throwaway spikes (fixture HOME, generated agent dir, real `pi --mode rpc` subprocess, RPC `get_commands` introspection, probe extension) verified every claim above; script preserved at the time in `/tmp/pi-profile-spike/`.
+用户配置文件从不被修改。
+
+## 被否方案
+
+**ADR-0001 的 SDK 宿主方案**：由 launcher 用 Pi SDK 自行构建 runtime，把已过滤的资源图交给 ResourceLoader。否掉的理由是前提不成立——过滤接缝存在，只是不在 Extension API 里（见背景）。此外 SDK 宿主还要重新实现 Pi 的启动行为：模式、changelog、更新、session 恢复。
+
+## 代价
+
+- 耦合从 SDK 宿主 API 转移到 Pi 的 settings schema、pattern 语义、环境变量与 reload 行为。集成测试用真实 Pi 子进程守卫这些漂移。
+- `pi install` 与 `pi config` 在会话内写生成的 settings，退出后丢失；持久改动需走 `/profile edit` 或原生 `pi`。
+- launcher 需要拦截两个输入：位置 profile 名与 `--approve`（后者被重新解释为 trust 输入，防止 Pi 侧自动发现未过滤的项目资源）。
