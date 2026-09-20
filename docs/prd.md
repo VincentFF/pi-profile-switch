@@ -76,4 +76,4 @@ profile 只改变它显式声明控制的东西，其余一切走 Pi 原生机�
 
 ## 关联文档
 
-[CONTEXT.md](../CONTEXT.md) · [openspec/specs/](../openspec/specs/) · [架构](architecture/overview.md) · [ADR](adr/) · [手动验收](acceptance.md) · [README](../README.md)
+[CONTEXT.md](../CONTEXT.md) · [openspec/specs/](../openspec/specs/) · [架构](architecture/overview.md) · [ADR](adr/) · [README](../README.md)

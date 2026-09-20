@@ -37,7 +37,6 @@ pi-profile-switch 是给 Pi 加命名 profile 的 Pi package。一个 profile �
 - 不改写既有 ADR 的决定。决策变化时新增编号文件，并在旧文件顶部加一行 `**Superseded by ADR-XXXX.**`。
 - 新增 ADR 用 `docs/adr/` 中下一个可用编号，不复用旧编号。
 - ADR 用编号引用，如 `ADR-0005`。文件链接用仓库相对路径。
-- `docs/acceptance.md` 是可复现的手动验收步骤，改行为时同步核对。
 
 ### 代码
 
