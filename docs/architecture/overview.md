@@ -55,7 +55,7 @@ profile 只接管四类资源（skills、extensions、MCP servers、tools），�
 | `launcher/discovery.ts` | `discoverLauncherResources()` → launcher 侧只读发现结果（skills、包根），供 resolver |
 | `launcher/model-check.ts` | `checkDeclaredModel(agentDir, model)` → 错误消息或 undefined |
 | `launcher/spawn.ts` | `generateRuntimeDir` 的结果 + 用户参数 → spawn pi，写 `pid` 活性文件，转发信号与退出码 |
-| `launcher/runtime-cleanup.ts` | 启动时按 `pid` 活性清扫陈旧 instance 目录 |
+| `launcher/runtime-cleanup.ts` | 启动时按 `pid` 活性清扫陈旧 instance 目录；未识别条目按内容扫描分流（收养 / 删除 / 保留告警） |
 
 ### 解析（launcher 与会话内共用）
 
@@ -152,12 +152,14 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 当前 seed 哪些路径、以什么形态，是行为契约，见 `openspec/specs/launcher/spec.md` 的「instance 运行时状态 seed」。这里只记两条维护规则：
 
-- 名单只收录有**观察证据**的条目（某次真实运行确实在 agentDir 下创建了它），不能靠推断；未被收录的条目由清扫保留并告警，不会静默销毁。
+- 名单只收录有**观察证据**的条目（某次真实运行确实在 agentDir 下创建了它），不能靠推断；未被收录的条目由清扫按内容扫描分流处置（见「instance 清扫」），不会静默销毁。
 - 目录可以直接创建（空目录语义无歧义）；文件不能预先创建，因为内容属于 Pi。文件用**允许悬空**的软链：Pi 的 `existsSync` 视为“不存在”，写入时穿透软链在真实 agentDir 落成真文件，格式始终由 Pi 拥有。seed 步骤放在失效链接清理之后，否则悬空链会被自身的清理逻辑删掉。
 
 ### instance 清扫
 
-清扫发生在启动时（生成本次 instance 之前），而不是退出时：任何退出方式都会结束 pid，下次启动的清扫必然收敛，因此不必在信号路径上放删除逻辑。判定规则、保留条件与警告要求是契约，见 `openspec/specs/launcher/spec.md` 的「陈旧 instance 清扫」；该判定为何不比对真实 agentDir，见 ADR-0010。
+清扫发生在启动时（生成本次 instance 之前），而不是退出时：任何退出方式都会结束 pid，下次启动的清扫必然收敛，因此不必在信号路径上放删除逻辑。判定规则与警告要求是契约，见 `openspec/specs/launcher/spec.md` 的「陈旧 instance 清扫」。
+
+待回收目录第一层的未识别条目按内容扫描分流：内容引用 instance 路径、扫描超限或非常规类型 → 保留 + 警告（ADR-0010 的保护原样保留）；位置无关的内容 → 收养进真实 agentDir，同名冲突时删除 instance 副本（real wins），两者都向 stderr 输出 notice。`extensions/` 内部条目只告警。分流判据与被否的替代方案见 ADR-0012。
 
 ### 生成 settings.json 示例
 

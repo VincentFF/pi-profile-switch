@@ -37,10 +37,16 @@ try {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
 	// Stale per-launch instance dirs (dead pid, or no pid past the grace
-	// window) are swept before this launch materializes its own. Directories
-	// holding state pi-profile did not generate are kept and reported instead of
-	// deleted (ADR-0010). Best-effort: sweep errors never block the launch.
-	for (const warning of await sweepStaleInstances()) {
+	// window) are swept before this launch materializes its own. Unrecognized
+	// entries are dispositioned per content scan: kept + reported when they
+	// reference the instance path or cannot be cleared, adopted into the real
+	// agent dir, or deleted on a name conflict (real wins) — all with a stderr
+	// notice (ADR-0012). Best-effort: sweep errors never block the launch.
+	const sweep = await sweepStaleInstances(agentDir);
+	for (const notice of sweep.notices) {
+		console.error(`pi-profile: notice: ${notice}`);
+	}
+	for (const warning of sweep.warnings) {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
 	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectDir });
