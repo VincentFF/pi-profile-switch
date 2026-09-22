@@ -232,4 +232,126 @@ describe("launcher integration: instance dir cleanup", () => {
 			}
 		},
 	);
+
+	it(
+		"keeps a stale dir whose unrecognized entry references the instance path, and warns",
+		{ timeout: 45_000 },
+		async () => {
+			const stale = path.join(instancesRoot(), "launch-pathRef");
+			await mkdir(stale, { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+			// A ledger-style record embedding its own instance path must survive
+			// untouched (ADR-0010 protection, ADR-0012 scan gate).
+			await writeFile(
+				path.join(stale, "ledger.json"),
+				JSON.stringify({ recordPath: path.join(stale, "ledger.json") }),
+			);
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await rpc.commandNames();
+				expect(existsSync(stale)).toBe(true);
+				expect(existsSync(path.join(stale, "ledger.json"))).toBe(true);
+				expect(existsSync(path.join(fixture.agentDir, "ledger.json"))).toBe(false);
+				const stderr = rpc.stderr.join("");
+				expect(stderr).toContain(`${stale} was not reclaimed`);
+				expect(stderr).toContain("ledger.json");
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+		},
+	);
+
+	it(
+		"adopts an unrecognized entry with no path references into the real agent dir, then reclaims the dir",
+		{ timeout: 45_000 },
+		async () => {
+			const stale = path.join(instancesRoot(), "launch-adopt");
+			await mkdir(stale, { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+			await writeFile(path.join(stale, "mcp-cache.json"), JSON.stringify({ cache: "portable" }));
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await rpc.commandNames();
+				expect(existsSync(stale)).toBe(false);
+				expect(JSON.parse(await readFile(path.join(fixture.agentDir, "mcp-cache.json"), "utf8"))).toEqual({
+					cache: "portable",
+				});
+				const stderr = rpc.stderr.join("");
+				expect(stderr).toContain("pi-profile: notice:");
+				expect(stderr).toContain("adopted mcp-cache.json");
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+		},
+	);
+
+	it(
+		"deletes the instance copy on a name conflict with the real agent dir (real wins), with a notice",
+		{ timeout: 45_000 },
+		async () => {
+			await writeFile(path.join(fixture.agentDir, "custom-state.json"), JSON.stringify({ real: true }));
+			const stale = path.join(instancesRoot(), "launch-conflict");
+			await mkdir(stale, { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+			await writeFile(path.join(stale, "custom-state.json"), JSON.stringify({ instance: true }));
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await rpc.commandNames();
+				expect(existsSync(stale)).toBe(false);
+				// Real wins: the real agent dir's copy is untouched, no comparison.
+				expect(JSON.parse(await readFile(path.join(fixture.agentDir, "custom-state.json"), "utf8"))).toEqual({
+					real: true,
+				});
+				const stderr = rpc.stderr.join("");
+				expect(stderr).toContain("pi-profile: notice:");
+				expect(stderr).toContain("deleted custom-state.json");
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+		},
+	);
+
+	it(
+		"only warns for unrecognized entries inside the managed extensions/ dir",
+		{ timeout: 45_000 },
+		async () => {
+			const stale = path.join(instancesRoot(), "launch-extWarn");
+			await mkdir(path.join(stale, "extensions", "some-ext"), { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+			await writeFile(path.join(stale, "extensions", "some-ext", "config.json"), "{}");
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await rpc.commandNames();
+				expect(existsSync(stale)).toBe(true);
+				expect(existsSync(path.join(stale, "extensions", "some-ext", "config.json"))).toBe(true);
+				expect(existsSync(path.join(fixture.agentDir, "extensions", "some-ext"))).toBe(false);
+				const stderr = rpc.stderr.join("");
+				expect(stderr).toContain(`${stale} was not reclaimed`);
+				expect(stderr).toContain("some-ext");
+				expect(stderr).not.toContain("pi-profile: notice:");
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+		},
+	);
 });

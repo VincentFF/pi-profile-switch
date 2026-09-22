@@ -25,3 +25,4 @@
 | **instance** | `pi-profile-switch` 为一次 Pi 进程生成的运行时目录，经 `PI_CODING_AGENT_DIR` 交给 Pi。 | — |
 | **Generated settings** | 写入 instance 的 `settings.json`，把 profile 的资源选择编码为 Pi 原生 settings。 | — |
 | **Runtime reload** | Pi 原生重新读取 settings 并重建资源，保留当前 session。 | — |
+| **收养**（adoption） | 清扫处置之一：未识别条目经内容扫描确认不引用其所在 instance 路径后，被搬入真实 agentDir；收养后下次启动经镜像转为符号链接（ADR-0012）。 | 吸收 |
