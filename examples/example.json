@@ -1,37 +1,32 @@
 {
-  "schemaVersion": 1,
-  "profiles": {
-    "impl": {
-      "label": "Implementation",
-      "description": "Full-powered implementation profile: every available field, pinned model",
-      "skills": [
-        "tdd",
-        "internal-*",
-        "mcp-scripting"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
-      ],
-      "mcps": [
-        "github",
-        "linear"
-      ],
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls",
-        "bash",
-        "edit",
-        "write",
-        "mcp__*",
-        "github_*",
-        "linear_*"
-      ],
-      "defaultProvider": "anthropic",
-      "defaultModel": "claude-sonnet-4-5",
-      "defaultThinkingLevel": "high",
-      "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
-    }
-  }
+  "label": "Implementation",
+  "description": "Full-powered implementation profile: every available field, pinned model",
+  "skills": [
+    "tdd",
+    "internal-*",
+    "mcp-scripting"
+  ],
+  "extensions": [
+    "pi-mcp-adapter"
+  ],
+  "mcps": [
+    "github",
+    "linear"
+  ],
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "bash",
+    "edit",
+    "write",
+    "mcp__*",
+    "github_*",
+    "linear_*"
+  ],
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-5",
+  "defaultThinkingLevel": "high",
+  "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
 }

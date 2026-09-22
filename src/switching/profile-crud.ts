@@ -16,7 +16,7 @@
 
 import path from "node:path";
 
-import { getGlobalProfilesPath } from "../workspace.ts";
+import { getGlobalProfilesDir } from "../workspace.ts";
 import { readTrustInputs } from "../launcher/initial-profile.ts";
 import { CatalogError, DEFAULT_PROFILE_NAME, type ProfileDefinition } from "../profile-catalog.ts";
 import { ProfileCatalogStore } from "../profile-catalog-store.ts";
@@ -31,12 +31,9 @@ export function catalogStore(
 	scope: CatalogScope,
 ): ProfileCatalogStore {
 	if (scope === "global") {
-		return new ProfileCatalogStore(
-			getGlobalProfilesPath(),
-			path.join(input.realAgentDir, "profiles.json")
-		);
+		return new ProfileCatalogStore(getGlobalProfilesDir());
 	}
-	return new ProfileCatalogStore(path.join(input.cwd, ".pi", "profiles.json"));
+	return new ProfileCatalogStore(path.join(input.cwd, ".pi", "profiles"));
 }
 
 async function requireScope(input: { realAgentDir: string; cwd: string }, scope: CatalogScope): Promise<void> {

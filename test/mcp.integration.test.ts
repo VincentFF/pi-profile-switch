@@ -29,7 +29,11 @@ function launcherEnv(): NodeJS.ProcessEnv {
 }
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
 }
 
 async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
