@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.6.0...v0.7.0) (2026-09-22)
+
+
+### Features
+
+* disposition unrecognized entries via content ([#46](https://github.com/VincentFF/pi-profile-switch/issues/46)) ([9ba5283](https://github.com/VincentFF/pi-profile-switch/commit/9ba5283d012391f5efda83e0055bdca8e3faa9aa))
+
 ## [0.6.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.5.0...v0.6.0) (2026-09-20)
 
 
