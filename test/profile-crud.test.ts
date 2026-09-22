@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -39,11 +39,8 @@ describe("createProfile", () => {
 		await createProfile(input(), "global", "review", {});
 		await expect(createProfile(input(), "global", "review", {})).rejects.toThrow(/already exists/);
 
-		// Genuinely untrusted: a trust-requiring file with no decision.
-		await writeFile(
-			path.join(fixture.cwd, ".pi", "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: {} }),
-		);
+		// Genuinely untrusted: a trust-requiring resource with no decision.
+		await mkdir(path.join(fixture.cwd, ".pi", "profiles"), { recursive: true });
 		await expect(createProfile(input(), "project", "x", {})).rejects.toThrow(CatalogError);
 	});
 });

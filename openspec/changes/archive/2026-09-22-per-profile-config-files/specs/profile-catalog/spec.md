@@ -1,9 +1,6 @@
-# profile-catalog Specification
+# Spec Delta
 
-## Purpose
-定义 profile 从哪里读取、什么内容合法、同名 profile 之间谁生效。它是 profile 选择机制的数据来源：其他三个能力域都从这个能力域解析出的定义出发。
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Catalog 目录位置与发现
 
@@ -32,6 +29,8 @@
 - **WHEN** `profiles/` 目录中同时存在 `review.json`、子目录与无 `.json` 后缀的文件
 - **THEN** 只有 `review.json` 参与解析，其余条目不报错、不产生 profile
 
+## MODIFIED Requirements
+
 ### Requirement: Catalog 文件格式校验
 
 系统 SHALL 在任一 profile 文件内容不合法时报错，MUST NOT 静默降级。
@@ -45,31 +44,6 @@
 - **WHEN** 某 profile 文件的内容不是合法 JSON，或其顶层值不是对象
 - **THEN** 系统报错，消息指出出错的文件路径，且整个 catalog 读取失败
 
-### Requirement: Profile 定义字段
-
-一个 profile 定义 SHALL 是对象，并 SHALL 只包含以下字段：`label`、`description`、`skills`、`extensions`、`mcps`、`tools`、`defaultProvider`、`defaultModel`、`defaultThinkingLevel`、`instructions`。
-
-`skills`、`extensions`、`mcps`、`tools` SHALL 是字符串数组。其余字段 SHALL 是字符串。
-
-全部字段可选。未声明的字段 SHALL NOT 产生任何行为变化。
-
-读取时，未列出的键 SHALL 被忽略。写入时，只有上列字段 SHALL 被写出。
-
-#### Scenario: 字段类型不符
-
-- **WHEN** 某 profile 的 `skills` 含非字符串项，或其 `defaultModel` 不是字符串，或其定义本身不是对象
-- **THEN** 系统报错，消息指出该 profile 名与出错字段
-
-#### Scenario: 未声明的字段不影响行为
-
-- **WHEN** 某 profile 只声明 `skills`
-- **THEN** 该 profile 的模型、thinking level 与 instructions 保持 Pi 的当前状态
-
-#### Scenario: 未知键被忽略且不写回
-
-- **WHEN** catalog 中某 profile 带一个未列出的键，随后该 profile 被经向导改写
-- **THEN** 读取不因该键报错，且写回的文件不含该键
-
 ### Requirement: 内建 default profile
 
 系统 SHALL 始终提供名为 `default` 的内建 profile，其来源为 `builtin`，其定义不含任何字段。
@@ -80,22 +54,6 @@
 
 - **WHEN** 任一 profiles 目录下存在 `default.json`
 - **THEN** 系统报错，消息指出出错的文件路径
-
-### Requirement: Profile 来源与项目覆盖
-
-每个可解析的 profile SHALL 带一个来源，取值为 `builtin`、`global` 或 `project`。全局 catalog 的条目来源为 `global`，项目 catalog 的条目来源为 `project`。
-
-项目条目 SHALL 完整替换同名全局条目，MUST NOT 与之合并或追加任何字段。项目条目被删除后，同名全局条目 SHALL 立即重新可解析。
-
-#### Scenario: 项目条目完整替换全局条目
-
-- **WHEN** 全局与项目 catalog 都定义 `review`，全局声明 `skills: ["a"]`，项目声明 `tools: ["read"]`
-- **THEN** 解析 `review` 得到来源 `project`、只含 `tools: ["read"]` 的定义
-
-#### Scenario: 删除项目覆盖条目后全局条目恢复
-
-- **WHEN** 项目 catalog 删除上例中的 `review`
-- **THEN** 解析 `review` 得到来源 `global`、全局声明的定义
 
 ### Requirement: 项目信任门禁
 
@@ -145,22 +103,6 @@
 - **WHEN** 写入一个 `skills` 含非字符串项的定义
 - **THEN** 操作失败，目标文件保持原样或不产生
 
-### Requirement: Profile 删除
-
-删除 SHALL 从指定 scope 移除一个 profile。该 profile 不在该 scope 时 SHALL 失败，而不是空操作。
-
-删除当前活动的 profile 时，请求 SHALL 同时指定替代 profile，否则 SHALL 失败。
-
-#### Scenario: 删除不存在的 profile
-
-- **WHEN** 从全局 scope 删除一个不在全局 catalog 中的名字
-- **THEN** 操作失败，消息指出该名字
-
-#### Scenario: 删除活动 profile 未指定替代
-
-- **WHEN** 删除当前活动的 profile，且未提供替代 profile
-- **THEN** 操作失败，消息要求先选择替代 profile
-
 ### Requirement: Catalog 写入
 
 写入 SHALL 只影响目标 profile 自己的文件：创建与编辑写 `<name>.json`，删除移除 `<name>.json`，其余文件 MUST NOT 被改动。文件内容为格式化 JSON 的完整定义，且只包含通过校验的已声明字段。
@@ -191,6 +133,8 @@
 - **WHEN** 全局 `profiles/` 目录中已存在至少一个 `.json` 文件
 - **THEN** 不写入新文件，安装继续
 
+## ADDED Requirements
+
 ### Requirement: Profile 名字约束
 
 Profile 名 SHALL 匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$`。读取时，profiles 目录中存在名字非法的 `.json` 文件 SHALL 报错并指明文件路径；写入时，名字非法 SHALL 失败并说明该规则。
@@ -206,3 +150,11 @@ Profile 名 SHALL 匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$`。读取时，profiles �
 
 - **WHEN** 创建名为 `foo bar` 的 profile
 - **THEN** 操作失败，消息说明允许的名字字符集
+
+## REMOVED Requirements
+
+### Requirement: Catalog 文件位置与发现
+
+**Reason**: catalog 从单文件 `profiles.json` 改为每 profile 一个文件的 `profiles/` 目录，legacy 回退路径随之删除；发现规则由「Catalog 目录位置与发现」接替。
+
+**Migration**: 把旧 `profiles.json` 中的每个 profile 拆为 `profiles/<name>.json`（裸定义，不含 `schemaVersion` 信封）；`<agentDir>/profiles.json` 不再被读取。

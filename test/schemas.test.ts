@@ -4,7 +4,7 @@
  * (schema-valid files parse; the parser's rejections are schema-invalid).
  */
 
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Ajv2020Module from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
@@ -25,7 +25,7 @@ async function loadSchema(name: string) {
 describe("shipped JSON schemas", () => {
 	it("profiles schema validates the shipped install-time starter", async () => {
 		const profiles = await loadSchema("profiles.schema.json");
-		const starter = JSON.parse(await readFile(path.resolve("examples/profiles.json"), "utf8"));
+		const starter = JSON.parse(await readFile(path.resolve("examples/ask.json"), "utf8"));
 
 		const ajv = newAjv();
 		expect(ajv.validate(profiles, starter), JSON.stringify(ajv.errors)).toBe(true);
@@ -39,24 +39,21 @@ describe("shipped JSON schemas", () => {
 		expect(ajv.validate(profiles, example), JSON.stringify(ajv.errors)).toBe(true);
 	});
 
-	it("the profiles schema rejects the built-in name, inheritance keys, and wrong types", async () => {
+	it("the profiles schema rejects inheritance keys and wrong types", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
-		expect(validate({ schemaVersion: 1, profiles: { default: {} } })).toBe(false);
-		expect(validate({ schemaVersion: 1, profiles: { review: { extends: "base" } } })).toBe(false);
-		expect(validate({ schemaVersion: 1, profiles: { review: { skills: "oops" } } })).toBe(false);
-		expect(validate({ schemaVersion: 2, profiles: {} })).toBe(false);
+		expect(validate({ extends: "base" })).toBe(false);
+		expect(validate({ skills: "oops" })).toBe(false);
+		expect(validate({ defaultProvider: 123 })).toBe(false);
 	});
 
 	it("schema-valid catalogs load through the runtime parsers", async () => {
-		// The fixture pins PI_PROFILE_SWITCH_DIR so the parser reads the
-		// catalog written below, not a real ~/.pi-profile-switch catalog
-		// that would shadow it (resolveGlobalProfilesPath prefers the
-		// profile-switch dir whenever a catalog exists there).
 		const fixture = await createPiFixture();
 		try {
+			const profilesDir = path.join(fixture.profileSwitchDir, "profiles");
+			await mkdir(profilesDir, { recursive: true });
 			await writeFile(
-				path.join(fixture.agentDir, "profiles.json"),
+				path.join(profilesDir, "impl.json"),
 				await readFile(path.resolve("examples/example.json"), "utf8"),
 			);
 			const catalog = await ProfileCatalog.load(fixture.agentDir);

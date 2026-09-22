@@ -1,86 +1,60 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "pi-profile-switch profile catalog",
-  "description": "Named profile definitions (global ~/.pi-profile-switch/profiles.json, legacy fallback ~/.pi/agent/profiles.json; or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies. The built-in \"default\" profile must not be defined here.",
+  "title": "pi-profile-switch profile definition",
+  "description": "A named profile definition stored in ~/.pi-profile-switch/profiles/<name>.json or <project>/.pi/profiles/<name>.json. Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies.",
   "type": "object",
-  "required": [
-    "schemaVersion",
-    "profiles"
-  ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": {
-      "const": 1
+    "label": {
+      "type": "string",
+      "description": "Display label in the selector and /profile list."
     },
-    "profiles": {
-      "type": "object",
-      "propertyNames": {
-        "not": {
-          "const": "default"
-        }
+    "description": {
+      "type": "string"
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
       },
-      "additionalProperties": {
-        "$ref": "#/$defs/profile"
-      }
-    }
-  },
-  "$defs": {
-    "profile": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "label": {
-          "type": "string",
-          "description": "Display label in the selector and /profile list."
-        },
-        "description": {
-          "type": "string"
-        },
-        "skills": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Skill names or globs (e.g. \"review\", \"internal-*\") referencing discovered skills."
-        },
-        "extensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Extension names or globs. Package names, source aliases, loose-file stems, glob patterns, or direct file paths, resolved against discovered extensions."
-        },
-        "mcps": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "MCP server names or globs, discovered by pi-mcp-adapter configuration. Connection details stay in adapter-managed config."
-        },
-        "tools": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
-        },
-        "defaultProvider": {
-          "type": "string",
-          "description": "Startup provider for this profile (e.g. \"anthropic\", \"openai\"). Mirrors Pi's settings.defaultProvider."
-        },
-        "defaultModel": {
-          "type": "string",
-          "description": "Startup model ID for this profile. Mirrors Pi's settings.defaultModel."
-        },
-        "defaultThinkingLevel": {
-          "type": "string",
-          "description": "Startup thinking level for this profile. Mirrors Pi's settings.defaultThinkingLevel."
-        },
-        "instructions": {
-          "type": "string",
-          "description": "Appended to Pi's fully built system prompt on every turn."
-        }
-      }
+      "description": "Skill names or globs (e.g. \"review\", \"internal-*\") referencing discovered skills."
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Extension names or globs. Package names, source aliases, loose-file stems, glob patterns, or direct file paths, resolved against discovered extensions."
+    },
+    "mcps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "MCP server names or globs, discovered by pi-mcp-adapter configuration. Connection details stay in adapter-managed config."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
+    },
+    "defaultProvider": {
+      "type": "string",
+      "description": "Startup provider for this profile (e.g. \"anthropic\", \"openai\"). Mirrors Pi's settings.defaultProvider."
+    },
+    "defaultModel": {
+      "type": "string",
+      "description": "Startup model ID for this profile. Mirrors Pi's settings.defaultModel."
+    },
+    "defaultThinkingLevel": {
+      "type": "string",
+      "description": "Startup thinking level for this profile. Mirrors Pi's settings.defaultThinkingLevel."
+    },
+    "instructions": {
+      "type": "string",
+      "description": "Appended to Pi's fully built system prompt on every turn."
     }
   }
 }

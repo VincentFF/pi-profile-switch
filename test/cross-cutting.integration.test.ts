@@ -43,8 +43,11 @@ async function start(profile: string): Promise<void> {
 }
 
 async function writeCatalog(profiles: Record<string, unknown>, scope: "global" | "project" = "global"): Promise<void> {
-	const file = scope === "global" ? path.join(fixture.agentDir, "profiles.json") : path.join(fixture.cwd, ".pi", "profiles.json");
-	await writeFile(file, JSON.stringify({ schemaVersion: 1, profiles }));
+	const dir = scope === "global" ? path.join(fixture.profileSwitchDir, "profiles") : path.join(fixture.cwd, ".pi", "profiles");
+	await mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
 }
 
 /** An extension registering command `shared-cmd` (the same name for both). */
@@ -96,10 +99,7 @@ describe("cross-cutting behaviors", () => {
 		await driver.waitFor((message) => JSON.stringify(message).includes("profile: shared (project)"));
 
 		// Delete the project record on disk, reload → global revealed.
-		await writeFile(
-			path.join(fixture.cwd, ".pi", "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: {} }),
-		);
+		await rm(path.join(fixture.cwd, ".pi", "profiles", "shared.json"));
 		await driver.send({ type: "prompt", message: "/profile reload" }, 60_000);
 		await driver.send({ type: "prompt", message: "/profile status" }, 60_000);
 		await driver.waitFor((message) => JSON.stringify(message).includes("profile: shared (global)"));

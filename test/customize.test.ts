@@ -36,9 +36,12 @@ const deps = (): SwitchDeps => ({
 });
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await import("node:fs/promises").then((fs) =>
-		fs.writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles })),
-	);
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	const fs = await import("node:fs/promises");
+	await fs.mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await fs.writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
 }
 
 async function activate(name: string): Promise<void> {
@@ -82,8 +85,8 @@ describe("customizeOverlay / resetOverlay", () => {
 		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 		// The catalog file is untouched.
-		const catalog = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
-		expect(catalog.profiles.review.skills).toEqual(["alpha-skill", "beta-skill"]);
+		const profile = JSON.parse(await readFile(path.join(fixture.profileSwitchDir, "profiles", "review.json"), "utf8"));
+		expect(profile.skills).toEqual(["alpha-skill", "beta-skill"]);
 	});
 
 	it("rejects disabling a resource the profile does not resolve, writing nothing", async () => {

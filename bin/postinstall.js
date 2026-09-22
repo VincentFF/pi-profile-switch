@@ -1,29 +1,25 @@
 #!/usr/bin/env node
 /**
- * postinstall: seed the global catalog with the default profiles file.
+ * postinstall: seed the global catalog with the default starter profile.
  *
  * Runs at package install time (`npm install pi-profile-switch` / `pi install`).
  * Idempotent and conservative:
- * - Writes the shipped `examples/profiles.json` starter catalog to the
- *   profile-switch dir ONLY when no
- *   catalog exists there yet (COPYFILE_EXCL; an existing file — including
- *   one written concurrently — is never touched).
- * - Skips entirely when a legacy `~/.pi/agent/profiles.json` exists, because
- *   the resolver still falls back to it and a new preferred-path file would
- *   silently shadow it (see src/workspace.ts resolveGlobalProfilesPath).
+ * - Writes the shipped `examples/ask.json` starter profile to the
+ *   profiles dir ONLY when no .json profile exists there yet
+ *   (COPYFILE_EXCL; an existing file — including one written concurrently — is never touched).
  * - Never fails the install: errors are downgraded to a warning.
  *
  * This module is plain Node ESM (no jiti/TS): npm may run postinstall in a
  * context where only plain JS is safe. The path rules intentionally mirror
  * src/workspace.ts — keep them in sync.
  */
-import { access, copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const DEFAULT_TEMPLATE = fileURLToPath(new URL("../examples/profiles.json", import.meta.url));
+const DEFAULT_TEMPLATE = fileURLToPath(new URL("../examples/ask.json", import.meta.url));
 
 /** Mirrors getProfileSwitchDir() in src/workspace.ts.
  *  @param {NodeJS.ProcessEnv} env */
@@ -33,38 +29,40 @@ function profileSwitchDir(env) {
 	return path.join(homedir(), ".pi-profile-switch");
 }
 
-/** The legacy migration fallback the resolver still reads (~/.pi/agent).
+/** Mirrors getGlobalProfilesDir() in src/workspace.ts.
  *  @param {NodeJS.ProcessEnv} env */
-function legacyCatalogPath(env) {
-	const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
-	return path.join(agentDir, "profiles.json");
+function globalProfilesDir(env) {
+	return path.join(profileSwitchDir(env), "profiles");
 }
 
-/** @param {string} filePath */
-async function exists(filePath) {
+/** Checks whether the directory exists and contains any .json files.
+ *  @param {string} dir */
+async function hasAnyJsonProfiles(dir) {
 	try {
-		await access(filePath);
-		return true;
+		const entries = await readdir(dir);
+		return entries.some((name) => name.endsWith(".json"));
 	} catch {
 		return false;
 	}
 }
 
-/** @typedef {{ path: string, written: boolean, skipped?: string }} InstallResult */
+/** @typedef {{ path: string, written: boolean }} InstallResult */
 
 /**
- * Seeds the default catalog. Safe to call repeatedly; only the first call
- * writes.
+ * Seeds the default starter profile. Safe to call repeatedly; only writes
+ * if no .json files exist in the global profiles directory.
  * @param {{ env?: NodeJS.ProcessEnv }} [options]
  * @returns {Promise<InstallResult>}
  */
 export async function installDefaultProfiles({ env = process.env } = {}) {
-	const target = path.join(profileSwitchDir(env), "profiles.json");
-	if (await exists(target)) return { path: target, written: false };
-	if (await exists(legacyCatalogPath(env))) {
-		return { path: target, written: false, skipped: "legacy-catalog-present" };
+	const dir = globalProfilesDir(env);
+	const target = path.join(dir, "ask.json");
+
+	if (await hasAnyJsonProfiles(dir)) {
+		return { path: target, written: false };
 	}
-	await mkdir(path.dirname(target), { recursive: true });
+
+	await mkdir(dir, { recursive: true });
 	try {
 		await copyFile(DEFAULT_TEMPLATE, target, constants.COPYFILE_EXCL);
 	} catch (error) {
@@ -80,10 +78,10 @@ const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pat
 if (invokedDirectly) {
 	installDefaultProfiles().then(
 		(result) => {
-			if (result.written) console.log(`pi-profile: seeded default profiles at ${result.path}`);
+			if (result.written) console.log(`pi-profile: seeded starter profile at ${result.path}`);
 		},
 		(error) => {
-			console.warn(`pi-profile: could not seed default profiles: ${error instanceof Error ? error.message : error}`);
+			console.warn(`pi-profile: could not seed starter profile: ${error instanceof Error ? error.message : error}`);
 		},
 	);
 }

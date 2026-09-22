@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | **Profile** | 命名的能力定义：引用 skills、extensions、MCP servers 与 tools，可选声明 model、thinking level 与 instructions。 | preset、config、bundle、capability |
 | **default profile** | 内建、不可删除、不出现在 catalog 文件中的 profile，加载 Pi 可发现的全部资源。 | built-in、内置 |
-| **Catalog** | 持有 profile 定义的 `profiles.json`：全局一份，每个项目一份。 | — |
+| **Catalog** | 持有 profile 定义的 `profiles/` 目录：全局一个，每个项目一个，每 profile 一个 `<name>.json` 文件。 | — |
 | **Source scope** | profile 的来源，取值为 `builtin`、`global` 或 `project`，决定其运行时状态与编辑写入哪个 scope。 | — |
 | **RuntimeOverlay** | 对活动 profile 的临时收窄：禁用已解析的 skill、extension 或 MCP server，或替换 tools 引用集合。通常简称 overlay。 | session profile、temporary profile |
 | **Runtime state** | 持久保存的活动 profile 选择与 overlay。 | — |
