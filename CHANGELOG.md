@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.7.0...v0.8.0) (2026-09-22)
+
+
+### Features
+
+* split profiles.json into per-profile files ([#48](https://github.com/VincentFF/pi-profile-switch/issues/48)) ([f13c288](https://github.com/VincentFF/pi-profile-switch/commit/f13c288f0a11797593b6327da9a52b0139a30ff9))
+
 ## [0.7.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.6.0...v0.7.0) (2026-09-22)
 
 
