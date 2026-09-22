@@ -27,7 +27,11 @@ function launcherEnv(): NodeJS.ProcessEnv {
 }
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
 }
 
 async function skillNames(rpc: RpcDriver): Promise<string[]> {
@@ -63,8 +67,10 @@ describe("launcher integration: runtime overlay", () => {
 
 				// Overlay persisted to runtime state; the catalog file is untouched.
 				expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
-				const catalog = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
-				expect(catalog.profiles.review.skills).toEqual(["alpha-skill", "beta-skill"]);
+				const profile = JSON.parse(
+					await readFile(path.join(fixture.profileSwitchDir, "profiles", "review.json"), "utf8"),
+				);
+				expect(profile.skills).toEqual(["alpha-skill", "beta-skill"]);
 
 				// Reset restores the declared set.
 				const reset = await rpc.send({ type: "prompt", message: "/profile reset" }, 60_000);

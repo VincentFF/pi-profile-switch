@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,7 +32,7 @@ describe("resolveProjectTrust", () => {
 	});
 
 	it("treats pi-profile's own project files as trust-requiring", () => {
-		writeFileSync(path.join(fixture.cwd, ".pi", "profiles.json"), "{}");
+		mkdirSync(path.join(fixture.cwd, ".pi", "profiles"));
 		expect(resolveProjectTrust(input())).toBe(false);
 	});
 

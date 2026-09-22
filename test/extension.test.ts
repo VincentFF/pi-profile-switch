@@ -114,6 +114,14 @@ async function writeLaunchPlan(plan: unknown): Promise<void> {
 	await writeFile(path.join(root, "pi-profile.json"), JSON.stringify(plan));
 }
 
+async function writeGlobalProfiles(profiles: Record<string, unknown>): Promise<void> {
+	const dir = path.join(root, "profiles");
+	await mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
+}
+
 async function fireSessionStart(pi: FakePi, reason = "startup"): Promise<void> {
 	const handler = pi.handlers.get("session_start")?.[0];
 	await handler?.({ reason } as never, fakeCtx() as never);
@@ -174,10 +182,7 @@ describe("pi-profile extension", () => {
 	describe("observability surface (ticket 07)", () => {
 		it("/profile list sends the trust-gated profile listing as a displayed message", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "Code review" } } }),
-			);
+			await writeGlobalProfiles({ review: { label: "Code review" } });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 
@@ -220,10 +225,7 @@ describe("pi-profile extension", () => {
 
 		it("bare /profile with UI offers every visible profile and cancels cleanly", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: {} } }),
-			);
+			await writeGlobalProfiles({ review: {} });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 			const ctx = fakeCtx({ hasUI: true, selectAnswer: undefined });
@@ -251,8 +253,8 @@ describe("pi-profile extension", () => {
 
 			await pi.commands.get("profile")?.handler("create" as never, ctx as never);
 
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toEqual({
+			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
+			expect(reviewDef).toEqual({
 				label: "Code review",
 				skills: ["review", "debug-*"],
 				instructions: "Be terse.",
@@ -262,10 +264,7 @@ describe("pi-profile extension", () => {
 
 		it("editing the ACTIVE profile saves and reloads; editing an inactive one does not", async () => {
 			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "old" }, other: {} } }),
-			);
+			await writeGlobalProfiles({ review: { label: "old" }, other: {} });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 
@@ -273,32 +272,27 @@ describe("pi-profile extension", () => {
 			const ctxActive = fakeCtx({ hasUI: true, inputAnswers: ["new label", "", "", "", "", "", "", ""] });
 			await pi.commands.get("profile")?.handler("edit review" as never, ctxActive as never);
 			expect(ctxActive.notifications.some((entry) => entry.message.includes("reloading"))).toBe(true);
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toEqual({ label: "new label" });
+			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
+			expect(reviewDef).toEqual({ label: "new label" });
 
 			// Inactive: saved, runtime untouched (no reload notification).
 			const ctxInactive = fakeCtx({ hasUI: true, inputAnswers: ["", "desc", "", "", "", "", "", ""] });
 			await pi.commands.get("profile")?.handler("edit other" as never, ctxInactive as never);
 			expect(ctxInactive.notifications.some((entry) => entry.message.includes("inactive"))).toBe(true);
-			expect(catalog && JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8")).profiles.other).toEqual({
-				description: "desc",
-			});
+			const otherDef = JSON.parse(await readFile(path.join(root, "profiles", "other.json"), "utf8"));
+			expect(otherDef).toEqual({ description: "desc" });
 		});
 
 		it("deleting the active profile requires a replacement, then switches", async () => {
 			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: {}, impl: {} } }),
-			);
+			await writeGlobalProfiles({ review: {}, impl: {} });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["impl [global]"] });
 
 			await pi.commands.get("profile")?.handler("delete review" as never, ctx as never);
 
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toBeUndefined();
+			await expect(readFile(path.join(root, "profiles", "review.json"))).rejects.toThrow();
 			// Switched: the rewritten plan file names the replacement.
 			const planFile = JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8"));
 			expect(planFile.profile).toBe("impl");
@@ -306,21 +300,16 @@ describe("pi-profile extension", () => {
 
 		it("/profile duplicate copies the full definition under a new name", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({
-					schemaVersion: 1,
-					profiles: { review: { label: "Code review", skills: ["r*"], instructions: "Be terse." } },
-				}),
-			);
+			await writeGlobalProfiles({ review: { label: "Code review", skills: ["r*"], instructions: "Be terse." } });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["review [global] — Code review"], inputAnswers: ["review-strict"] });
 
 			await pi.commands.get("profile")?.handler("duplicate" as never, ctx as never);
 
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles["review-strict"]).toEqual(catalog.profiles.review);
+			const reviewStrictDef = JSON.parse(await readFile(path.join(root, "profiles", "review-strict.json"), "utf8"));
+			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
+			expect(reviewStrictDef).toEqual(reviewDef);
 		});
 
 		it("create/edit/delete/duplicate are TUI-only, with a mode-aware message", async () => {

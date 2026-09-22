@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -16,10 +16,10 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-const store = () => new ProfileCatalogStore(path.join(fixture.agentDir, "profiles.json"));
+const store = () => new ProfileCatalogStore(path.join(fixture.profileSwitchDir, "profiles"));
 
 describe("ProfileCatalogStore", () => {
-	it("upserts a self-contained definition into a missing file, loadable by ProfileCatalog", async () => {
+	it("upserts a self-contained definition into a new file, loadable by ProfileCatalog", async () => {
 		await store().upsert("review", {
 			label: "Code review",
 			skills: ["review*"],
@@ -31,8 +31,9 @@ describe("ProfileCatalogStore", () => {
 			instructions: "Be terse.",
 		});
 
-		const raw = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
-		expect(raw.profiles.review).toEqual({
+		const filePath = path.join(fixture.profileSwitchDir, "profiles", "review.json");
+		const raw = JSON.parse(await readFile(filePath, "utf8"));
+		expect(raw).toEqual({
 			label: "Code review",
 			skills: ["review*"],
 			extensions: ["linter"],
@@ -42,6 +43,10 @@ describe("ProfileCatalogStore", () => {
 			defaultThinkingLevel: "high",
 			instructions: "Be terse.",
 		});
+		// No schemaVersion envelope
+		expect(raw.schemaVersion).toBeUndefined();
+		expect(raw.profiles).toBeUndefined();
+
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
 		expect(catalog.resolve("review")?.definition.label).toBe("Code review");
 	});
@@ -58,6 +63,19 @@ describe("ProfileCatalogStore", () => {
 		await expect(store().upsert("default", {})).rejects.toThrow(CatalogError);
 		await expect(store().upsert("review", { skills: "oops" as never })).rejects.toThrow(CatalogError);
 		await expect(store().upsert(" ", {})).rejects.toThrow(CatalogError);
+	});
+
+	it("rejects illegal profile names and explains naming rules", async () => {
+		await expect(store().upsert("foo bar", {})).rejects.toThrow(/invalid profile name "foo bar"/);
+		await expect(store().upsert("foo bar", {})).rejects.toThrow(/must match/);
+		await expect(store().upsert(".hidden", {})).rejects.toThrow(/invalid profile name/);
+	});
+
+	it("does not touch the disk on illegal definition (definition validation before write)", async () => {
+		const targetFile = path.join(fixture.profileSwitchDir, "profiles", "invalid-profile.json");
+		await expect(store().upsert("invalid-profile", { skills: 123 as never })).rejects.toThrow(CatalogError);
+
+		await expect(access(targetFile)).rejects.toThrow();
 	});
 
 	it("drops inheritance fields — the editor has no inheritance concept", async () => {
@@ -77,16 +95,30 @@ describe("ProfileCatalogStore", () => {
 		await expect(store().remove("review")).rejects.toThrow(CatalogError);
 	});
 
-	it("saves never block on external concurrent edits (re-read at write time)", async () => {
+	it("remove rejects illegal names and directory traversal attempts, leaving disk untouched", async () => {
+		// Create a file outside the profiles directory to ensure remove doesn't delete it
+		const parentFile = path.join(fixture.profileSwitchDir, "escape.json");
+		await writeFile(parentFile, JSON.stringify({ label: "outside" }));
+
+		await expect(store().remove("../escape")).rejects.toThrow(/invalid profile name "\.\.\/escape"/);
+		await expect(store().remove("../escape")).rejects.toThrow(/must match/);
+		await expect(store().remove("")).rejects.toThrow(CatalogError);
+		await expect(store().remove("foo bar")).rejects.toThrow(CatalogError);
+
+		// The file outside the directory is untouched
+		expect(await readFile(parentFile, "utf8")).toBe(JSON.stringify({ label: "outside" }));
+	});
+
+	it("saves never block on external concurrent edits across different profiles", async () => {
 		await store().upsert("review", { label: "mine" });
-		await writeFile(
-			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { external: { description: "theirs" } } }),
-		);
+		// Another process creates external.json in the same profiles directory
+		const dir = path.join(fixture.profileSwitchDir, "profiles");
+		await mkdir(dir, { recursive: true });
+		await writeFile(path.join(dir, "external.json"), JSON.stringify({ description: "theirs" }));
 
 		await store().upsert("review", { label: "updated" });
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
 		expect(catalog.resolve("review")?.definition.label).toBe("updated");
-		expect(catalog.resolve("external")).toBeDefined();
+		expect(catalog.resolve("external")?.definition.description).toBe("theirs");
 	});
 });

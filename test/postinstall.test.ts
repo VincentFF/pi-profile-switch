@@ -1,9 +1,8 @@
 /**
- * Default-catalog seeding (install time): bin/postinstall.js writes the
- * shipped `examples/profiles.json` starter to the profile-switch dir ONLY
- * when no
- * catalog exists — never overwriting user data, never shadowing the legacy
- * ~/.pi/agent fallback, never failing the install.
+ * Starter profile seeding (install time): bin/postinstall.js writes the
+ * shipped `examples/ask.json` starter to the profiles dir ONLY
+ * when no .json profile exists — never overwriting user data,
+ * never failing the install.
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -28,35 +27,46 @@ function envFor(dir: string): NodeJS.ProcessEnv {
 }
 
 describe("installDefaultProfiles", () => {
-	it("writes the shipped default catalog when none exists", async () => {
+	it("writes the shipped starter profile when profiles directory is missing", async () => {
 		const dir = path.join(root, "switch");
 
 		const result = await installDefaultProfiles({ env: envFor(dir) });
 
 		expect(result.written).toBe(true);
-		const written = await readFile(path.join(dir, "profiles.json"), "utf8");
-		const template = await readFile(path.resolve("examples/profiles.json"), "utf8");
+		const written = await readFile(path.join(dir, "profiles", "ask.json"), "utf8");
+		const template = await readFile(path.resolve("examples/ask.json"), "utf8");
 		expect(written).toBe(template);
+
 		// The seeded profile is the read-only "ask" starter.
 		const parsed = JSON.parse(written);
-		expect(Object.keys(parsed.profiles)).toEqual(["ask"]);
-		expect(parsed.profiles.ask.tools).toEqual(["read", "grep", "find", "ls"]);
-		expect(parsed.profiles.ask.skills).toEqual([]);
-		expect(parsed.profiles.ask.extensions).toEqual([]);
+		expect(parsed.tools).toEqual(["read", "grep", "find", "ls"]);
+		expect(parsed.skills).toEqual([]);
+		expect(parsed.extensions).toEqual([]);
 	});
 
-	it("never overwrites an existing catalog", async () => {
+	it("writes starter profile when profiles directory exists but contains no .json files", async () => {
 		const dir = path.join(root, "switch");
-		await mkdir(dir, { recursive: true });
-		const target = path.join(dir, "profiles.json");
-		await writeFile(target, JSON.stringify({ schemaVersion: 1, profiles: { mine: { tools: ["read"] } } }));
+		await mkdir(path.join(dir, "profiles"), { recursive: true });
+		await writeFile(path.join(dir, "profiles", "README.txt"), "some notes");
+
+		const result = await installDefaultProfiles({ env: envFor(dir) });
+
+		expect(result.written).toBe(true);
+		expect(await readFile(path.join(dir, "profiles", "ask.json"), "utf8")).toBe(
+			await readFile(path.resolve("examples/ask.json"), "utf8"),
+		);
+	});
+
+	it("never overwrites an existing catalog (directory has at least one .json file)", async () => {
+		const dir = path.join(root, "switch");
+		await mkdir(path.join(dir, "profiles"), { recursive: true });
+		const existingFile = path.join(dir, "profiles", "mine.json");
+		await writeFile(existingFile, JSON.stringify({ tools: ["read"] }));
 
 		const result = await installDefaultProfiles({ env: envFor(dir) });
 
 		expect(result.written).toBe(false);
-		expect(await readFile(target, "utf8")).toBe(
-			JSON.stringify({ schemaVersion: 1, profiles: { mine: { tools: ["read"] } } }),
-		);
+		expect(await readFile(existingFile, "utf8")).toBe(JSON.stringify({ tools: ["read"] }));
 	});
 
 	it("is idempotent: a second run writes nothing", async () => {
@@ -67,20 +77,5 @@ describe("installDefaultProfiles", () => {
 
 		expect(first.written).toBe(true);
 		expect(second.written).toBe(false);
-	});
-
-	it("skips when a legacy ~/.pi/agent catalog exists (no shadowing)", async () => {
-		const dir = path.join(root, "switch");
-		const agentDir = path.join(root, "agent");
-		await mkdir(agentDir, { recursive: true });
-		await writeFile(path.join(agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles: {} }));
-
-		const result = await installDefaultProfiles({
-			env: { PI_PROFILE_SWITCH_DIR: dir, PI_CODING_AGENT_DIR: agentDir },
-		});
-
-		expect(result.written).toBe(false);
-		expect(result.skipped).toBe("legacy-catalog-present");
-		await expect(readFile(path.join(dir, "profiles.json"), "utf8")).rejects.toThrow();
 	});
 });

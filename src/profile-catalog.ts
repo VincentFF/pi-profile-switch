@@ -1,27 +1,31 @@
 /**
  * ProfileCatalog: reads profile definitions from the global catalog
- * (`~/.pi-profile-switch/profiles.json`, legacy fallback `<agentDir>/profiles.json`)
- * and, for trusted projects, the project catalog (`<projectDir>/.pi/profiles.json`).
+ * (`~/.pi-profile-switch/profiles/`, or `PI_PROFILE_SWITCH_DIR/profiles/`)
+ * and, for trusted projects, the project catalog (`<projectDir>/.pi/profiles/`).
  *
  * Invariants:
- * - The built-in `default` profile never exists in either file and cannot be
- *   redefined there.
+ * - Each profile is stored in a separate `<name>.json` file.
+ * - The built-in `default` profile never exists as a file and cannot be
+ *   defined in any catalog (`default.json` is a hard error).
+ * - Profile names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
  * - A project profile with the same name fully replaces the global
- *   definition (no merge, no inheritance); removing the project entry
+ *   definition (no merge, no inheritance); removing the project file
  *   immediately reveals the global one.
  * - The caller passes `projectDir` only when the resolver's trust check
  *   passed — an untrusted project's catalog is never read.
- * - A malformed catalog fails loudly (CatalogError) rather than silently
- *   starting unfiltered.
+ * - A malformed profile file fails loudly (CatalogError) with its file path
+ *   rather than silently starting unfiltered.
  */
 
+import type { Dirent } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { resolveGlobalProfilesPath } from "./workspace.ts";
+import { getGlobalProfilesDir } from "./workspace.ts";
 import { isRecord, readJsonFile } from "./json-file.ts";
 
-export const PROFILE_SCHEMA_VERSION = 1;
 export const DEFAULT_PROFILE_NAME = "default";
+export const PROFILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export interface ProfileModel {
 	provider: string;
@@ -67,75 +71,102 @@ export class CatalogError extends Error {
 	}
 }
 
-function readStringArray(value: unknown, field: string, profileName: string): string[] | undefined {
+function readStringArray(value: unknown, field: string, profileName: string, filePath?: string): string[] | undefined {
 	if (value === undefined) return undefined;
 	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-		throw new CatalogError(`profile "${profileName}": "${field}" must be an array of strings`);
+		const prefix = filePath ? `${filePath}: ` : "";
+		throw new CatalogError(`${prefix}profile "${profileName}": "${field}" must be an array of strings`);
 	}
 	return value as string[];
 }
 
-function readOptionalString(value: unknown, field: string, profileName: string): string | undefined {
+function readOptionalString(value: unknown, field: string, profileName: string, filePath?: string): string | undefined {
 	if (value === undefined) return undefined;
 	if (typeof value !== "string") {
-		throw new CatalogError(`profile "${profileName}": "${field}" must be a string`);
+		const prefix = filePath ? `${filePath}: ` : "";
+		throw new CatalogError(`${prefix}profile "${profileName}": "${field}" must be a string`);
 	}
 	return value;
 }
 
 /** Parses one raw profile definition; exported for the write-side store
  *  (profile-catalog-store.ts) so anything written is loadable. */
-export function parseProfileDefinition(name: string, raw: unknown): ProfileDefinition {
+export function parseProfileDefinition(name: string, raw: unknown, filePath?: string): ProfileDefinition {
 	if (!isRecord(raw)) {
-		throw new CatalogError(`profile "${name}" must be an object`);
+		const prefix = filePath ? `${filePath}: ` : "";
+		throw new CatalogError(`${prefix}profile "${name}" must be an object`);
 	}
 	const definition: ProfileDefinition = {};
-	const label = readOptionalString(raw.label, "label", name);
+	const label = readOptionalString(raw.label, "label", name, filePath);
 	if (label !== undefined) definition.label = label;
-	const description = readOptionalString(raw.description, "description", name);
+	const description = readOptionalString(raw.description, "description", name, filePath);
 	if (description !== undefined) definition.description = description;
 	for (const field of ["skills", "extensions", "mcps", "tools"] as const) {
-		const entries = readStringArray(raw[field], field, name);
+		const entries = readStringArray(raw[field], field, name, filePath);
 		if (entries !== undefined) definition[field] = entries;
 	}
-	const defaultProvider = readOptionalString(raw.defaultProvider, "defaultProvider", name);
+	const defaultProvider = readOptionalString(raw.defaultProvider, "defaultProvider", name, filePath);
 	if (defaultProvider !== undefined) definition.defaultProvider = defaultProvider;
-	const defaultModel = readOptionalString(raw.defaultModel, "defaultModel", name);
+	const defaultModel = readOptionalString(raw.defaultModel, "defaultModel", name, filePath);
 	if (defaultModel !== undefined) definition.defaultModel = defaultModel;
-	const defaultThinkingLevel = readOptionalString(raw.defaultThinkingLevel, "defaultThinkingLevel", name);
+	const defaultThinkingLevel = readOptionalString(raw.defaultThinkingLevel, "defaultThinkingLevel", name, filePath);
 	if (defaultThinkingLevel !== undefined) definition.defaultThinkingLevel = defaultThinkingLevel;
-	const instructions = readOptionalString(raw.instructions, "instructions", name);
+	const instructions = readOptionalString(raw.instructions, "instructions", name, filePath);
 	if (instructions !== undefined) definition.instructions = instructions;
 	return definition;
 }
 
-/** Reads one catalog file; missing → empty map, malformed → CatalogError. */
-async function loadCatalogFile(catalogPath: string): Promise<Map<string, ProfileDefinition>> {
-	const result = await readJsonFile(catalogPath);
+/** Reads one catalog directory; missing directory → empty map, malformed file → CatalogError. */
+export async function loadCatalogDirectory(dirPath: string): Promise<Map<string, ProfileDefinition>> {
+	let entries: Dirent[];
+	try {
+		entries = await readdir(dirPath, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return new Map();
+		}
+		throw error;
+	}
+
+	// Filter to .json files and sort alphabetically by file name
+	const jsonEntries = entries.filter((entry) => entry.name.endsWith(".json"));
+	jsonEntries.sort((a, b) => a.name.localeCompare(b.name));
+
 	const profiles = new Map<string, ProfileDefinition>();
-	if (!result.ok) {
-		if (result.reason === "missing") return profiles;
-		throw new CatalogError(`invalid JSON in ${catalogPath}`);
-	}
-	const parsed = result.value;
-	if (!isRecord(parsed)) {
-		throw new CatalogError(`${catalogPath}: catalog must be an object`);
-	}
-	if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
-		throw new CatalogError(
-			`${catalogPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
-		);
-	}
-	if (!isRecord(parsed.profiles)) {
-		throw new CatalogError(`${catalogPath}: "profiles" must be an object mapping names to definitions`);
-	}
-	for (const [name, definition] of Object.entries(parsed.profiles)) {
-		if (name === DEFAULT_PROFILE_NAME) {
+	for (const entry of jsonEntries) {
+		const fullPath = path.join(dirPath, entry.name);
+		let isFile = entry.isFile();
+		if (!isFile && entry.isSymbolicLink()) {
+			try {
+				const st = await stat(fullPath);
+				isFile = st.isFile();
+			} catch {
+				continue;
+			}
+		}
+		if (!isFile) continue;
+
+		const profileName = entry.name.slice(0, -".json".length);
+		if (profileName === DEFAULT_PROFILE_NAME) {
 			throw new CatalogError(
-				`${catalogPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
+				`${fullPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
 			);
 		}
-		profiles.set(name, parseProfileDefinition(name, definition));
+		if (!PROFILE_NAME_PATTERN.test(profileName)) {
+			throw new CatalogError(
+				`${fullPath}: invalid profile name "${profileName}" (must match ${PROFILE_NAME_PATTERN})`,
+			);
+		}
+
+		const result = await readJsonFile(fullPath);
+		if (!result.ok) {
+			throw new CatalogError(`invalid JSON in ${fullPath}`);
+		}
+		const parsed = result.value;
+		if (!isRecord(parsed)) {
+			throw new CatalogError(`${fullPath}: profile definition must be an object`);
+		}
+		profiles.set(profileName, parseProfileDefinition(profileName, parsed, fullPath));
 	}
 	return profiles;
 }
@@ -150,17 +181,17 @@ export class ProfileCatalog {
 	/**
 	 * Reads the global catalog, plus the project catalog when `projectDir` is
 	 * given (trusted projects only — the caller gates on the trust check).
-	 * Missing files mean an empty catalog; malformed content throws
+	 * Missing directories mean an empty catalog; malformed content throws
 	 * CatalogError. Project entries replace same-name global entries.
 	 */
-	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
-		const globalProfiles = await loadCatalogFile(resolveGlobalProfilesPath(agentDir));
+	static async load(_agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
+		const globalProfiles = await loadCatalogDirectory(getGlobalProfilesDir());
 		const profiles = new Map<string, CatalogEntry>();
 		for (const [name, definition] of globalProfiles) {
 			profiles.set(name, { source: "global", definition });
 		}
 		if (options?.projectDir !== undefined) {
-			const projectProfiles = await loadCatalogFile(path.join(options.projectDir, ".pi", "profiles.json"));
+			const projectProfiles = await loadCatalogDirectory(path.join(options.projectDir, ".pi", "profiles"));
 			for (const [name, definition] of projectProfiles) {
 				profiles.set(name, { source: "project", definition });
 			}
@@ -179,7 +210,7 @@ export class ProfileCatalog {
 	}
 
 	/** Lists the built-in default first, then profiles in file order (global
-	 *  entries in global order, project-only names appended after). */
+	 *  entries in global alphabetical order, project-only names appended after in alphabetical order). */
 	list(): ResolvedProfile[] {
 		return [
 			this.resolve(DEFAULT_PROFILE_NAME)!,

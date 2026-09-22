@@ -62,7 +62,7 @@ profile 只接管四类资源（skills、extensions、MCP servers、tools），�
 | 模块 | 接口 |
 | --- | --- |
 | `profile-catalog.ts` | catalog 只读面：`ProfileCatalog` 列出并解析 winning 定义，输出 `ResolvedProfile`（含 `source: builtin \| global \| project`） |
-| `profile-catalog-store.ts` | catalog 写入侧（`profiles.json`），只在 TUI CRUD 路径使用 |
+| `profile-catalog-store.ts` | catalog 写入侧（`profiles/<name>.json`），只在 TUI CRUD 路径使用 |
 | `project-trust.ts` | `resolveProjectTrust(input)` → boolean；镜像 Pi 判定序，决定 pi-profile 是否读取项目 catalog、项目状态与项目 MCP 配置（项目级资源本身归 Pi） |
 | `skill-registry.ts` | `discoverSkills(options)` → `SkillEntry[]`；只读调用 Pi SDK 的 discovery，不自行扫描目录 |
 | `extension-discovery.ts` | `discoverExtensions(options)` → `DiscoveredExtensions`（只读，从不执行扩展代码）；`.select(refs)` 解析包名、别名、散装文件 stem、glob、绝对路径 |
@@ -73,7 +73,7 @@ profile 只接管四类资源（skills、extensions、MCP servers、tools），�
 
 | 模块 | 接口 |
 | --- | --- |
-| `workspace.ts` | `~/.pi-profile-switch` 工作区路径（`PI_PROFILE_SWITCH_DIR` 可覆盖）与 legacy fallback |
+| `workspace.ts` | `~/.pi-profile-switch` 工作区路径（`PI_PROFILE_SWITCH_DIR` 可覆盖） |
 | `json-file.ts` | 文件型 store 的共享 JSON 读取 |
 | `settings-generator.ts` | `generateRuntimeDir(plan, options)`（launcher，建目录）与 `writeRuntimeFiles(runtimeDir, plan, options)`（会话内，就地重写）→ 生成文件 + symlink 组 + `{ PI_CODING_AGENT_DIR }` |
 | `runtime-state-store.ts` | 按 source scope 读写 `pi-profile-state.json`（`activeProfile`、`overlay`） |
@@ -183,7 +183,7 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 ### 用户配置契约
 
-`profiles.json`（全局 `~/.pi-profile-switch/profiles.json`，项目 `.pi/profiles.json`）与 `pi-profile-state.json` 的 schema 权威定义是 `schemas/profiles.schema.json`。核心字段：profile 的 `skills`/`extensions`/`mcps`/`tools`（名称或 glob）、可选 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 与 `instructions`；state 的 `activeProfile` 与 `overlay`。
+Profile 定义文件（全局 `~/.pi-profile-switch/profiles/<name>.json`，项目 `.pi/profiles/<name>.json`）的 schema 权威定义是 `schemas/profiles.schema.json`。核心字段：profile 的 `skills`/`extensions`/`mcps`/`tools`（名称或 glob）、可选 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 与 `instructions`；state 的 `activeProfile` 与 `overlay`。
 
 ## 已知限制
 
@@ -201,13 +201,13 @@ sessionId 与消息历史在 reload 前后不变（ADR-0005 已验证）。
 
 | 分组 | 内容 |
 | --- | --- |
-| `bin/` | CLI 入口与 postinstall。发布态的 `pi-profile.js` 是 jiti 包装器——Node 拒绝对 `node_modules` 下的 `.ts` 做 type-stripping，而 launcher 需要加载共享的 TS 图；开发态直接运行 `pi-profile.ts`。`postinstall.js` 用 `examples/profiles.json` 播种全局 catalog 的 starter `ask` profile |
+| `bin/` | CLI 入口与 postinstall。发布态的 `pi-profile.js` 是 jiti 包装器——Node 拒绝对 `node_modules` 下的 `.ts` 做 type-stripping，而 launcher 需要加载共享的 TS 图；开发态直接运行 `pi-profile.ts`。`postinstall.js` 用 `examples/ask.json` 播种全局 profiles 目录中的 starter `ask` profile |
 | `extensions/pi-profile/` | pi 进程内的 extension：`/profile` 命令族、切换编排、状态展示 |
 | `src/launcher/` | spawn 前的全部工作：参数解析、初始 profile 解析、只读发现、模型校验、spawn、陈旧目录清扫 |
 | `src/switching/` | 会话内切换、overlay、CRUD、可观测面 |
 | `src/*.ts` | catalog、trust、发现、resolver、settings 生成、状态存储等两侧共用模块 |
 | `schemas/` | `profiles.schema.json`，用户配置的权威定义 |
-| `examples/` | `profiles.json`（播种用 starter）与 `example.json`（全字段示例） |
+| `examples/` | `ask.json`（播种用 starter）与 `example.json`（全字段示例） |
 | `test/` | Vitest：`*.test.ts` 单元 + `*.integration.test.ts` 真实子进程 |
 
 `package.json` 同时声明 Pi extension 与 `pi-profile` binary：extension 提供对话内交互，binary 负责初始解析与 spawn。`files` 发布 `bin`、`extensions`、`src`、`schemas`、`examples`、`README`。

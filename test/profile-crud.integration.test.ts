@@ -9,7 +9,7 @@
  * (test/extension.test.ts); no automated test drives the interactive wizard UI.
  */
 
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -25,13 +25,10 @@ beforeEach(async () => {
 	fixture = await createPiFixture();
 	await addGlobalSkill(fixture, "review");
 	await addGlobalSkill(fixture, "impl");
-	await writeFile(
-		path.join(fixture.agentDir, "profiles.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			profiles: { review: { skills: ["review"] }, impl: { skills: ["impl"] } },
-		}),
-	);
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(dir, { recursive: true });
+	await writeFile(path.join(dir, "review.json"), JSON.stringify({ skills: ["review"] }));
+	await writeFile(path.join(dir, "impl.json"), JSON.stringify({ skills: ["impl"] }));
 });
 
 afterEach(async () => {
@@ -47,8 +44,10 @@ async function start(profile: string): Promise<void> {
 	await driver.send({ type: "get_state" });
 }
 
-const profilesFile = async () =>
-	JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")).profiles;
+const profilesFiles = async () => ({
+	review: JSON.parse(await readFile(path.join(fixture.profileSwitchDir, "profiles", "review.json"), "utf8")),
+	impl: JSON.parse(await readFile(path.join(fixture.profileSwitchDir, "profiles", "impl.json"), "utf8")),
+});
 
 describe("profile catalog CRUD mode gating in RPC mode", () => {
 	it("create/edit/delete/duplicate are refused with a mode-aware message; catalogs untouched", async () => {
@@ -62,7 +61,7 @@ describe("profile catalog CRUD mode gating in RPC mode", () => {
 			});
 		}
 
-		expect(await profilesFile()).toEqual({ review: { skills: ["review"] }, impl: { skills: ["impl"] } });
+		expect(await profilesFiles()).toEqual({ review: { skills: ["review"] }, impl: { skills: ["impl"] } });
 	}, 90_000);
 
 	it("switching is not CRUD: /profile use keeps working in RPC mode", async () => {

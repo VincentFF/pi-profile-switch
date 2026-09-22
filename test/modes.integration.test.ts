@@ -9,7 +9,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -22,9 +22,11 @@ let fixture: PiFixture;
 beforeEach(async () => {
 	fixture = await createPiFixture();
 	await addGlobalSkill(fixture, "review");
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(dir, { recursive: true });
 	await writeFile(
-		path.join(fixture.agentDir, "profiles.json"),
-		JSON.stringify({ schemaVersion: 1, profiles: { review: { skills: ["review"] } } }),
+		path.join(dir, "review.json"),
+		JSON.stringify({ skills: ["review"] }),
 	);
 });
 

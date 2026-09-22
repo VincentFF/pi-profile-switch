@@ -11,7 +11,7 @@
  * session events; the driver's `waitFor` watches for them.
  */
 
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -25,17 +25,15 @@ beforeEach(async () => {
 	fixture = await createPiFixture();
 	await addGlobalSkill(fixture, "review");
 	await addGlobalSkill(fixture, "impl");
-	await writeFile(
-		path.join(fixture.agentDir, "profiles.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			profiles: { review: { skills: ["review"] }, impl: { skills: ["impl"] }, shared: {} },
-		}),
-	);
-	await writeFile(
-		path.join(fixture.cwd, ".pi", "profiles.json"),
-		JSON.stringify({ schemaVersion: 1, profiles: { shared: { label: "project shared" } } }),
-	);
+	const globalProfilesDir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(globalProfilesDir, { recursive: true });
+	await writeFile(path.join(globalProfilesDir, "review.json"), JSON.stringify({ skills: ["review"] }));
+	await writeFile(path.join(globalProfilesDir, "impl.json"), JSON.stringify({ skills: ["impl"] }));
+	await writeFile(path.join(globalProfilesDir, "shared.json"), JSON.stringify({}));
+
+	const projectProfilesDir = path.join(fixture.cwd, ".pi", "profiles");
+	await mkdir(projectProfilesDir, { recursive: true });
+	await writeFile(path.join(projectProfilesDir, "shared.json"), JSON.stringify({ label: "project shared" }));
 	// A global MCP server exists but no profile selects it: status must show
 	// it as discovered-but-disabled.
 	await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));

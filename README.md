@@ -27,72 +27,62 @@ pi-profile ask -- --model openai/gpt-5.4
 
 ## Define your own profiles
 
-Profiles live in two JSON files, both optional:
+Profiles live in two directories, with one JSON file per profile:
 
-| File | Scope |
+| Path | Scope |
 | --- | --- |
-| `~/.pi-profile-switch/profiles.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the root; `~/.pi/agent/profiles.json` is read as a legacy fallback for migration. |
-| `<project>/.pi/profiles.json` | Project-level, trusted projects only. |
+| `~/.pi-profile-switch/profiles/<name>.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the workspace root. |
+| `<project>/.pi/profiles/<name>.json` | Project-level, trusted projects only. |
 
-Create or change a profile by editing the JSON directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
+Create or change a profile by editing or creating a `<name>.json` file directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
-On install, pi-profile-switch seeds the global file with a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
+On install, pi-profile-switch seeds the global `profiles/` directory with a starter **`ask`** profile (`ask.json`) — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
 
 ```json
 {
-  "schemaVersion": 1,
-  "profiles": {
-    "ask": {
-      "label": "Ask & Discuss",
-      "description": "Read-only Q&A and code exploration; no file modifications or command execution",
-      "skills": [],
-      "extensions": [],
-      "tools": ["read", "grep", "find", "ls"],
-      "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
-    }
-  }
+  "label": "Ask & Discuss",
+  "description": "Read-only Q&A and code exploration; no file modifications or command execution",
+  "skills": [],
+  "extensions": [],
+  "tools": ["read", "grep", "find", "ls"],
+  "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
 }
 ```
 
-One profile can use every field at once. This example `impl` profile loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools plus both servers' MCP tools by glob; and pins the model and standing instructions:
+One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools plus both servers' MCP tools by glob; and pins the model and standing instructions:
 
 ```json
 {
-  "schemaVersion": 1,
-  "profiles": {
-    "impl": {
-      "label": "Implementation",
-      "description": "Full-powered implementation profile: every available field, pinned model",
-      "skills": [
-        "tdd",
-        "internal-*",
-        "mcp-scripting"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
-      ],
-      "mcps": [
-        "github",
-        "linear"
-      ],
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls",
-        "bash",
-        "edit",
-        "write",
-        "mcp__*",
-        "github_*",
-        "linear_*"
-      ],
-      "defaultProvider": "anthropic",
-      "defaultModel": "claude-sonnet-4-5",
-      "defaultThinkingLevel": "high",
-      "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
-    }
-  }
+  "label": "Implementation",
+  "description": "Full-powered implementation profile: every available field, pinned model",
+  "skills": [
+    "tdd",
+    "internal-*",
+    "mcp-scripting"
+  ],
+  "extensions": [
+    "pi-mcp-adapter"
+  ],
+  "mcps": [
+    "github",
+    "linear"
+  ],
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "bash",
+    "edit",
+    "write",
+    "mcp__*",
+    "github_*",
+    "linear_*"
+  ],
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-5",
+  "defaultThinkingLevel": "high",
+  "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
 }
 ```
 
@@ -103,7 +93,15 @@ How fields resolve:
 - `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
 - Any field you omit keeps plain Pi behavior.
 
-The files in [`examples/`](examples/) mirror the two profiles above: `profiles.json` is the seeded starter, `example.json` the full-field demo.
+The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.
+
+### Migrating from earlier versions
+
+If you used an earlier version that stored all profiles in a single `profiles.json` (`schemaVersion: 1`), migrate manually by creating a file for each profile under the `profiles/` directory:
+
+1. Create directory `~/.pi-profile-switch/profiles/` (or `<project>/.pi/profiles/`).
+2. For each key `<name>` in your old `profiles.json`'s `profiles` object, save its value directly as `<name>.json`.
+3. Drop the outer `schemaVersion` and `profiles` envelope.
 
 ## Commands
 

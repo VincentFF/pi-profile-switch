@@ -79,7 +79,7 @@
 
 信任判定 SHALL 按以下顺序取第一个成立的结果：一次性的 `--approve` 或 `--no-approve` 输入；项目不含任何需要信任的资源时视为受信任；真实 `trust.json` 中最近祖先的已存储决定；用户的全局 `defaultProjectTrust` 设置为 `always`；否则不受信任。
 
-需要信任的项目资源 SHALL 包括 pi-profile 自己的项目文件 `<projectDir>/.pi/profiles.json` 与 `<projectDir>/.pi/pi-profile-state.json`。
+需要信任的项目资源 SHALL 包括 pi-profile 自己的项目文件 `<projectDir>/.pi/profiles/` 与 `<projectDir>/.pi/pi-profile-state.json`。
 
 信任判定 MUST NOT 执行任何 extension 代码。
 
@@ -102,7 +102,7 @@
 
 #### Scenario: 只存在 pi-profile 的项目文件
 
-- **WHEN** 项目目录下只有 `.pi/profiles.json` 而没有 Pi 认识的项目资源
+- **WHEN** 项目目录下只有 `.pi/profiles/` 目录而没有 Pi 认识的项目资源
 - **THEN** 该项目仍被判定为含需要信任的资源，不因"没有项目资源"而自动受信任
 
 ### Requirement: 启动诊断输出

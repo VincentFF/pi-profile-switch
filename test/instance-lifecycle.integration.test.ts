@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { lstat, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -28,7 +28,11 @@ function launcherEnv(): NodeJS.ProcessEnv {
 }
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
+	const dir = path.join(fixture.profileSwitchDir, "profiles");
+	await mkdir(dir, { recursive: true });
+	for (const [name, definition] of Object.entries(profiles)) {
+		await writeFile(path.join(dir, `${name}.json`), JSON.stringify(definition));
+	}
 }
 
 describe("instance lifecycle", () => {

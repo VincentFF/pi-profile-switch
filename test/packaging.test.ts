@@ -38,7 +38,7 @@ describe("npm pack contents", () => {
 			"extensions/pi-profile/index.ts",
 			"src/profile-resolver.ts",
 			"schemas/profiles.schema.json",
-			"examples/profiles.json",
+			"examples/ask.json",
 			"examples/example.json",
 			"README.md",
 			"package.json",
