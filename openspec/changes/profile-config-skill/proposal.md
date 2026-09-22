@@ -35,4 +35,4 @@
 - `docs/prd.md`：none——skill 是配置路径的补充，不改变产品定位。
 - `docs/architecture/overview.md`：none——无新机制，分发复用 postinstall 既有模式。
 - `CONTEXT.md`：none——无新术语。
-- `docs/adr/`：none——分发复用 postinstall 既有模式，过滤模型无新规则；两个已否方案（Pi package 发现、生成 settings 注入）在 design 讨论中记录，不构成难以撤销的决策。
+- `docs/adr/`：none——分发复用 postinstall 既有模式，过滤模型无新规则。已否方案记录于此：经 Pi package 发现机制暴露 skill（违反「无运行时特判」，且与 ADR-0008 的委托方向相悖）；生成 settings 时注入 skill（同上，且声明即控制的过滤模型被破坏）。均不构成难以撤销的决策。

@@ -35,8 +35,10 @@ rules:
     - 'requirement 与 scenario 的名称和正文用中文，SHALL/MUST 保留英文。'
   design:
     - '若设计引入难以撤销的决策（文件格式、进程架构、外部依赖锁），在该决策处写一行 "ADR required: <slug>"。'
+    - '涉及跨模块新增或修改导出接口、存储格式变更或破坏性契约调整的 change，必须编写 design.md，明确导出面：文件、方法名、签名、错误类型。'
   tasks:
     - '文档同步任务必须写出具体文件路径，不写“更新相关文档”。'
+    - '每个实现任务必须带「验证：」子句，标明所覆盖的 specs delta scenario 与测试命令；无验证标准的任务不可接受。'
 
 operations:
   apply:
