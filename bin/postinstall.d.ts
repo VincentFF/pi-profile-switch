@@ -11,3 +11,5 @@ export interface InstallResult {
 }
 
 export function installDefaultProfiles(options?: { env?: NodeJS.ProcessEnv }): Promise<InstallResult>;
+
+export function installProfileConfigSkill(options?: { env?: NodeJS.ProcessEnv }): Promise<InstallResult>;

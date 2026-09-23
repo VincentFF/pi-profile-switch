@@ -46,6 +46,7 @@
   "files": [
     "bin",
     "extensions",
+    "skills",
     "src",
     "schemas",
     "examples",

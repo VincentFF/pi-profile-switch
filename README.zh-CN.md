@@ -36,6 +36,8 @@ profile 保存在两个目录中，每个 profile 对应一个独立 JSON 文件
 
 直接编辑或新建 `<name>.json` 即可创建或修改 profile——schema 见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
 
+你也可以通过对话让 agent 帮你配置：随包附带的 **`profile-config`** skill（安装时分发至 `<agentDir>/skills/profile-config/`）会指导 agent 澄清需求、发现资源并读写 profile 文件。按约定，生成声明了 `skills` 的 profile 时默认包含 `"profile-config"`（除非明确排除或已被 `*` 等 glob 覆盖），确保切换到新 profile 后仍可持续对话配置。详情见 [`skills/profile-config/SKILL.md`](skills/profile-config/SKILL.md)。
+
 安装时，pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** profile（`ask.json`）——只读的问答与代码走读模式。它不假设你安装过任何插件，可随意修改或删除：
 
 ```json

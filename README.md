@@ -36,6 +36,8 @@ Profiles live in two directories, with one JSON file per profile:
 
 Create or change a profile by editing or creating a `<name>.json` file directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
+You can also configure profiles conversationally: the package ships a **`profile-config`** skill (distributed to `<agentDir>/skills/profile-config/` on install) that guides the agent to clarify requirements, discover resources, and write or remove profile files. Profiles created with a `skills` list include `"profile-config"` by default (unless explicitly opted out or covered by a wildcard like `"*"`), keeping configuration available after switching. Details: [`skills/profile-config/SKILL.md`](skills/profile-config/SKILL.md).
+
 On install, pi-profile-switch seeds the global `profiles/` directory with a starter **`ask`** profile (`ask.json`) — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
 
 ```json

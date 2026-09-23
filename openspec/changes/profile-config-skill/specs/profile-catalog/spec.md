@@ -19,3 +19,8 @@
 
 - **WHEN** 用户 agentDir 的 `skills/profile-config/` 已存在，且内容与随包版本不同
 - **THEN** 安装以随包版本覆写
+
+#### Scenario: 分发失败降级为警告
+
+- **WHEN** 写入 skill 文件失败（如目标目录不可写）
+- **THEN** 安装降级为警告继续，安装本身不失败

@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 /**
- * postinstall: seed the global catalog with the default starter profile.
+ * postinstall: seed the global catalog with the default starter profile,
+ * and distribute the profile-config skill to the agent skills directory.
  *
  * Runs at package install time (`npm install pi-profile-switch` / `pi install`).
  * Idempotent and conservative:
  * - Writes the shipped `examples/ask.json` starter profile to the
  *   profiles dir ONLY when no .json profile exists there yet
  *   (COPYFILE_EXCL; an existing file — including one written concurrently — is never touched).
+ * - Distributes the shipped `skills/profile-config/SKILL.md` to
+ *   `<agentDir>/skills/profile-config/SKILL.md`, always overwriting with
+ *   the shipped version so the skill stays in sync with the package.
  * - Never fails the install: errors are downgraded to a warning.
  *
  * This module is plain Node ESM (no jiti/TS): npm may run postinstall in a
  * context where only plain JS is safe. The path rules intentionally mirror
- * src/workspace.ts — keep them in sync.
+ * src/workspace.ts and Pi's getAgentDir() (in @earendil-works/pi-coding-agent)
+ * — keep them in sync.
  */
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -20,6 +25,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_TEMPLATE = fileURLToPath(new URL("../examples/ask.json", import.meta.url));
+const SKILL_TEMPLATE = fileURLToPath(new URL("../skills/profile-config/SKILL.md", import.meta.url));
 
 /** Mirrors getProfileSwitchDir() in src/workspace.ts.
  *  @param {NodeJS.ProcessEnv} env */
@@ -33,6 +39,24 @@ function profileSwitchDir(env) {
  *  @param {NodeJS.ProcessEnv} env */
 function globalProfilesDir(env) {
 	return path.join(profileSwitchDir(env), "profiles");
+}
+
+/** Mirrors Pi's getAgentDir() in @earendil-works/pi-coding-agent.
+ *  Keep in sync with Pi's config resolution.
+ *  Deliberate divergence from Pi: trims whitespace and resolves relative
+ *  paths via path.resolve() for safety during postinstall.
+ *  @param {NodeJS.ProcessEnv} env */
+function agentDir(env) {
+	const override = env.PI_CODING_AGENT_DIR;
+	if (override && override.trim()) {
+		const trimmed = override.trim();
+		if (trimmed === "~") return homedir();
+		if (trimmed.startsWith("~/") || (process.platform === "win32" && trimmed.startsWith("~\\"))) {
+			return path.join(homedir(), trimmed.slice(2));
+		}
+		return path.resolve(trimmed);
+	}
+	return path.join(homedir(), ".pi", "agent");
 }
 
 /** Checks whether the directory exists and contains any .json files.
@@ -74,6 +98,28 @@ export async function installDefaultProfiles({ env = process.env } = {}) {
 	return { path: target, written: true };
 }
 
+/**
+ * Distributes the shipped profile-config skill to the agent skills directory.
+ * Always overwrites with the shipped version. Downgrades failures to a warning.
+ * @param {{ env?: NodeJS.ProcessEnv }} [options]
+ * @returns {Promise<InstallResult>}
+ */
+export async function installProfileConfigSkill({ env = process.env } = {}) {
+	const dir = path.join(agentDir(env), "skills", "profile-config");
+	const target = path.join(dir, "SKILL.md");
+
+	try {
+		await mkdir(dir, { recursive: true });
+		await copyFile(SKILL_TEMPLATE, target);
+		return { path: target, written: true };
+	} catch (error) {
+		console.warn(
+			`pi-profile: could not distribute profile-config skill: ${error instanceof Error ? error.message : error}`,
+		);
+		return { path: target, written: false };
+	}
+}
+
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
 	installDefaultProfiles().then(
@@ -82,6 +128,14 @@ if (invokedDirectly) {
 		},
 		(error) => {
 			console.warn(`pi-profile: could not seed starter profile: ${error instanceof Error ? error.message : error}`);
+		},
+	);
+	installProfileConfigSkill().then(
+		(result) => {
+			if (result.written) console.log(`pi-profile: distributed profile-config skill at ${result.path}`);
+		},
+		(error) => {
+			console.warn(`pi-profile: could not distribute profile-config skill: ${error instanceof Error ? error.message : error}`);
 		},
 	);
 }
