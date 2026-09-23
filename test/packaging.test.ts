@@ -36,6 +36,7 @@ describe("npm pack contents", () => {
 			"bin/pi-profile.ts",
 			"bin/postinstall.js",
 			"extensions/pi-profile/index.ts",
+			"skills/profile-config/SKILL.md",
 			"src/profile-resolver.ts",
 			"schemas/profiles.schema.json",
 			"examples/ask.json",

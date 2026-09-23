@@ -5,12 +5,12 @@
  * never failing the install.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { installDefaultProfiles } from "../bin/postinstall.js";
+import { installDefaultProfiles, installProfileConfigSkill } from "../bin/postinstall.js";
 
 let root: string;
 
@@ -77,5 +77,109 @@ describe("installDefaultProfiles", () => {
 
 		expect(first.written).toBe(true);
 		expect(second.written).toBe(false);
+	});
+});
+
+describe("installProfileConfigSkill", () => {
+	it("Scenario: 首次安装 - writes shipped skill when skills/profile-config does not exist", async () => {
+		const agentDir = path.join(root, "agent");
+		const shippedSkill = await readFile(path.resolve("skills/profile-config/SKILL.md"), "utf8");
+
+		const result = await installProfileConfigSkill({ env: { PI_CODING_AGENT_DIR: agentDir } });
+
+		expect(result.written).toBe(true);
+		expect(result.path).toBe(path.join(agentDir, "skills", "profile-config", "SKILL.md"));
+		const installed = await readFile(result.path, "utf8");
+		expect(installed).toBe(shippedSkill);
+	});
+
+	it("Scenario: 升级覆写 - overwrites existing skill when content differs", async () => {
+		const agentDir = path.join(root, "agent");
+		const targetDir = path.join(agentDir, "skills", "profile-config");
+		await mkdir(targetDir, { recursive: true });
+		await writeFile(path.join(targetDir, "SKILL.md"), "custom outdated content");
+
+		const shippedSkill = await readFile(path.resolve("skills/profile-config/SKILL.md"), "utf8");
+
+		const result = await installProfileConfigSkill({ env: { PI_CODING_AGENT_DIR: agentDir } });
+
+		expect(result.written).toBe(true);
+		expect(result.path).toBe(path.join(targetDir, "SKILL.md"));
+		const installed = await readFile(result.path, "utf8");
+		expect(installed).toBe(shippedSkill);
+	});
+
+	it("Scenario: 分发失败降级为警告 - downgrades write failure to warning and does not throw", async () => {
+		const agentDir = path.join(root, "agent");
+		await mkdir(agentDir, { recursive: true });
+		// Create a regular file where the "skills" directory would be created, causing ENOTDIR
+		await writeFile(path.join(agentDir, "skills"), "blocking file");
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		const result = await installProfileConfigSkill({ env: { PI_CODING_AGENT_DIR: agentDir } });
+
+		expect(result.written).toBe(false);
+		expect(warnSpy).toHaveBeenCalled();
+		expect(warnSpy.mock.calls.some((args) => args.some((arg) => String(arg).includes("pi-profile")))).toBe(true);
+		warnSpy.mockRestore();
+	});
+
+	it("resolves PI_CODING_AGENT_DIR with ~ expansion", async () => {
+		const tildeDir = await mkdtemp(path.join(homedir(), ".pi-profile-test-tilde-"));
+		try {
+			const subRel = path.relative(homedir(), tildeDir);
+			const tildePath = `~/${subRel}`;
+			const result = await installProfileConfigSkill({ env: { PI_CODING_AGENT_DIR: tildePath } });
+
+			expect(result.written).toBe(true);
+			expect(result.path).toBe(path.join(tildeDir, "skills", "profile-config", "SKILL.md"));
+			expect(await readFile(result.path, "utf8")).toBe(
+				await readFile(path.resolve("skills/profile-config/SKILL.md"), "utf8"),
+			);
+		} finally {
+			await rm(tildeDir, { recursive: true, force: true });
+		}
+	});
+
+	it("defaults agentDir to ~/.pi/agent when PI_CODING_AGENT_DIR is unset", async () => {
+		const expectedTarget = path.join(homedir(), ".pi", "agent", "skills", "profile-config", "SKILL.md");
+		const targetDir = path.dirname(expectedTarget);
+
+		let previousContent: string | null = null;
+		let targetExisted = false;
+		let targetDirExisted = false;
+
+		try {
+			previousContent = await readFile(expectedTarget, "utf8");
+			targetExisted = true;
+			targetDirExisted = true;
+		} catch {
+			targetExisted = false;
+			try {
+				await stat(targetDir);
+				targetDirExisted = true;
+			} catch {
+				targetDirExisted = false;
+			}
+		}
+
+		try {
+			const result = await installProfileConfigSkill({ env: {} });
+
+			expect(result.written).toBe(true);
+			expect(result.path).toBe(expectedTarget);
+			expect(await readFile(result.path, "utf8")).toBe(
+				await readFile(path.resolve("skills/profile-config/SKILL.md"), "utf8"),
+			);
+		} finally {
+			if (targetExisted && previousContent !== null) {
+				await writeFile(expectedTarget, previousContent, "utf8");
+			} else if (targetDirExisted) {
+				await rm(expectedTarget, { force: true });
+			} else {
+				await rm(targetDir, { recursive: true, force: true });
+			}
+		}
 	});
 });
