@@ -318,10 +318,12 @@ describe("launcher integration: named global profiles", () => {
 			const created = agentDirAfter.filter((file) => !agentDirBefore.includes(file));
 			for (const file of created) {
 				const relative = path.relative(fixture.agentDir, file);
-				// Only Pi's own session storage and the state paths pi-profile seeds
-				// (so Pi writes them into the real agent dir rather than the instance).
+				// Only Pi's own session storage, the state paths pi-profile seeds
+				// (so Pi writes them into the real agent dir rather than the instance),
+				// and the profile-config skill the launcher distributes on startup
+				// (spec: 分发 profile-config skill).
 				expect(
-					["sessions", "missions", "auth.json", "models-store.json"].some(
+					["sessions", "missions", "auth.json", "models-store.json", `skills${path.sep}profile-config`].some(
 						(seed) => relative === seed || relative.startsWith(`${seed}${path.sep}`),
 					),
 				).toBe(true);

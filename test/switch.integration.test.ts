@@ -87,10 +87,13 @@ describe("launcher integration: in-session switching", () => {
 				const switched = await rpc.send({ type: "prompt", message: "/profile use default" }, 60_000);
 				expect(switched.success).toBe(true);
 
-				// No restart, same session, unchanged project-level visibility.
+				// No restart, same session, unchanged project-level visibility. Default
+				// is unfiltered, so it additionally exposes the launcher-distributed
+				// profile-config skill (spec: 分发 profile-config skill).
 				const after = await getState(rpc);
 				expect(after.sessionId).toBe(before.sessionId);
 				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
+					"skill:profile-config",
 					"skill:proj-skill",
 					"skill:proj-unselected",
 				]);
