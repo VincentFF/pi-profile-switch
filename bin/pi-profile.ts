@@ -21,11 +21,20 @@ import { spawnPi } from "../src/launcher/spawn.ts";
 import { McpConfigError, MissingMcpAdapterError } from "../src/mcp-config.ts";
 import { CatalogError } from "../src/profile-catalog.ts";
 import { ActivationError } from "../src/profile-resolver.ts";
+import { ensureStarterAssets } from "../src/starter-assets.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";
 
 try {
 	const args = parseLauncherArgs(process.argv.slice(2));
 	const agentDir = getAgentDir();
+	// Starter assets (seed profile + profile-config skill) are ensured before
+	// initial profile resolution so the seed is visible to this launch's
+	// resolution and /profile list. Best-effort: ensure failures never block
+	// the launch (same pattern as the sweep below).
+	const starterAssets = await ensureStarterAssets({ agentDir });
+	for (const warning of starterAssets.warnings) {
+		console.error(`pi-profile: warning: ${warning}`);
+	}
 	// Fails before spawning when the profile is unknown or cannot activate.
 	// --approve/--no-approve are consumed here as a one-run trust input.
 	const { plan, discovery, projectDir, warnings } = await resolveInitialProfile(args.profile, {

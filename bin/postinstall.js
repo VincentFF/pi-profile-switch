@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 /**
- * postinstall: seed the global catalog with the default starter profile,
- * and distribute the profile-config skill to the agent skills directory.
+ * postinstall: best-effort early seeding of the global catalog with the
+ * default starter profile, and distribution of the profile-config skill to
+ * the agent skills directory.
  *
  * Runs at package install time (`npm install pi-profile-switch` / `pi install`).
+ *
+ * Role: this hook is an early optimization, NOT the sole distribution
+ * channel. npm v12+ blocks dependency lifecycle scripts by default
+ * (allowScripts), so installs that skip this hook are covered by the
+ * launcher instead: `bin/pi-profile.ts` calls the runtime ensure
+ * (src/starter-assets.ts) on every launch, before resolving the initial
+ * profile. The authoritative behavior contract for both assets lives in
+ * openspec/specs/profile-catalog/spec.md ("播种 starter profile" and
+ * "分发 profile-config skill"); keep this script's rules in sync with
+ * src/starter-assets.ts, which is the single TS implementation.
+ *
  * Idempotent and conservative:
  * - Writes the shipped `examples/ask.json` starter profile to the
  *   profiles dir ONLY when no .json profile exists there yet

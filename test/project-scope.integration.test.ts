@@ -158,7 +158,13 @@ describe("launcher integration: project scope and trust", () => {
 			);
 			expect(generated.projectManagedKey).toBeUndefined();
 			expect(generated.defaultProjectTrust).toBe("never");
-			expect(generated.skills).toEqual([]);
+			// The launcher-distributed profile-config skill is user-scope and not
+			// selected by `impl`, so the generator excludes its instance symlink
+			// (spec: 分发 profile-config skill — the skill is a normal user-level
+			// resource, filtered like any other).
+			expect(generated.skills).toEqual([
+				`-${path.join(runtimeDir, "skills", "profile-config", "SKILL.md")}`,
+			]);
 			// Pi reads its project-scope decision from the linked store.
 			expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(
 				path.join(fixture.agentDir, "trust.json"),

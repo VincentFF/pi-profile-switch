@@ -201,8 +201,9 @@ Profile 定义文件（全局 `~/.pi-profile-switch/profiles/<name>.json`，项�
 
 | 分组 | 内容 |
 | --- | --- |
-| `bin/` | CLI 入口与 postinstall。发布态的 `pi-profile.js` 是 jiti 包装器——Node 拒绝对 `node_modules` 下的 `.ts` 做 type-stripping，而 launcher 需要加载共享的 TS 图；开发态直接运行 `pi-profile.ts`。`postinstall.js` 用 `examples/ask.json` 播种全局 profiles 目录中的 starter `ask` profile |
+| `bin/` | CLI 入口与 postinstall。发布态的 `pi-profile.js` 是 jiti 包装器——Node 拒绝对 `node_modules` 下的 `.ts` 做 type-stripping，而 launcher 需要加载共享的 TS 图；开发态直接运行 `pi-profile.ts`。`postinstall.js` 保留为 best-effort 提前优化：安装期提前分发 starter `ask` profile 与 profile-config skill，运行时分发保证由 launcher 的 ensure 承担（见 `src/starter-assets.ts`）；权威行为契约见 [openspec/specs/profile-catalog/spec.md](../../openspec/specs/profile-catalog/spec.md) |
 | `extensions/pi-profile/` | pi 进程内的 extension：`/profile` 命令族、切换编排、状态展示 |
+| `src/starter-assets.ts` | launcher 启动时的 starter 资产 ensure：单一 TS 实现，导出面 `ensureStarterAssets()`（每个资产返回 `path`/`written`，IO 失败降级为 `warnings`，不抛出，设计见 [design.md D1/D5](../../openspec/changes/archive/2026-09-24-runtime-ensure-starter-assets/design.md)）；行为契约不复述于此，见 [openspec/specs/profile-catalog/spec.md](../../openspec/specs/profile-catalog/spec.md) |
 | `src/launcher/` | spawn 前的全部工作：参数解析、初始 profile 解析、只读发现、模型校验、spawn、陈旧目录清扫 |
 | `src/switching/` | 会话内切换、overlay、CRUD、可观测面 |
 | `src/*.ts` | catalog、trust、发现、resolver、settings 生成、状态存储等两侧共用模块 |
