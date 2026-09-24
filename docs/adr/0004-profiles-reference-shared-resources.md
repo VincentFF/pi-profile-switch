@@ -1,17 +1,17 @@
-# profile 只引用资源，不复制
+# Profiles reference resources, never copy them
 
-## 背景
+## Context
 
-profile 需要引用 skill、extension、MCP server 与 tool。这些资源在 Pi 中已经存在实现与名称。
+Profiles need to reference skills, extensions, MCP servers, and tools. These resources already have implementations and names in Pi.
 
-## 决策
+## Decision
 
-profile 按名字引用资源，从不复制。一个 `SKILL.md`、extension 或 MCP server 只有一份实现，被所有引用它的 profile 共享。修改实现后，引用方在下一次启动或 reload 得到新内容，profile 定义不需要改动。
+Profiles reference resources by name and never copy them. A `SKILL.md`, extension, or MCP server has exactly one implementation, shared by every profile that references it. After the implementation is modified, referrers pick up the new content on the next launch or reload without any profile definition changing.
 
-## 被否方案
+## Rejected alternatives
 
-**自包含 profile，把资源副本放进 profile 目录。** 否掉的理由：会把实现分叉成 N 份，修一个 skill 要改 N 个副本；并且破坏用户直接拥有并维护自己资源的前提。
+**Self-contained profiles with resource copies inside the profile directory.** Rejected because it would fork implementations into N variants — fixing one skill would mean editing N copies — and it breaks the premise that users directly own and maintain their resources.
 
-## 代价
+## Consequences
 
-- 资源被删除或改名会同时影响所有引用它的 profile。
+- Deleting or renaming a resource affects every profile that references it at the same time.

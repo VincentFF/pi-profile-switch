@@ -17,25 +17,25 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getGlobalProfilesDir } from "./workspace.ts";
 
 export interface StarterAssetFileResult {
-	/** 目标文件绝对路径 */
+	/** Absolute path of the target file */
 	path: string;
-	/** 本次调用是否发生了写入 */
+	/** Whether this call performed a write */
 	written: boolean;
 }
 
 export interface StarterAssetsResult {
 	profile: StarterAssetFileResult;
 	skill: StarterAssetFileResult;
-	/** 人类可读的降级警告；为空表示全部成功或无操作 */
+	/** Human-readable degradation warnings; empty means all succeeded or no-op */
 	warnings: string[];
 }
 
 export interface EnsureStarterAssetsOptions {
-	/** 默认 getGlobalProfilesDir()；测试注入 */
+	/** Defaults to getGlobalProfilesDir(); injected by tests */
 	globalProfilesDir?: string;
-	/** 默认 Pi 的 getAgentDir()；测试注入 */
+	/** Defaults to Pi's getAgentDir(); injected by tests */
 	agentDir?: string;
-	/** 默认由 import.meta.url 定位包根；测试注入 */
+	/** Defaults to locating the package root from import.meta.url; injected by tests */
 	packageRoot?: string;
 }
 

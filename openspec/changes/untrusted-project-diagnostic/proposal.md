@@ -2,33 +2,33 @@
 
 ## Why
 
-命名 profile 下，launcher 在 spawn 前完成项目信任判定，且 `ask` 无已存储决定时静默判为不信任（ADR-0011 的既定取舍）。但判定的结果完全不可见：用户打开一个未受信任的目录，项目 catalog 不读、项目级资源不可见，界面上没有任何线索，用户只能猜测原因。静默失败违反项目「错误必须可行动」的原则。
+Under a named profile, the launcher completes the project-trust determination before spawn, and silently judges the project as untrusted when `ask` has no stored decision (ADR-0011's accepted trade-off). But the determination's result is completely invisible: the user opens an untrusted directory, the project catalog is not read, project-level resources are invisible, and there is no hint anywhere in the UI — the user can only guess at the cause. Silent failure violates the project's "errors must be actionable" principle.
 
 ## What Changes
 
-- 启动时，若项目判定为未受信任，且项目目录中存在因不信任而被跳过的内容——pi-profile 自己的项目文件（`.pi/profiles/`、`.pi/pi-profile-state.json`、项目 MCP 配置）或任何需要信任的 Pi 项目资源（`.pi/settings.json`、`.pi/extensions` 等）——launcher SHALL 在 stderr 输出一条诊断。
-- 诊断 SHALL 说明：项目未受信任、哪些内容因此不可见、以及如何授权（`/trust` 持久保存决定，下次启动生效；`-- --approve` 本次一次性信任）。启动照常继续，退出码不变。
-- 判定逻辑本身不变：不改变信任判定顺序，不引入交互弹窗，不影响 Pi 原生 ask 行为。
+- At startup, when the project is determined untrusted and the project directory contains content skipped because of that — pi-profile's own project files (`.pi/profiles/`, `.pi/pi-profile-state.json`, project MCP configuration) or any trust-requiring Pi project resources (`.pi/settings.json`, `.pi/extensions`, etc.) — the launcher SHALL print one diagnostic to stderr.
+- The diagnostic SHALL state: the project is untrusted, which content is therefore invisible, and how to authorize (`/trust` persists the decision and takes effect on the next launch; `-- --approve` grants one-shot trust for this launch). Startup continues as usual and the exit code is unchanged.
+- The determination logic itself is unchanged: the trust decision order is untouched, no interactive prompt is introduced, and Pi's native ask behavior is unaffected.
 
 ## Capabilities
 
 ### New Capabilities
 
-（无）
+(none)
 
 ### Modified Capabilities
 
-- `launcher`：「启动诊断输出」requirement 扩展一类新诊断（未受信任项目）。
+- `launcher`: the "Launch diagnostic output" requirement gains a new diagnostic class (untrusted project).
 
 ## Impact
 
-- 代码：`src/launcher/`（判定后输出诊断），信任判定与 spawn 流程不变。
-- 测试：诊断触发/不触发的用例。
-- 无依赖变化。
+- Code: `src/launcher/` (emit the diagnostic after the determination); the trust determination and spawn flow are unchanged.
+- Tests: cases for the diagnostic firing and not firing.
+- No dependency changes.
 
 ## Doc Impact
 
-- `docs/prd.md`：none——不改变产品定位与非目标。
-- `docs/architecture/overview.md`：none——过滤模型与信任守门机制不变，仅多一条诊断输出。
-- `CONTEXT.md`：none——无新术语。
-- `docs/adr/`：none——不推翻 ADR-0011 的判定取舍，只补足其结果的可观测性。
+- `docs/prd.md`: none — product positioning and non-goals unchanged.
+- `docs/architecture/overview.md`: none — the filtering model and trust-gating mechanism are unchanged; only one more diagnostic output.
+- `CONTEXT.md`: none — no new terminology.
+- `docs/adr/`: none — does not overturn ADR-0011's determination trade-off; only adds observability of its result.

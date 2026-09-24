@@ -1,22 +1,22 @@
-# MCP 集成锁定 pi-mcp-adapter
+# MCP integration locked to pi-mcp-adapter
 
-## 背景
+## Context
 
-MCP server 的连接参数、OAuth 与 token 是凭据，不是 profile 的资源配置。pi-profile 需要按 profile 限制可用 server，但不应该自己实现 server 管理。
+MCP server connection parameters, OAuth, and tokens are credentials, not profile resource configuration. pi-profile needs to limit the available servers per profile, but should not implement server management itself.
 
-## 决策
+## Decision
 
-MCP 支持完全委托给可选的 `pi-mcp-adapter` 包。profile 的 `mcps` 数组只声明启用哪些 server，并作为该 profile 的持久存储；连接参数、OAuth 与 token 全部留在 adapter 配置里，pi-profile 从不写入。
+MCP support is fully delegated to the optional `pi-mcp-adapter` package. A profile's `mcps` array only declares which servers are enabled and serves as that profile's persistent store; connection parameters, OAuth, and tokens all stay in the adapter's configuration, which pi-profile never writes.
 
-pi-profile 不注册 `/mcp` 命令，不占用该命名空间。
+pi-profile does not register an `/mcp` command and does not occupy that namespace.
 
-## 被否方案
+## Rejected alternatives
 
-**pi-profile 自己管理 MCP 配置。** 否掉的理由：会把 server 管理从 adapter 的单一实现分叉出去，并把凭据引进 profile catalog。
+**pi-profile manages MCP configuration itself.** Rejected because it would fork server management away from the adapter's single implementation and pull credentials into the profile catalog.
 
-**曾实现的 `/mcp enable|disable` 命令已撤销。** 注册 `/mcp` 会与 `pi-mcp-adapter` 的原生命令命名空间冲突并劫持其 TUI setup、status、tools、reconnect 等子命令。所有 `/mcp` 命令返回 adapter。
+**The once-implemented `/mcp enable|disable` command has been withdrawn.** Registering `/mcp` would collide with `pi-mcp-adapter`'s native command namespace and hijack its TUI setup, status, tools, reconnect, and other subcommands. All `/mcp` commands return to the adapter.
 
-## 代价
+## Consequences
 
-- profile 声明了 `mcps` 而 adapter 未安装时，该 profile 激活失败。不含 `mcps` 的 profile 不依赖 adapter。
-- profile 只能声明启用哪些 server，不能声明 server 的连接方式；新增或修改 server 必须走 adapter 自己的配置面。
+- If a profile declares `mcps` while the adapter is not installed, that profile fails to activate. Profiles without `mcps` do not depend on the adapter.
+- A profile can only declare which servers are enabled, not how a server connects; adding or modifying servers must go through the adapter's own configuration surface.

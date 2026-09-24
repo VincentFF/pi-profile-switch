@@ -160,7 +160,7 @@ describe("launcher integration: project scope and trust", () => {
 			expect(generated.defaultProjectTrust).toBe("never");
 			// The launcher-distributed profile-config skill is user-scope and not
 			// selected by `impl`, so the generator excludes its instance symlink
-			// (spec: 分发 profile-config skill — the skill is a normal user-level
+			// (spec: Distributing the profile-config skill — the skill is a normal user-level
 			// resource, filtered like any other).
 			expect(generated.skills).toEqual([
 				`-${path.join(runtimeDir, "skills", "profile-config", "SKILL.md")}`,

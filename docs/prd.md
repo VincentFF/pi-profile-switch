@@ -1,14 +1,14 @@
-# pi-profile-switch 产品需求
+# pi-profile-switch Product Requirements
 
-## 问题
+## Problem
 
-Pi 的资源是全局发现的：装了哪些 skills、extensions、MCP servers 和 tools，一个会话里就全部可用。资源变多之后，三件事同时变糟。
+Pi discovers resources globally: whichever skills, extensions, MCP servers, and tools are installed are all available in every session. As the number of resources grows, three things get worse at the same time.
 
-- 上下文被占满。每个 skill 的名称与 description 常驻 system prompt，与当前任务无关的 skill 同样占位。
-- 危险能力常驻。文件写入、命令执行、外部系统的写权限一旦装上就一直在工具列表里。
-- 边界只能靠提示词。"只读复核"和"全量实现"要切换的是能力集合本身，提示词约束不了工具是否存在。
+- Context fills up. Every skill's name and description lives permanently in the system prompt; skills irrelevant to the current task occupy space just the same.
+- Dangerous capabilities stay resident. File writes, command execution, and write access to external systems remain in the tool list once installed.
+- Boundaries can only exist in prompts. Switching between "read-only review" and "full implementation" means switching the capability set itself — a prompt cannot constrain whether a tool exists.
 
-profile 把资源选择变成显式、可切换的对象，并可选地附带声明 model、thinking level 与额外的 system prompt 指令。它不复制资源：一个 `SKILL.md`、extension 或 MCP server 只有一份实现，多个 profile 引用同一份。
+Profiles turn resource selection into an explicit, switchable object, optionally accompanied by a declared model, thinking level, and extra system-prompt instructions. A profile does not copy resources: a `SKILL.md`, extension, or MCP server has exactly one implementation, referenced by any number of profiles.
 
 ```text
 SkillRegistry
@@ -18,63 +18,63 @@ SkillRegistry
   review profile     implement profile
 ```
 
-## 使用场景
+## Scenarios
 
-- **按任务切换**：`review` 只带复核类 skill 与只读工具，`implement` 带完整编辑与测试能力。
-- **按项目切换**：项目 catalog 覆盖同名全局定义，在项目目录内按该项目所需收窄用户级资源；离开项目后回到全局定义。
-- **按权限收窄**：只读问答、受限环境、对外演示时用 profile 收窄能力面。
-- **共享实现**：修好一个 skill，所有引用它的 profile 在下一次启动或 reload 得到新内容。
+- **Switch by task**: `review` carries only review skills and read-only tools; `implement` carries full editing and testing capability.
+- **Switch by project**: the project catalog replaces same-named global definitions, narrowing user-level resources to what the project needs while inside the project directory; the global definitions return after leaving the project.
+- **Narrow by permission**: read-only Q&A, restricted environments, and external demos use profiles to shrink the capability surface.
+- **Shared implementations**: fix one skill and every profile referencing it picks up the new content on the next launch or reload.
 
-## 目标用户
+## Target users
 
-主要用户是已用 Pi 管理多个项目、装了多个 skills、extensions 与 MCP server 的个人开发者。
+The primary user is an individual developer who already uses Pi across multiple projects and has multiple skills, extensions, and MCP servers installed.
 
-次要用户是需要给 agent 划定能力边界的场景，例如只读复核、受限环境。
+The secondary user is anyone who needs to draw a capability boundary for the agent — read-only review, restricted environments, and the like.
 
-二者都以熟悉 Pi 的资源发现与 settings 概念为前提。profile 引用的是 Pi 自己的资源名，不清楚 Pi 里有哪些资源就无法定义 profile。
+Both presuppose familiarity with Pi's resource discovery and settings concepts. Profiles reference Pi's own resource names; you cannot define a profile without knowing which resources exist in Pi.
 
-## 设计原则
+## Design principles
 
-### Pi 兼容优先
+### Pi compatibility first
 
-profile 只改变它显式声明控制的东西，其余一切走 Pi 原生机制。
+A profile changes only what it explicitly declares control over; everything else goes through Pi's native mechanisms.
 
-原因是用户对 Pi 的行为预期不应因为装了一个 profile 包而改变，其他 Pi package 也不应被打断。代价是 profile 无法"顺手"修正 Pi 的行为：遇到 Pi 的限制只能报告，不能绕过。
+Rationale: a user's expectations of Pi's behavior should not change because they installed a profile package, and other Pi packages should not be disrupted. The cost is that a profile cannot "opportunistically" fix Pi's behavior: when Pi imposes a limit, the profile can only report it, not work around it.
 
-### 与 Pi 一致的极简
+### Minimalism consistent with Pi
 
-配置面尽可能小：优先发现而非注册，优先默认值而非必填字段，优先可行动的错误而非静默失败。
+Keep the configuration surface as small as possible: prefer discovery over registration, defaults over required fields, actionable errors over silent failures.
 
-原因是 Pi 本身极简，profile 层不该成为新的学习负担。代价是有些更顺手的方案会被拒绝——凡是需要额外配置文件或注册步骤的，即使更好用也不采用。
+Rationale: Pi itself is minimal, and the profile layer should not become a new learning burden. The cost is that some more convenient designs get rejected — anything requiring an extra configuration file or a registration step is not adopted, even if it feels nicer.
 
-## 产品目标
+## Product goals
 
-- 用命名 profile 组织 Pi 的工作方式，覆盖按任务、按项目、按权限三种切换动机。
-- 在同一个运行中的 Pi 会话内切换 profile，不重启进程。
-- 让 profile 引用既有资源而不复制，使资源维护只发生在一处。
-- 让项目级定义覆盖全局定义，离开项目后自动回到全局定义。
-- 让未被 profile 声明控制的 Pi 行为保持原样。
-- 安装后不需要先写配置就能用上 profile 带来的能力隔离。
+- Organize how Pi works through named profiles, covering all three switching motivations: by task, by project, by permission.
+- Switch profiles within the same running Pi session, without restarting the process.
+- Reference existing resources instead of copying them, so resource maintenance happens in exactly one place.
+- Let project-level definitions override global definitions, and automatically return to the global definitions after leaving the project.
+- Leave Pi behavior that no profile has declared control over untouched.
+- Be useful immediately after install — capability isolation without writing any configuration first.
 
-## 非目标
+## Non-goals
 
-- **不做 profile 继承与组合。** 没有 `extends`，没有深度合并，没有数组追加；同名 profile 是完整替换。继承一旦被用户依赖就难以回头，而定义自包含才能不解析父链就读懂。
-- **不复制资源。** profile 只按名字引用 skill、extension、MCP server 与 tool，从不保存副本。复制会把实现分叉成 N 份，并违背用户直接拥有自己资源的前提。
-- **不做 extension 依赖图。** 没有依赖声明、依赖闭包或常驻 extension 概念。Pi 本身没有这些概念，在 profile 层引入会把切换器变成半个包管理器。
-- **不做包管理器。** 不安装、不升级、不卸载 extension，只发现已安装的东西并从中筛选。
-- **不管理 MCP 连接参数与凭证。** server 地址、启动命令、OAuth 与 token 全部留在 `pi-mcp-adapter` 的配置里；profile 只声明启用哪些 server。
-- **不收窄项目级资源。** profile 的选择只作用于用户级资源（真实 agentDir 与 `~/.agents/skills`）。项目级 skill、extension、prompt、theme、settings 与 MCP server 由 Pi 的项目信任判定决定可见性，任何 profile 都不能藏起其中一项。原因是 Pi 的项目级开关是全或全无的，而"选中即生效"的范围必须落在 profile 有权处置的范围内；强行收窄会连带屏蔽不属于隔离面的项目内容，并让会话内切换失效（见 [架构](architecture/overview.md) 的过滤模型）。
-- **不改 Pi 默认行为。** 未被 profile 声明控制的设置、发现与会话行为一律按 Pi 原生规则工作。
+- **No profile inheritance or composition.** No `extends`, no deep merge, no array appending; a same-named profile is a complete replacement. Once users depend on inheritance there is no going back, and only self-contained definitions can be understood without resolving a parent chain.
+- **No resource copies.** A profile references skills, extensions, MCP servers, and tools by name and never stores copies. Copying would fork implementations into N variants and violates the premise that users directly own their resources.
+- **No extension dependency graph.** No dependency declarations, no dependency closure, no always-on extension concept. Pi itself has none of these; introducing them at the profile layer would turn the switcher into half a package manager.
+- **Not a package manager.** Does not install, upgrade, or uninstall extensions; only discovers what is already installed and filters from it.
+- **No MCP connection parameters or credentials.** Server addresses, start commands, OAuth, and tokens all stay in `pi-mcp-adapter`'s configuration; a profile only declares which servers are enabled.
+- **No narrowing of project-level resources.** A profile's selection applies only to user-level resources (the real agentDir and `~/.agents/skills`). The visibility of project-level skills, extensions, prompts, themes, settings, and MCP servers is decided by Pi's project-trust determination; no profile may hide any of them. Rationale: Pi's project-level switch is all-or-nothing, and the scope in which "selected means effective" must stay within what a profile is entitled to dispose of; forced narrowing would additionally block project content that is not part of the isolation surface and would break in-session switching (see the filtering model in [Architecture](architecture/overview.md)).
+- **No changes to Pi defaults.** Settings, discovery, and session behavior that no profile has declared control over work according to Pi's native rules.
 
-## 成功标准
+## Success criteria
 
-1. 用指定 profile 启动时，第一个 agent turn 只看到该 profile 选中的用户级资源，加上已在信任判定中放行的项目级资源；其余用户级资源不可见。
-2. 切换 profile 不重启 Pi 进程，当前 session 的 sessionId 与历史保持不变。
-3. 修改一个被多个 profile 引用的 skill 或 extension 后，这些 profile 在下一次启动或 reload 得到新内容，无需改动任何 profile 定义。
-4. profile 未声明 model、thinking level 或 instructions 时，激活后 Pi 的模型、thinking level 与 system prompt 与原生启动一致。
-5. 未安装 `pi-mcp-adapter` 时，不含 MCP server 声明的 profile 全部功能可用。
-6. profile 激活失败时不留下半激活状态，并给出可行动的原因。
+1. When launched with a given profile, the first agent turn sees only the user-level resources selected by that profile, plus the project-level resources admitted by the trust determination; all other user-level resources are invisible.
+2. Switching profiles does not restart the Pi process; the current session's sessionId and history remain unchanged.
+3. After modifying a skill or extension referenced by multiple profiles, those profiles pick up the new content on the next launch or reload without touching any profile definition.
+4. When a profile declares no model, thinking level, or instructions, Pi's model, thinking level, and system prompt after activation match a native launch.
+5. Without `pi-mcp-adapter` installed, every profile that declares no MCP servers remains fully functional.
+6. A failed profile activation leaves no half-activated state behind and reports an actionable cause.
 
-## 关联文档
+## Related documents
 
-[CONTEXT.md](../CONTEXT.md) · [openspec/specs/](../openspec/specs/) · [架构](architecture/overview.md) · [ADR](adr/) · [README](../README.md)
+[CONTEXT.md](../CONTEXT.md) · [openspec/specs/](../openspec/specs/) · [Architecture](architecture/overview.md) · [ADRs](adr/) · [README](../README.md)

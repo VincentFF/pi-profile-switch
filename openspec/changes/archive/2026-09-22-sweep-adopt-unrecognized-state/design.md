@@ -2,63 +2,63 @@
 
 ## Context
 
-现状与动机见 proposal.md。这里只列塑造方案的约束：
+Status quo and motivation in proposal.md. Only the constraints shaping the design are listed here:
 
-- ADR-0010 否决了无条件"回收时吸收"：pi-subagents 台账等第三方记录内嵌 instance 绝对路径（`recordPath`、`ownerSessionId`、artifacts 路径），搬走即 stale。否决的对象是"无条件"，不是"搬"。
-- 已观察案例 `mcp-cache.json`（pi-mcp-adapter 的跨 session 持久缓存，7 天 TTL）经字节扫描确认不含其所在 instance 路径——内嵌路径与否是机械可检测的。
-- 镜像阶段对真实 agentDir 已存在的每个名字建符号链接，因此"真实 agentDir 已有同名条目而 instance 内是实体"按构造只意味着：真实条目于该 instance 启动之后才出现（并发实例、原生 pi 运行、同次清扫先收养了兄弟实例的同名条目）。
-- 清扫在启动路径上执行，best-effort，任何失败不得阻塞启动。
+- ADR-0010 rejected unconditional "absorb on reclaim": third-party records such as pi-subagents' ledger embed instance absolute paths (`recordPath`, `ownerSessionId`, artifact paths), and moving them makes them stale. The rejection targeted "unconditional", not "moving".
+- The observed case `mcp-cache.json` (pi-mcp-adapter's cross-session persistent cache, 7-day TTL) was confirmed by byte scan to not contain its own instance path — whether a path is embedded is mechanically detectable.
+- Mirroring creates a symlink for every name already present in the real agentDir, so "the real agentDir has a same-named entry while the instance holds a physical one" can by construction only mean: the real entry appeared after that instance launched (concurrent instances, a native pi run, or an earlier sweep in the same run adopting a same-named entry from a sibling instance).
+- The sweep runs on the startup path, best-effort; no failure may block startup.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 位置无关的未识别状态零人工收敛：收养一次，下次启动经镜像转为符号链接，之后写入穿透进真实 agentDir，不再产生警告。
-- 内嵌 instance 路径的记录维持 ADR-0010 的保护：保留 + 警告，一个字节都不动。
-- 文件与目录共用同一条分流状态机。
+- Location-agnostic unrecognized state converges with zero manual work: adopted once, turned into a symlink by mirroring on the next launch, and subsequent writes pass through into the real agentDir — no more warnings.
+- Records embedding instance paths keep ADR-0010's protection: keep + warn, not one byte touched.
+- Files and directories share one routing state machine.
 
 **Non-Goals:**
 
-- 不做冲突合并：两棵树/两份内容的取舍规则就是"真实 agentDir 优先"，不引入 merge 策略（ADR-0010 对吸收方案的合并策略顾虑在此显式落地为"不合并"）。
-- 不做两侧内容比较：冲突分支直接删除 instance 副本。
-- `extensions/` 受管目录内部的陌生条目不参与收养，维持只警告。
-- 不改 seed 名单、镜像逻辑、pid 存活判定与宽限期。
+- No conflict merging: the trade-off rule between two trees/two contents is exactly "the real agentDir wins"; no merge strategy (ADR-0010's merge-strategy concern about absorption is explicitly landed here as "no merging").
+- No content comparison between the two sides: the conflict branch deletes the instance copy directly.
+- Unfamiliar entries inside the managed `extensions/` directory do not participate in adoption; warn-only stays.
+- No changes to the seed list, mirroring logic, pid liveness determination, or the grace period.
 
 ## Decisions
 
-### 分流判据：内容是否引用自身所在 instance 的路径
+### Routing criterion: whether the content references its own instance's path
 
-对待回收目录第一层的每个未识别条目（非常规类型如 socket/fifo 直接保留并警告），读取其字节内容（目录递归其全部成员）搜索该 instance 目录的绝对路径字符串。含 → 保留 + 警告；不含 → 按真实 agentDir 有无同名条目分流。扫描设体积/数量上限，超限视为无法判定，走保留 + 警告——判不了就不动，与 ADR-0010 的保守姿态一致。
+For each unrecognized entry at the first level of a reclaimable directory (unconventional types such as socket/fifo are kept and warned about directly), read its byte content (directories recursed over all members) and search for the instance directory's absolute path string. Found → keep + warn; not found → route by whether the real agentDir has a same-named entry. The scan has size/count limits; over-limit counts as undecidable and goes to keep + warn — when it cannot be judged, it is not touched, consistent with ADR-0010's conservative stance.
 
-选它而非名单：名单是对未来的预测，扩展改名即静默失效（ADR-0010 已否）；内容扫描对一切未来扩展成立，无需先验知识。选它而非内容比较：两侧 diff 回答的是"两副本是否一致"，而收养的安全性取决于"条目是否在意自己住在哪"，是另一个问题。
+Chosen over a list: a list is a prediction of the future and silently fails when an extension renames things (rejected by ADR-0010); content scanning holds for all future extensions without prior knowledge. Chosen over content comparison: a two-side diff answers "are the two copies identical", while adoption safety depends on "does the entry care where it lives" — a different question.
 
 ADR required: conditional-sweep-adoption
 
-### 冲突分支：real wins，直接删除，不比较
+### Conflict branch: real wins, direct deletion, no comparison
 
-真实 agentDir 已有同名条目时删除 instance 副本。依据：instance 是临时的、真实 agentDir 是权威——镜像的链接方向本身就表达了这个层级，冲突分支只是把它延伸到收养路径。字节比较买来的唯一东西是"相同则删得心安"，但相同的内容删了本就无损失；分歧情形限于上述竞态窗口，其丢失代价已在 proposal 中显式接受。
+When the real agentDir already has a same-named entry, the instance copy is deleted. Basis: the instance is temporary and the real agentDir is authoritative — the mirror's link direction itself expresses that hierarchy, and the conflict branch merely extends it to the adoption path. The only thing a byte comparison buys is "peace of mind when identical", but identical content deleted is no loss; divergent cases are confined to the race window above, whose loss cost was explicitly accepted in the proposal.
 
-被否的替代：分歧时保留 + 警告——把一个已有明确取舍规则的分支退回人工，警告会每次启动复发，正是本次要消除的困扰。
+Rejected alternative: keep + warn on divergence — returning a branch with an explicit trade-off rule to manual handling would make the warning recur on every launch, precisely the annoyance this change eliminates.
 
-### 文件与目录统一状态机
+### One state machine for files and directories
 
-收养动作对两者是同一个 rename；扫描谓词相同，目录只是递归（加上限后成本有界）。曾考虑目录冲突时保留 + 警告（目录冲突丢的是成员差集而非版本差），结论是不分叉：冲突窗口对两种形状同等罕见，且丢失代价已被接受；多分一支只是把罕见情形留在警告里腐烂。
+Adoption is the same rename for both; the scan predicate is identical, directories just recurse (cost bounded by the limits). Keeping + warning on directory conflicts was considered (a directory conflict loses a member diff, not a version diff); conclusion: no forking — the conflict window is equally rare for both shapes, the loss cost is accepted, and one more branch would only leave a rare case to rot inside a warning.
 
-### 动可见、不静默
+### Visible automation, never silent
 
-收养与删除各向 stderr 输出一行 notice（指明条目、去向或删除原因）。ADR-0010 的红线是"静默销毁"，自动但可见的处置不越线。
+Adoption and deletion each print a one-line notice to stderr (naming the entry and its destination or deletion reason). ADR-0010's red line is "silent destruction"; automatic but visible disposition does not cross it.
 
-### 实现落点
+### Implementation placement
 
-`src/launcher/runtime-cleanup.ts`：`unrecognizedEntries` 由"收集陌生名"改为"逐条目给出处置（adopt / delete / keep-warn）"，`sweepEntry` 执行处置并决定是否回收目录。扫描上限为实现内部常量，不进用户配置。
+`src/launcher/runtime-cleanup.ts`: `unrecognizedEntries` changes from "collect unfamiliar names" to "produce a disposition per entry (adopt / delete / keep-warn)", and `sweepEntry` executes the disposition and decides whether to reclaim the directory. Scan limits are internal implementation constants and never enter user configuration.
 
 ## Risks / Trade-offs
 
-- 扫描假阴性（路径被 gzip、URL 编码等形式藏住）→ 嵌路径记录被错误收养。后果上限等于用户按现行警告文本手动执行 mv 的同类后果，非新增伤害类别；缓解是上限内全量字节扫描 + 超限即保留。
-- 冲突窗口比"两个实例同时启动"宽：任何在真实条目出现之前启动的实例，其私有副本在它死后的下次清扫被删。已记录为已接受代价。
-- 目录递归扫描增加启动 I/O：仅作用于本来就要警告的死目录（罕见路径），上限保证有界。
-- 收养搬运跨设备问题：instance 根与真实 agentDir 同在 `$HOME` 下，rename 可用；失败按 best-effort 落入警告，不阻塞启动。
+- Scan false negatives (paths hidden by gzip, URL encoding, etc.) → path-embedding records get wrongly adopted. The consequence ceiling equals the user manually running `mv` per the current warning text — not a new category of harm; mitigation is full byte scanning within limits plus keep-on-overflow.
+- The conflict window is wider than "two instances launching simultaneously": for any instance launched before the real entry appeared, its private copy is deleted at the next sweep after its death. Recorded as an accepted cost.
+- Recursive directory scanning adds startup I/O: applies only to dead directories that would have been warned about anyway (a rare path), and limits keep it bounded.
+- Adoption moves can hit cross-device issues: the instance root and the real agentDir both live under `$HOME`, so rename works; failure degrades best-effort into a warning and does not block startup.
 
 ## Open Questions
 
-- 扫描上限的具体取值（总字节数 / 成员文件数）在实现时按常见扩展状态体积定；spec 只约定"超限即无法判定、保留并警告"，取值不影响行为契约与任务拆分。
+- The concrete scan-limit values (total bytes / member file count) will be set at implementation time based on common extension-state sizes; the spec only stipulates "over-limit means undecidable, keep and warn" — the values affect neither the behavior contract nor the task breakdown.

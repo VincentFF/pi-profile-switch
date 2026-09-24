@@ -2,76 +2,76 @@
 
 ## RENAMED Requirements
 
-- FROM: `### Requirement: 安装播种 starter profile`
-  TO: `### Requirement: 播种 starter profile`
-- FROM: `### Requirement: 安装分发 profile-config skill`
-  TO: `### Requirement: 分发 profile-config skill`
+- FROM: `### Requirement: Seeding the starter profile at install`
+  TO: `### Requirement: Seeding the starter profile`
+- FROM: `### Requirement: Distributing the profile-config skill at install`
+  TO: `### Requirement: Distributing the profile-config skill`
 
 ## MODIFIED Requirements
 
-### Requirement: 播种 starter profile
+### Requirement: Seeding the starter profile
 
-安装包时与 launcher 每次启动时，若全局 profiles 目录中尚无任何 profile 文件，系统 SHALL 写入随包提供的 starter profile 文件，其中定义一个名为 `ask` 的 profile。目录中已存在任何 profile 文件时 MUST NOT 覆盖。launcher 启动时的播种 SHALL 在解析初始 profile 之前完成，使播种结果对本次启动可见。播种失败 MUST NOT 使安装或启动失败， SHALL 降级为警告。
+When the package is installed and on every launcher startup, if the global profiles directory contains no profile file yet, the system SHALL write the starter profile file shipped with the package, defining a profile named `ask`. When any profile file already exists in the directory, it MUST NOT be overwritten. Seeding at launcher startup SHALL complete before the initial profile is resolved, so the seeded result is visible to this launch. Seeding failure MUST NOT fail the install or the launch and SHALL degrade to a warning.
 
-#### Scenario: 首次安装
+#### Scenario: First install
 
-- **WHEN** 全局 `profiles/` 目录不存在或其中没有任何 `.json` 文件
-- **THEN** 安装写入 starter profile 文件 `ask.json`
+- **WHEN** the global `profiles/` directory does not exist or contains no `.json` file
+- **THEN** the starter profile file `ask.json` is written
 
-#### Scenario: 已有 catalog
+#### Scenario: Existing catalog
 
-- **WHEN** 全局 `profiles/` 目录中已存在至少一个 `.json` 文件
-- **THEN** 不写入新文件，安装继续
+- **WHEN** the global `profiles/` directory already contains at least one `.json` file
+- **THEN** no new file is written and the install continues
 
-#### Scenario: 启动时补齐
+#### Scenario: Backfill at startup
 
-- **WHEN** launcher 启动，且全局 `profiles/` 目录中没有任何 `.json` 文件（如安装期播种被跳过）
-- **THEN** 启动流程写入 starter profile 文件 `ask.json`，且该 profile 对本次启动的初始 profile 解析可见
+- **WHEN** the launcher starts and the global `profiles/` directory contains no `.json` file (e.g. install-time seeding was skipped)
+- **THEN** the startup flow writes the starter profile file `ask.json`, and that profile is visible to this launch's initial profile resolution
 
-#### Scenario: 启动时不覆盖
+#### Scenario: No overwrite at startup
 
-- **WHEN** launcher 启动，且全局 `profiles/` 目录中已存在至少一个 `.json` 文件
-- **THEN** 不写入新文件，启动继续
+- **WHEN** the launcher starts and the global `profiles/` directory already contains at least one `.json` file
+- **THEN** no new file is written and startup continues
 
-#### Scenario: 启动时播种失败降级为警告
+#### Scenario: Startup seeding failure degrades to a warning
 
-- **WHEN** launcher 启动时播种写入失败（如目标目录不可写）
-- **THEN** 打印警告，启动继续
+- **WHEN** the seeding write fails at launcher startup (e.g. the target directory is not writable)
+- **THEN** a warning is printed and startup continues
 
-### Requirement: 分发 profile-config skill
+### Requirement: Distributing the profile-config skill
 
-安装包时与 launcher 每次启动时，系统 SHALL 把随包的 `profile-config` skill 写入用户 agentDir 的 `skills/profile-config/` 目录。该 skill 指导 agent 创建、修改与删除 profile 文件。
+When the package is installed and on every launcher startup, the system SHALL write the shipped `profile-config` skill into the user agentDir's `skills/profile-config/` directory. The skill guides the agent to create, modify, and delete profile files.
 
-该 skill 是普通用户级资源：系统 MUST NOT 为它引入过滤豁免或运行时特判；命名 profile 只在声明引用它时才包含它。
+The skill is an ordinary user-level resource: the system MUST NOT introduce filtering exemptions or runtime special-casing for it; a named profile includes it only when it declares a reference to it.
 
-已存在的 skill 文件内容与随包版本不同时 SHALL 覆写为随包版本；内容一致时不写入。分发失败 MUST NOT 使安装或启动失败，SHALL 降级为警告。
+When an existing skill file's content differs from the shipped version it SHALL be overwritten with the shipped version; when the content matches, nothing is written. Distribution failure MUST NOT fail the install or the launch and SHALL degrade to a warning.
 
-#### Scenario: 首次安装
+#### Scenario: First install
 
-- **WHEN** 用户 agentDir 的 `skills/` 下尚不存在 `profile-config`
-- **THEN** 安装写入随包的 skill 文件
+- **WHEN** `profile-config` does not yet exist under the user agentDir's `skills/`
+- **THEN** the install writes the shipped skill files
 
-#### Scenario: 升级覆写
+#### Scenario: Upgrade overwrite
 
-- **WHEN** 用户 agentDir 的 `skills/profile-config/` 已存在，且内容与随包版本不同
-- **THEN** 安装以随包版本覆写
+- **WHEN** the user agentDir's `skills/profile-config/` already exists and its content differs from the shipped version
+- **THEN** the install overwrites it with the shipped version
 
-#### Scenario: 分发失败降级为警告
+#### Scenario: Distribution failure degrades to a warning
 
-- **WHEN** 安装期写入 skill 文件失败（如目标目录不可写）
-- **THEN** 安装降级为警告继续，安装本身不失败
+- **WHEN** writing the skill files fails at install time (e.g. the target directory is not writable)
+- **THEN** the install degrades to a warning and continues; the install itself does not fail
 
-#### Scenario: 启动时补齐或同步
+#### Scenario: Backfill or sync at startup
 
-- **WHEN** launcher 启动，且用户 agentDir 的 `skills/profile-config/SKILL.md` 不存在或内容与随包版本不同（如安装期分发被跳过，或包已升级）
-- **THEN** 启动流程写入或覆写为随包版本，且该 skill 对本次会话可见
+- **WHEN** the launcher starts and the user agentDir's `skills/profile-config/SKILL.md` does not exist or its content differs from the shipped version (e.g. install-time distribution was skipped, or the package has been upgraded)
+- **THEN** the startup flow writes or overwrites it with the shipped version, and the skill is visible to this session
 
-#### Scenario: 启动时内容已一致
+#### Scenario: Content already in sync at startup
 
-- **WHEN** launcher 启动，且 `skills/profile-config/SKILL.md` 内容已与随包版本一致
-- **THEN** 不写入文件，启动继续
+- **WHEN** the launcher starts and `skills/profile-config/SKILL.md` content already matches the shipped version
+- **THEN** no file is written and startup continues
 
-#### Scenario: 启动时分发失败降级为警告
+#### Scenario: Startup distribution failure degrades to a warning
 
-- **WHEN** launcher 启动时写入 skill 文件失败（如目标目录不可写）
-- **THEN** 打印警告，启动继续
+- **WHEN** writing the skill files fails at launcher startup (e.g. the target directory is not writable)
+- **THEN** a warning is printed and startup continues

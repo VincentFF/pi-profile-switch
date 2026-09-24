@@ -12,8 +12,8 @@
  * launcher instead: `bin/pi-profile.ts` calls the runtime ensure
  * (src/starter-assets.ts) on every launch, before resolving the initial
  * profile. The authoritative behavior contract for both assets lives in
- * openspec/specs/profile-catalog/spec.md ("播种 starter profile" and
- * "分发 profile-config skill"); keep this script's rules in sync with
+ * openspec/specs/profile-catalog/spec.md ("Seeding the starter profile" and
+ * "Distributing the profile-config skill"); keep this script's rules in sync with
  * src/starter-assets.ts, which is the single TS implementation.
  *
  * Idempotent and conservative:

@@ -56,7 +56,7 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 			// dirs, Pi's own session storage, the state paths pi-profile seeds
 			// so that Pi writes them there instead of into the instance
 			// (ADR-0010), and the profile-config skill the launcher distributes on
-			// startup (spec: 分发 profile-config skill) — nothing else appears.
+			// startup (spec: Distributing the profile-config skill) — nothing else appears.
 			const agentDirAfter = await listFiles(fixture.agentDir);
 			const created = agentDirAfter.filter((file) => !agentDirBefore.includes(file));
 			for (const file of created) {

@@ -81,7 +81,7 @@ describe("installDefaultProfiles", () => {
 });
 
 describe("installProfileConfigSkill", () => {
-	it("Scenario: 首次安装 - writes shipped skill when skills/profile-config does not exist", async () => {
+	it("Scenario: First install - writes shipped skill when skills/profile-config does not exist", async () => {
 		const agentDir = path.join(root, "agent");
 		const shippedSkill = await readFile(path.resolve("skills/profile-config/SKILL.md"), "utf8");
 
@@ -93,7 +93,7 @@ describe("installProfileConfigSkill", () => {
 		expect(installed).toBe(shippedSkill);
 	});
 
-	it("Scenario: 升级覆写 - overwrites existing skill when content differs", async () => {
+	it("Scenario: Upgrade overwrite - overwrites existing skill when content differs", async () => {
 		const agentDir = path.join(root, "agent");
 		const targetDir = path.join(agentDir, "skills", "profile-config");
 		await mkdir(targetDir, { recursive: true });
@@ -109,7 +109,7 @@ describe("installProfileConfigSkill", () => {
 		expect(installed).toBe(shippedSkill);
 	});
 
-	it("Scenario: 分发失败降级为警告 - downgrades write failure to warning and does not throw", async () => {
+	it("Scenario: Distribution failure degrades to a warning - downgrades write failure to warning and does not throw", async () => {
 		const agentDir = path.join(root, "agent");
 		await mkdir(agentDir, { recursive: true });
 		// Create a regular file where the "skills" directory would be created, causing ENOTDIR

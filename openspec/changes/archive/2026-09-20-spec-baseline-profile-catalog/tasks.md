@@ -1,28 +1,28 @@
 # Tasks
 
-本变更不产出代码。下面每个任务都是把规范逐条对回实现，确认没有写出未实现的行为，也没有漏掉已实现的行为。
+This change produces no code. Each task below checks a specification item back against the implementation, confirming no unimplemented behavior was written and no implemented behavior was missed.
 
-## 1. 规范与实现一致性核对
+## 1. Specification-to-implementation consistency check
 
-- [x] 1.1 核对「Catalog 文件位置与发现」：读 `src/workspace.ts` 的 `getProfileSwitchDir`、`getGlobalProfilesPath`、`resolveGlobalProfilesPath`，确认首选路径、`PI_PROFILE_SWITCH_DIR` 覆盖、legacy 回退与「缺文件即空 catalog」四项均与规范一致
-- [x] 1.2 核对「Catalog 文件格式校验」与「Profile 定义字段」：读 `src/profile-catalog.ts` 的 `loadCatalogFile` 与 `parseProfileDefinition`，确认四条错误路径（JSON 无效、顶层非对象、schemaVersion 不符、profiles 非对象）与字段类型校验的报错内容一致
-- [x] 1.3 核对「内建 default profile」：读 `src/profile-catalog.ts` 中 `DEFAULT_PROFILE_NAME` 的三处处理（catalog 内定义时抛错、解析时返回 builtin、`resolve` 短路），确认与规范一致
-- [x] 1.4 核对「Profile 来源与项目覆盖」与「Profile 列表顺序」：读 `src/profile-catalog.ts` 的 `load` 与 `list`，确认项目条目覆盖全局、覆盖顺序、以及 `default` 在列表最前的实现
-- [x] 1.5 核对「项目信任门禁」：读 `src/switching/profile-crud.ts` 的 `requireScope` 与 `readCatalogScope`，确认未受信任时读返回空、写报错，且读路径不触碰文件
-- [x] 1.6 核对「Profile 创建、编辑与复制」与「Profile 删除」：读 `src/switching/profile-crud.ts` 的 `createProfile`、`editProfile`、`deleteProfile`、`duplicateProfile`，逐条确认六个失败条件与消息内容
-- [x] 1.7 核对「Catalog 写入」：读 `src/profile-catalog-store.ts` 的 `writeDefinitions` 与 `upsert`，确认整文件覆盖、只写已声明字段、以及写入前先校验再落盘
-- [x] 1.8 核对「安装播种 starter profile」：读 `bin/postinstall.js`，确认首次写入、已存在不覆盖、legacy 存在则跳过、失败不阻断安装四种情形
+- [x] 1.1 Check "Catalog file locations and discovery": read `getProfileSwitchDir`, `getGlobalProfilesPath`, `resolveGlobalProfilesPath` in `src/workspace.ts`; confirm the preferred path, `PI_PROFILE_SWITCH_DIR` override, legacy fallback, and "missing file means empty catalog" all match the specification
+- [x] 1.2 Check "Catalog file format validation" and "Profile definition fields": read `loadCatalogFile` and `parseProfileDefinition` in `src/profile-catalog.ts`; confirm the four error paths (invalid JSON, non-object top level, schemaVersion mismatch, non-object profiles) and the field-type validation error content match the specification
+- [x] 1.3 Check "Built-in default profile": read the three `DEFAULT_PROFILE_NAME` handling sites in `src/profile-catalog.ts` (throw when defined in a catalog, return builtin on resolution, `resolve` short-circuit); confirm consistency with the specification
+- [x] 1.4 Check "Profile sources and project override" and "Profile list ordering": read `load` and `list` in `src/profile-catalog.ts`; confirm project entries override global ones, the override order, and `default` at the front of the list
+- [x] 1.5 Check "Project trust gate": read `requireScope` and `readCatalogScope` in `src/switching/profile-crud.ts`; confirm reads return empty and writes error when untrusted, and the read path does not touch files
+- [x] 1.6 Check "Profile create, edit, and duplicate" and "Profile deletion": read `createProfile`, `editProfile`, `deleteProfile`, `duplicateProfile` in `src/switching/profile-crud.ts`; confirm the six failure conditions and message contents item by item
+- [x] 1.7 Check "Catalog writes": read `writeDefinitions` and `upsert` in `src/profile-catalog-store.ts`; confirm whole-file overwrite, only declared fields written, and validation before hitting disk
+- [x] 1.8 Check "Seeding the starter profile at install": read `bin/postinstall.js`; confirm the four cases: first-time write, no overwrite when present, skip when legacy exists, failure does not block install
 
-## 2. 规范质量校验
+## 2. Specification quality validation
 
-- [x] 2.1 运行 `openspec validate spec-baseline-profile-catalog --strict` 通过，确认无 requirement 缺少 scenario、无 scenario 标记数错误
-- [x] 2.2 逐条比对 `openspec/changes/spec-baseline-profile-catalog/specs/profile-catalog/spec.md` 与 `docs/architecture/overview.md`、`docs/adr/0003-no-profile-inheritance.md`、`docs/adr/0004-profiles-reference-shared-resources.md`，确认规范没有复述机制描述或决策论证
-- [x] 2.3 逐条核对规范用词与 `CONTEXT.md` 一致，确认未使用规避词（`preset`、`config`、`bundle`、`capability`、`session profile`、`temporary profile`、`built-in`、`内置`）
-- [x] 2.4 确认规范未出现实现类名与文件内部符号（如模块类名、内部函数名），只出现用户可见的文件路径与字段名
+- [x] 2.1 `openspec validate spec-baseline-profile-catalog --strict` passes; confirm no requirement lacks scenarios and no scenario-marker count errors
+- [x] 2.2 Compare `openspec/changes/spec-baseline-profile-catalog/specs/profile-catalog/spec.md` item by item against `docs/architecture/overview.md`, `docs/adr/0003-no-profile-inheritance.md`, and `docs/adr/0004-profiles-reference-shared-resources.md`; confirm the specification restates no mechanism descriptions or decision reasoning
+- [x] 2.3 Check the specification's wording against `CONTEXT.md` item by item; confirm no avoid-words are used (`preset`, `config`, `bundle`, `capability`, `session profile`, `temporary profile`, `built-in`)
+- [x] 2.4 Confirm no implementation class names or file-internal symbols (module class names, internal function names) appear in the specification — only user-visible file paths and field names
 
-## 3. 文档同步核对
+## 3. Documentation sync check
 
-- [x] 3.1 核对 `docs/prd.md`：确认本次没有改变定位、目标或非目标，无需改动
-- [x] 3.2 核对 `CONTEXT.md`：确认本次没有引入新术语或改变既有术语含义，无需改动
-- [x] 3.3 核对 `docs/architecture/overview.md`：确认本次没有改变模块边界、数据流或已知限制，无需改动
-- [x] 3.4 核对 `docs/adr/`：确认本次没有引入难以撤销的决策，无需新增 ADR
+- [x] 3.1 Check `docs/prd.md`: confirmed no change to positioning, goals, or non-goals; no edit needed
+- [x] 3.2 Check `CONTEXT.md`: confirmed no new terms and no changed meanings; no edit needed
+- [x] 3.3 Check `docs/architecture/overview.md`: confirmed no change to module boundaries, data flow, or known limitations; no edit needed
+- [x] 3.4 Check `docs/adr/`: confirmed no hard-to-reverse decision introduced; no new ADR needed

@@ -1,17 +1,17 @@
-# 不做 profile 继承
+# No profile inheritance
 
-## 背景
+## Context
 
-基于既有 profile 创建变体是常见需求。最省事的做法是让 profile 用 `extends` 指向一个父 profile，只写差异字段。
+Creating a variant from an existing profile is a common need. The most convenient approach is to let a profile point at a parent via `extends` and only write the differing fields.
 
-## 决策
+## Decision
 
-profile 不支持继承：没有 `extends`，没有深度合并，没有数组追加。项目同名 profile 完整替换全局同名 profile。需要变体时，在 CRUD 向导里复制完整定义并以新名字创建。
+Profiles do not support inheritance: no `extends`, no deep merge, no array appending. A project profile with the same name completely replaces the global one. To create a variant, copy the full definition in the CRUD wizard and save it under a new name.
 
-## 被否方案
+## Rejected alternatives
 
-**`extends` 加深度合并。** 否掉的理由：继承一旦被用户依赖就难以回头；每个定义自包含，才能不解析父链就读懂一个 profile 实际选了什么。
+**`extends` with deep merge.** Rejected because once users depend on inheritance there is no going back; only self-contained definitions let you understand what a profile actually selects without resolving a parent chain.
 
-## 代价
+## Consequences
 
-- 变体与原型重复字段，原型改动不会传播到变体。
+- Variants duplicate fields with their prototypes; changes to a prototype do not propagate to its variants.

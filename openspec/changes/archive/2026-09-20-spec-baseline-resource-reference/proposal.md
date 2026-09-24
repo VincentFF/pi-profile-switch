@@ -2,33 +2,33 @@
 
 ## Why
 
-`openspec/specs/` 里目前只有一个能力域的基线。`resource-reference` 是其余能力域的前置：profile 里的引用如何解析、解析失败时是阻塞还是警告、哪些工具在 spawn 前不可知，这些决定同时约束启动与切换两条路径。没有这份规范，改动引用解析的任何一处都只能靠读代码判断影响面。
+Only one capability domain's baseline exists in `openspec/specs/` so far. `resource-reference` is the prerequisite of the remaining domains: how references in a profile resolve, whether a resolution failure blocks or warns, and which tools are unknowable before spawn — these decisions constrain both the launch and switching paths at once. Without this specification, any change to reference resolution can only be assessed by reading code.
 
 ## What Changes
 
-- 新增 `resource-reference` 能力域的基线规范，覆盖 skill、extension、MCP server、tool 四类引用的发现与解析，以及 profile 级设置字段的解析校验。
-- 不改动代码。规范逐条取自 `src/skill-registry.ts`、`src/extension-discovery.ts`、`src/mcp-config.ts`、`src/profile-resolver.ts`、`src/switching/tool-references.ts`。
-- 不写设计文档。机制已由 `docs/architecture/overview.md` 的过滤模型与 ADR-0007、ADR-0008 承载；失败分级由 ADR-0009 承载，规范只陈述行为。
+- Add the baseline specification for the `resource-reference` capability domain, covering discovery and resolution of the four reference classes — skill, extension, MCP server, tool — plus resolution and validation of profile-level settings fields.
+- No code changes. The specification is taken item by item from `src/skill-registry.ts`, `src/extension-discovery.ts`, `src/mcp-config.ts`, `src/profile-resolver.ts`, and `src/switching/tool-references.ts`.
+- No design document. The mechanisms are carried by the filtering model in `docs/architecture/overview.md` and ADR-0007, ADR-0008; failure tiering is carried by ADR-0009. The specification only states behavior.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `resource-reference`: 四类引用的可引用形式与发现来源、引用解析的成功与失败语义、失败分级、以及 profile 级设置字段的校验。
+- `resource-reference`: the referenceable forms and discovery sources of the four reference classes, success and failure semantics of reference resolution, failure tiering, and validation of profile-level settings fields.
 
 ### Modified Capabilities
 
-（无）
+(none)
 
 ## Impact
 
-- 新增 `openspec/specs/resource-reference/spec.md`，归档时落地。
-- 代码零改动，不触碰 `src/`、`extensions/`、`bin/`、`test/`。
-- 后续变更依次为 `launcher` 与 `in-session-switch` 两个能力域建立基线。
+- Adds `openspec/specs/resource-reference/spec.md`, landed at archive time.
+- Zero code changes; `src/`, `extensions/`, `bin/`, and `test/` are untouched.
+- Follow-up changes establish baselines for the `launcher` and `in-session-switch` capability domains in turn.
 
 ## Doc Impact
 
-- `docs/architecture/overview.md`: **需要新增一条已知限制**。`src/skill-registry.ts` 排除项目范围的 package skill（其包装在项目 `.pi/npm` 下，生成的全局 settings 无法引用）。这条限制原先记录在 `docs/specs/initial-implementation/issues/03-project-catalogs-scope-state.md`，该文件已随 matt 体系删除，目前只剩代码注释。归档前写入「已知限制」段。
-- `docs/prd.md`: none。四类资源已在「产品目标」中覆盖；本变更不改变定位、目标或非目标。
-- `CONTEXT.md`: none。`Resource`、`SkillRegistry`、`ExtensionDiscovery`、`McpServerRegistry` 四个术语已有定义，规范使用它们而不新增术语。
-- `docs/adr/`: none。失败分级由 ADR-0009 承载，发现与入口枚举的归属分别由 ADR-0007、ADR-0008 承载，规范引用而不复制其论证。
+- `docs/architecture/overview.md`: **one known limitation needs adding**. `src/skill-registry.ts` excludes project-scope package skills (their packages live under the project `.pi/npm`, which generated global settings cannot reference). This limitation was previously recorded in `docs/specs/initial-implementation/issues/03-project-catalogs-scope-state.md`, a file deleted along with the matt system; only a code comment remains. Write it into "Known limitations" before archiving.
+- `docs/prd.md`: none. The four resource classes are already covered by "Product goals"; this change does not alter positioning, goals, or non-goals.
+- `CONTEXT.md`: none. The four terms `Resource`, `SkillRegistry`, `ExtensionDiscovery`, and `McpServerRegistry` are already defined; the specification uses them without adding terms.
+- `docs/adr/`: none. Failure tiering is carried by ADR-0009; ownership of discovery and entry enumeration by ADR-0007 and ADR-0008 respectively; the specification references rather than copies their reasoning.

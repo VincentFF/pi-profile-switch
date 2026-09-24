@@ -1,30 +1,30 @@
-# 纯发现过滤；退役 resources.json 与 ResourceRegistry
+# Discovery-only filtering; retiring resources.json and ResourceRegistry
 
-取代 ADR-0006。
+Supersedes ADR-0006.
 
-## 背景
+## Context
 
-ADR-0006 引入了 extension 自动发现，但保留了 `resources.json` 作为显式覆盖层，并带 `dependsOn`（依赖闭包与环检测）与 `alwaysOn`（不可禁用的系统 extension）。
+ADR-0006 introduced extension auto-discovery but kept `resources.json` as an explicit override layer, with `dependsOn` (dependency closure and cycle detection) and `alwaysOn` (system extensions that cannot be disabled).
 
-实践中的代价：
+The cost in practice:
 
-- Pi 本身没有 extension 依赖图，也没有常驻 extension 概念。在 pi-profile 内管理依赖，等于把自己变成临时包管理器。
-- `profiles.json` 与 `resources.json` 两个配置面，加上 `/profile resource [list|create|edit|delete]` 命令族，显著扩大了概念与 CLI 面积。
+- Pi itself has no extension dependency graph and no always-on extension concept. Managing dependencies inside pi-profile means turning it into an ad-hoc package manager.
+- Two configuration surfaces, `profiles.json` and `resources.json`, plus the `/profile resource [list|create|edit|delete]` command family, significantly expanded the concept and CLI surface.
 
-## 决策
+## Decision
 
-彻底退役 `resources.json`、`resources.schema.json` 与 `ResourceRegistry`。extension 采用与 skill 一致的纯「发现并过滤」模型：
+Retire `resources.json`, `resources.schema.json`, and `ResourceRegistry` completely. Extensions adopt the same pure "discover and filter" model as skills:
 
-1. 发现读取已安装的用户包与标准目录下的散装 extension 文件。
-2. profile 直接声明 extension 引用。解析是对已发现集合的纯过滤，没有依赖闭包，没有环检测。
-3. runtime overlay 可以禁用任意已解析的 extension，`alwaysOn` 限制被取消。
-4. `/profile resource *` 命令族及其向导被删除，`/profile` 只管理 profile。
+1. Discovery reads installed user packages and loose extension files in standard directories.
+2. Profiles declare extension references directly. Resolution is a pure filter over the discovered set — no dependency closure, no cycle detection.
+3. The runtime overlay may disable any resolved extension; the `alwaysOn` restriction is removed.
+4. The `/profile resource *` command family and its wizards are deleted; `/profile` manages profiles only.
 
-## 被否方案
+## Rejected alternatives
 
-**保留 `resources.json` 作为覆盖层**（ADR-0006 的设计）。否掉的理由见背景两条代价。
+**Keeping `resources.json` as an override layer** (ADR-0006's design). Rejected for the two costs in Context.
 
-## 代价
+## Consequences
 
-- extension 位于非标准路径时，只能由 profile 写绝对路径引用，不能再注册一个稳定 ID。
-- 没有依赖声明，profile 必须自己列全所需的 extension。
+- An extension at a non-standard path can only be referenced by a profile via absolute path; it can no longer be registered under a stable ID.
+- Without dependency declarations, a profile must list every extension it needs itself.

@@ -2,181 +2,181 @@
 
 ## Purpose
 
-定义 profile 能引用什么、这些引用如何解析、以及解析失败时哪些情况阻塞激活、哪些只产生警告。它是启动与切换两条路径共同的解析契约。
+Defines what a profile can reference, how those references resolve, and which resolution failures block activation versus only produce warnings. It is the shared resolution contract of both the launch and the switching paths.
 
 ## ADDED Requirements
 
-### Requirement: Skill 引用解析
+### Requirement: Skill reference resolution
 
-skill 引用的身份 SHALL 是 Pi 的 skill name。解析 SHALL 以只读方式取 Pi 自身的完整发现结果，MUST NOT 自行实现目录扫描，也 MUST NOT 因解析 profile 而执行任何 extension 代码或安装任何包。
+A skill reference's identity SHALL be Pi's skill name. Resolution SHALL take Pi's own complete discovery result in a read-only manner, MUST NOT implement directory scanning of its own, and MUST NOT execute any extension code or install any package because of resolving a profile.
 
-同名 skill SHALL 按 Pi 原有的发现优先级裁决。
+Same-named skills SHALL be adjudicated by Pi's existing discovery precedence.
 
-发现 SHALL 在每次解析时重新运行，因此新增或删除的 skill 在下一次启动或 reload 生效。
+Discovery SHALL run again on every resolution, so added or removed skills take effect on the next launch or reload.
 
-项目范围的 skill SHALL 只在项目已受信任时参与。由项目范围 package 提供的 skill MUST NOT 可引用。
+Project-scope skills SHALL participate only when the project is trusted. Skills provided by project-scope packages MUST NOT be referenceable.
 
-#### Scenario: skill 未匹配
+#### Scenario: Skill not matched
 
-- **WHEN** profile 声明一个字面量 skill 名，而发现结果中没有该名字
-- **THEN** 激活失败，错误指明该名字
+- **WHEN** a profile declares a literal skill name absent from the discovery result
+- **THEN** activation fails with an error identifying the name
 
-#### Scenario: 未受信任项目的 skill 不参与
+#### Scenario: Untrusted project's skills do not participate
 
-- **WHEN** 项目未受信任，且该项目目录下存在 skill
-- **THEN** 该 skill 不出现在可引用集合中，发现过程不扫描该项目
+- **WHEN** the project is untrusted and skills exist under the project directory
+- **THEN** those skills do not appear in the referenceable set and the discovery process does not scan that project
 
-### Requirement: Extension 引用解析
+### Requirement: Extension reference resolution
 
-extension 引用的可引用形式 SHALL 包括：包名、多入口包的 `<包名>:<相对路径>` 入口 ID、包 source 别名、标准扩展目录下散装文件的 ID、glob，以及绝对路径或 `~/` 路径。
+The referenceable forms of an extension reference SHALL include: package name, `<package>:<relative path>` entry ID of multi-entry packages, package source alias, IDs of loose files under standard extension directories, globs, and absolute or `~/` paths.
 
-散装文件 ID SHALL 是该文件在扩展目录下的相对路径去掉 `.ts` 或 `.js`；目录型 extension 的 `index.<ext>` SHALL 折叠为目录名。
+A loose file's ID SHALL be its path relative to the extension directory minus the `.ts` or `.js` suffix; a directory-style extension's `index.<ext>` SHALL collapse to the directory name.
 
-发现 SHALL 只读：MUST NOT 安装包、MUST NOT 联网、MUST NOT 改动文件系统、MUST NOT import extension 模块。
+Discovery SHALL be read-only: it MUST NOT install packages, MUST NOT touch the network, MUST NOT modify the filesystem, and MUST NOT import extension modules.
 
-#### Scenario: 包按包名或 source 别名选中
+#### Scenario: Package selected by package name or source alias
 
-- **WHEN** 已安装包含单个扩展入口，profile 引用其包名或其 source 别名
-- **THEN** 该包的入口被选中
+- **WHEN** an installed package has a single extension entry and the profile references its package name or its source alias
+- **THEN** that package's entry is selected
 
-#### Scenario: 多入口包按入口 ID 选中
+#### Scenario: Multi-entry package selected by entry ID
 
-- **WHEN** 已安装包含多个扩展入口，profile 引用 `<包名>:<相对路径>`
-- **THEN** 只有该入口被选中
+- **WHEN** an installed package has multiple extension entries and the profile references `<package>:<relative path>`
+- **THEN** only that entry is selected
 
-#### Scenario: 散装文件按 ID 选中
+#### Scenario: Loose file selected by ID
 
-- **WHEN** 扩展目录下有 `conventions.ts`，或 `sub/index.ts`
-- **THEN** 前者可由 `conventions` 引用，后者可由 `sub` 引用
+- **WHEN** the extension directory contains `conventions.ts`, or `sub/index.ts`
+- **THEN** the former is referenceable as `conventions` and the latter as `sub`
 
-### Requirement: Extension 引用的失败行为
+### Requirement: Failure behavior of extension references
 
-未知的字面量引用 SHALL 使激活失败，错误 SHALL 列出已发现的候选名字，并在存在相近名时给出提示。
+An unknown literal reference SHALL fail activation; the error SHALL list the discovered candidate names and provide near-miss hints when they exist.
 
-相对路径引用 SHALL 使激活失败，错误 SHALL 说明需要绝对路径或 `~/` 路径。
+A relative-path reference SHALL fail activation; the error SHALL explain that an absolute or `~/` path is required.
 
-路径引用 MUST 指向已存在的扩展文件；文件不存在时 SHALL 使激活失败。
+A path reference MUST point at an existing extension file; when the file does not exist it SHALL fail activation.
 
-包的全部入口都不可用时 SHALL 使激活失败，错误 SHALL 说明该包没有可用的扩展入口。
+When none of a package's entries is usable it SHALL fail activation; the error SHALL explain that the package declares no usable extension entries.
 
-glob 引用零匹配 SHALL NOT 阻塞激活。
+A zero-match glob reference SHALL NOT block activation.
 
-#### Scenario: 未知字面量引用
+#### Scenario: Unknown literal reference
 
-- **WHEN** profile 引用一个既不是包名、不是散装文件 ID、也不是已存在路径的名字
-- **THEN** 激活失败，错误列出已发现的候选并提供相近名提示
+- **WHEN** a profile references a name that is neither a package name, nor a loose-file ID, nor an existing path
+- **THEN** activation fails with an error listing the discovered candidates and providing near-miss hints
 
-#### Scenario: 相对路径引用
+#### Scenario: Relative-path reference
 
-- **WHEN** profile 以 `./local.ts` 引用 extension
-- **THEN** 激活失败，错误说明需要绝对路径或 `~/` 路径
+- **WHEN** a profile references an extension as `./local.ts`
+- **THEN** activation fails with an error explaining that an absolute or `~/` path is required
 
-#### Scenario: 包没有可用的扩展入口
+#### Scenario: Package has no usable extension entries
 
-- **WHEN** profile 引用一个已配置但其入口全部缺失或被过滤掉的包
-- **THEN** 激活失败，错误说明该包没有可用的扩展入口
+- **WHEN** a profile references a configured package whose entries are all missing or filtered out
+- **THEN** activation fails with an error explaining that the package declares no usable extension entries
 
-### Requirement: Extension ID 碰撞
+### Requirement: Extension ID collisions
 
-当散装文件与包名产生同一个 ID 时，散装文件 SHALL 胜出，系统 SHALL 记录一条警告，且该包 SHALL 仍可由 source 别名选中。
+When a loose file and a package name produce the same ID, the loose file SHALL win, the system SHALL log a warning, and the package SHALL remain selectable via its source alias.
 
-#### Scenario: 散装文件与包同名
+#### Scenario: Loose file with the same name as a package
 
-- **WHEN** 扩展目录下存在与已安装包同名的散装 extension
-- **THEN** 按该名字引用选中散装文件，产生一条警告，该包经 source 别名仍可选中
+- **WHEN** the extension directory contains a loose extension with the same name as an installed package
+- **THEN** referencing that name selects the loose file, produces a warning, and the package remains selectable via its source alias
 
-### Requirement: MCP server 引用解析与 adapter 依赖
+### Requirement: MCP server reference resolution and the adapter dependency
 
-MCP server 引用的身份 SHALL 是 `pi-mcp-adapter` 配置中已发现的 server 名。
+An MCP server reference's identity SHALL be a server name discovered in `pi-mcp-adapter` configuration.
 
-发现 SHALL 读取 adapter 识别的标准配置位置；项目范围的配置 SHALL 只在项目已受信任时读取。配置内容不合法时 SHALL 报错并指明文件路径，MUST NOT 静默读作「没有 server」。
+Discovery SHALL read the standard configuration locations recognized by the adapter; project-scope configuration SHALL be read only when the project is trusted. When configuration content is illegal the system SHALL report an error identifying the file path and MUST NOT silently read it as "no servers".
 
-profile 声明了 MCP server 而 adapter 发现结果不可用时 SHALL 使激活失败：这既包括 adapter 未激活，也包括无可用的 server 发现结果。
+When a profile declares MCP servers while the adapter's discovery result is unavailable, activation SHALL fail: this covers both the adapter being inactive and no usable server discovery result.
 
-未声明 MCP server 时，profile MUST NOT 因此依赖 adapter。
+A profile that declares no MCP servers MUST NOT depend on the adapter because of that.
 
-#### Scenario: 未受信任项目的 MCP 配置不参与
+#### Scenario: Untrusted project's MCP configuration does not participate
 
-- **WHEN** 项目未受信任，且该项目目录下存在 MCP 配置文件
-- **THEN** 该文件中的 server 不出现在可引用集合中，且该文件未被读取
+- **WHEN** the project is untrusted and an MCP configuration file exists under the project directory
+- **THEN** the servers in that file do not appear in the referenceable set and the file is not read
 
-#### Scenario: MCP 配置内容不合法
+#### Scenario: Illegal MCP configuration content
 
-- **WHEN** 某个标准位置的 MCP 配置不是合法 JSON，或不是对象
-- **THEN** 报错并指明该文件路径，不把它读作「没有 server」
+- **WHEN** an MCP configuration at a standard location is not legal JSON, or is not an object
+- **THEN** an error is reported identifying the file path, instead of reading it as "no servers"
 
-#### Scenario: 声明了 MCP server 但 adapter 不可用
+#### Scenario: MCP servers declared but adapter unavailable
 
-- **WHEN** profile 声明了 `mcps`，而 `pi-mcp-adapter` 未激活
-- **THEN** 激活失败，错误说明需要在 profile 的 extensions 中选中该 adapter，或移除 `mcps` 声明
+- **WHEN** a profile declares `mcps` while `pi-mcp-adapter` is not active
+- **THEN** activation fails with an error explaining that the adapter must be selected in the profile's extensions, or the `mcps` declaration must be removed
 
-#### Scenario: 未知 server 名
+#### Scenario: Unknown server name
 
-- **WHEN** profile 声明一个 adapter 未发现的 server 名
-- **THEN** 激活失败，错误指明该名字
+- **WHEN** a profile declares a server name the adapter has not discovered
+- **THEN** activation fails with an error identifying the name
 
-### Requirement: Tool 引用解析
+### Requirement: Tool reference resolution
 
-tool 引用的身份 SHALL 是 Pi 的工具名。引用 SHALL 对 Pi 当时的工具注册表展开。
+A tool reference's identity SHALL be Pi's tool name. References SHALL be expanded against Pi's tool registry at that moment.
 
-spawn 之前，解析 SHALL 只对内建工具名展开，因为 extension 贡献的工具在 extension 代码运行前不可知。session 启动后，扩展 SHALL 依据原始引用对包含 extension 与 MCP 工具在内的实时注册表重新展开。
+Before spawn, resolution SHALL expand only against built-in tool names, because tools contributed by extensions are unknowable until extension code runs. After session start, the extension SHALL re-expand the original references against the live registry that includes extension and MCP tools.
 
-未声明 `tools` 时，解析结果 MUST NOT 含 tools 字段，Pi 当前的可用工具集合 SHALL 保持不变。
+When `tools` is undeclared, the resolution result MUST NOT contain a tools field and Pi's current available tool set SHALL remain unchanged.
 
-字面量 tool 引用 SHALL NOT 在解析阶段校验或记录；未提供该工具的字面量 SHALL 由 session 启动后的展开报告，MUST NOT 静默丢弃。
+Literal tool references SHALL NOT be validated or recorded at resolution time; literals for which no tool is provided SHALL be reported by the post-session-start expansion and MUST NOT be silently dropped.
 
-#### Scenario: spawn 前只展开内建工具
+#### Scenario: Only built-in tools expanded before spawn
 
-- **WHEN** profile 声明一个只匹配 extension 贡献工具的 glob
-- **THEN** spawn 前的解析不包含该 glob 的任何结果，也不因此失败
+- **WHEN** a profile declares a glob that only matches extension-contributed tools
+- **THEN** the pre-spawn resolution contains no results for that glob and does not fail because of it
 
-#### Scenario: session 启动后展开实时注册表
+#### Scenario: Live registry expansion after session start
 
-- **WHEN** session 启动，extension 依据原始引用对实时注册表展开
-- **THEN** glob 覆盖 extension 与 MCP 提供的工具，未提供对应工具的字面量被报告出来
+- **WHEN** the session starts and the extension expands the original references against the live registry
+- **THEN** globs cover tools provided by extensions and MCP, and literals without a corresponding tool are reported
 
-#### Scenario: 未声明 tools
+#### Scenario: tools undeclared
 
-- **WHEN** profile 不声明 `tools`
-- **THEN** 解析结果不含 tools 字段，Pi 当前的可用工具集合不被改动
+- **WHEN** a profile does not declare `tools`
+- **THEN** the resolution result contains no tools field and Pi's current available tool set is not modified
 
-### Requirement: Profile 级设置字段的解析与校验
+### Requirement: Resolution and validation of profile-level settings fields
 
-`defaultProvider`、`defaultModel`、`defaultThinkingLevel` 与 `instructions` SHALL 全部可选。未声明的字段 MUST NOT 进入解析结果。
+`defaultProvider`, `defaultModel`, `defaultThinkingLevel`, and `instructions` SHALL all be optional. Undeclared fields MUST NOT enter the resolution result.
 
-`defaultProvider` 与 `defaultModel` SHALL 同时声明才构成模型声明。只声明其中一时，模型声明不成立，且 `defaultThinkingLevel` 随之被忽略。
+`defaultProvider` and `defaultModel` constitute a model declaration only when declared together. When only one is declared, the model declaration does not hold and `defaultThinkingLevel` is ignored along with it.
 
-模型声明成立时，`defaultThinkingLevel` SHALL 取自固定集合，不在集合内时 SHALL 使激活失败；模型 SHALL 校验存在且已认证，校验不通过或无可用的校验手段时 SHALL 使激活失败，MUST NOT 跳过校验。
+When the model declaration holds, `defaultThinkingLevel` SHALL come from a fixed set; a value outside the set SHALL fail activation. The model SHALL be validated to exist and be authenticated; failed validation, or the absence of any usable validation means, SHALL fail activation and MUST NOT be skipped.
 
-#### Scenario: thinkingLevel 不合法
+#### Scenario: Illegal thinkingLevel
 
-- **WHEN** profile 同时声明 `defaultProvider`、`defaultModel` 与一个不在允许集合内的 `defaultThinkingLevel`
-- **THEN** 激活失败，错误指明该值
+- **WHEN** a profile declares `defaultProvider`, `defaultModel`, and a `defaultThinkingLevel` outside the allowed set
+- **THEN** activation fails with an error identifying the value
 
-#### Scenario: 只声明 thinkingLevel
+#### Scenario: Only thinkingLevel declared
 
-- **WHEN** profile 声明 `defaultThinkingLevel` 但不声明 `defaultProvider` 与 `defaultModel`
-- **THEN** 该 thinking level 被忽略，既不校验也不生效，Pi 当前的 thinking level 保持不变
+- **WHEN** a profile declares `defaultThinkingLevel` without `defaultProvider` and `defaultModel`
+- **THEN** the thinking level is ignored — neither validated nor effective — and Pi's current thinking level remains unchanged
 
-#### Scenario: 声明的模型校验失败
+#### Scenario: Declared model fails validation
 
-- **WHEN** profile 声明的模型不存在或未认证
-- **THEN** 激活失败，错误指明该模型与失败原因
+- **WHEN** the model declared by the profile does not exist or is not authenticated
+- **THEN** activation fails with an error identifying the model and the failure reason
 
-#### Scenario: 无校验手段时不跳过校验
+#### Scenario: Validation not skipped when no validation means
 
-- **WHEN** profile 声明了模型，而调用方未提供模型校验能力
-- **THEN** 激活失败，不按已通过处理
+- **WHEN** a profile declares a model and the caller provides no model-validation capability
+- **THEN** activation fails instead of being treated as passed
 
-### Requirement: 引用失败的统一分级
+### Requirement: Unified failure tiering for references
 
-引用解析 SHALL 按错误的确定性分级，MUST NOT 静默丢弃任何引用。
+Reference resolution SHALL be tiered by error certainty and MUST NOT silently drop any reference.
 
-未匹配的字面量 SHALL 使激活失败。零匹配的 glob SHALL 被收集为警告项，随启动输出与状态查询可见，不阻塞激活。
+An unmatched literal SHALL fail activation. A zero-match glob SHALL be collected as a warning item, visible in launch output and status queries, without blocking activation.
 
-tool 是唯一例外：它的引用在 spawn 前不可知，因此既不因未匹配而失败，也不作为警告项记录。
+Tools are the only exception: their references are unknowable before spawn, so they neither fail on a miss nor get recorded as warning items.
 
-#### Scenario: 字面量与 glob 的不同结果
+#### Scenario: Different outcomes for literals and globs
 
-- **WHEN** profile 同时引用一个不存在的字面量 skill 名与一个零匹配的 skill glob
-- **THEN** 激活因字面量失败，而 glob 本身只会产生警告项
+- **WHEN** a profile references both a nonexistent literal skill name and a zero-match skill glob
+- **THEN** activation fails because of the literal, while the glob itself only produces a warning item

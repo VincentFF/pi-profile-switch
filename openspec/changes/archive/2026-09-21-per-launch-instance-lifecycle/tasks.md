@@ -1,40 +1,40 @@
 # Tasks
 
-## 1. instance 生成改为 per-launch
+## 1. Instance generation becomes per-launch
 
-- [x] 1.1 `src/settings-generator.ts` 的 `generateRuntimeDir` 改为在 instance 根下创建唯一目录（`launch-` 前缀，随机标识），返回的 `runtimeDir` 即交给 Pi 的 agentDir；验证：`test/settings-generator.test.ts` 的路径用例改为断言目录位于 instance 根下、且两次生成的路径不同，`npm test` 通过
-- [x] 1.2 `src/settings-generator.ts` 在镜像前 seed 真实 agentDir 的 `missions` 目录（缺失时 `mkdir`，已存在时不动，不写入内容）；验证：新增用例断言首次生成后真实 agentDir 下出现该目录、instance 内是指向它的软链，第二次生成后目录内容不变
-- [x] 1.3 `bin/pi-profile.ts` 的清扫调用改为在生成本次 instance 之前针对 instance 根执行；验证：手动启动一次后 `instances/` 下只保留本次的 `launch-*` 目录
-- [x] 1.4 核对 `src/workspace.ts` 的 `getInstancesRootDir` 与注释仍与 per-launch 语义一致，确认无需改动；验证：`npm run check` 通过
-- [x] 1.5 `src/settings-generator.ts` 把 Pi 运行时创建的状态文件（`auth.json`、`models-store.json`）以允许悬空的软链 seed 进 instance，且 seed 步骤位于失效链接清理之后；验证：`test/settings-generator.test.ts` 断言悬空软链存在、写入穿透到真实 agentDir、就地重写后链接仍在
-- [x] 1.6 集成验证真实启动的落点；验证：`test/instance-lifecycle.integration.test.ts` 断言启动后 instance 内两者是软链、且真实 agentDir 得到这两个文件
+- [x] 1.1 Change `generateRuntimeDir` in `src/settings-generator.ts` to create a unique directory under the instance root (`launch-` prefix, random id); the returned `runtimeDir` is the agentDir handed to Pi. Verification: path cases in `test/settings-generator.test.ts` changed to assert the directory lives under the instance root and that two generations produce different paths; `npm test` passes
+- [x] 1.2 `src/settings-generator.ts` seeds the real agentDir's `missions` directory before mirroring (`mkdir` when missing, untouched when present, never writes content). Verification: a new case asserts the directory appears under the real agentDir after the first generation, the in-instance entry is a symlink to it, and the directory content is unchanged after the second generation
+- [x] 1.3 The sweep invocation in `bin/pi-profile.ts` changes to run against the instance root before generating this run's instance. Verification: after one manual launch, only this run's `launch-*` directory remains under `instances/`
+- [x] 1.4 Confirm `getInstancesRootDir` and its comment in `src/workspace.ts` still match per-launch semantics; no change needed. Verification: `npm run check` passes
+- [x] 1.5 `src/settings-generator.ts` seeds the state files Pi creates at runtime (`auth.json`, `models-store.json`) into the instance as dangling-tolerant symlinks, with the seed step placed after broken-link cleanup. Verification: `test/settings-generator.test.ts` asserts the dangling symlinks exist, writes pass through to the real agentDir, and the links survive an in-place rewrite
+- [x] 1.6 Integration-verify the landing spots of a real launch. Verification: `test/instance-lifecycle.integration.test.ts` asserts both are symlinks inside the instance after launch and the real agentDir receives the two files
 
-## 2. 清扫与未识别条目保护
+## 2. Sweep and unrecognized-entry protection
 
-- [x] 2.1 `src/launcher/runtime-cleanup.ts` 的清扫根改为 `<PI_PROFILE_SWITCH_DIR>/instances`，只处理 `launch-` 前缀目录；验证：`test/runtime-cleanup.test.ts` 覆盖 pid 存活保留、pid 已退出回收、无 pid 且超宽限期回收、无 pid 且在宽限期内保留四种判定
-- [x] 2.2 实现未识别条目判定（既不是符号链接，也不是受管生成物，含受管目录内部的条目）；命中时保留目录并把警告（点名目录、条目、可处置方式）交给调用方输出到 stderr；验证：新增用例断言含野生目录的 instance 不被删除且产生警告
-- [x] 2.3 回归：判定 MUST NOT 使用"真实 agentDir 已有同名条目"作为可删除条件；验证：新增用例在真实 agentDir 已存在 `missions` 的情况下，断言含同名真实目录的 instance 仍被保留
-- [x] 2.4 边界：instance 根下非 `launch-` 形态的目录不被删除也不影响本次启动；验证：新增用例放入一个其他形态目录，断言清扫后它仍存在
-- [x] 2.5 清扫尽力而为：单个目录出错不中断其余目录与本次启动；验证：新增用例让一个目录不可读，断言其余死目录仍被回收、函数不抛错
-- [x] 2.6 核对 `src/launcher/spawn.ts` 未新增退出时删除逻辑；验证：读该文件确认 `finally` 分支只移除信号处理器
+- [x] 2.1 Change the sweep root of `src/launcher/runtime-cleanup.ts` to `<PI_PROFILE_SWITCH_DIR>/instances`, handling only `launch-`-prefixed directories. Verification: `test/runtime-cleanup.test.ts` covers the four determinations — keep when pid alive, reclaim when pid exited, reclaim when no pid and beyond the grace period, keep when no pid and within the grace period
+- [x] 2.2 Implement unrecognized-entry determination (neither a symlink nor a managed generated artifact, including entries inside managed directories); on a hit, keep the directory and hand the warning (naming the directory, the entries, and available dispositions) to the caller for stderr output. Verification: a new case asserts an instance containing a wild directory is not deleted and a warning is produced
+- [x] 2.3 Regression: the determination MUST NOT use "a same-named entry exists in the real agentDir" as a deletable condition. Verification: a new case asserts an instance containing a real directory named `missions` is still kept when the real agentDir already has `missions`
+- [x] 2.4 Boundary: directories under the instance root not in `launch-` shape are neither deleted nor affect this launch. Verification: a new case places a directory of another shape and asserts it still exists after the sweep
+- [x] 2.5 Sweep is best-effort: an error in one directory interrupts neither the other directories nor this launch. Verification: a new case makes one directory unreadable and asserts the remaining dead directories are still reclaimed and the function does not throw
+- [x] 2.6 Confirm no exit-time deletion logic was added to `src/launcher/spawn.ts`. Verification: read the file and confirm the `finally` branch only removes signal handlers
 
-## 3. 测试与集成
+## 3. Tests and integration
 
-- [x] 3.1 `test/settings-generator.test.ts`、`test/project-scope.integration.test.ts`、`test/mcp.integration.test.ts` 中硬编码 `instances/<profile>/agent` 的断言改为在 `PI_PROFILE_SWITCH_DIR` 下发现本次唯一的 `launch-*` 目录；验证：`npm test` 通过
-- [x] 3.2 集成验证并发语义：同一 profile 两次启动使用不同 instance 路径；验证：新增集成用例断言两次启动的 `PI_CODING_AGENT_DIR` 不同且各自文件不被对方改写
-- [x] 3.3 全量校验；验证：`npm run check` 与 `npm test` 全绿
+- [x] 3.1 Assertions hardcoding `instances/<profile>/agent` in `test/settings-generator.test.ts`, `test/project-scope.integration.test.ts`, `test/mcp.integration.test.ts` changed to discovering this run's unique `launch-*` directory under `PI_PROFILE_SWITCH_DIR`. Verification: `npm test` passes
+- [x] 3.2 Integration-verify concurrency semantics: two launches of the same profile use different instance paths. Verification: a new integration case asserts the two launches' `PI_CODING_AGENT_DIR` differ and neither's files are rewritten by the other
+- [x] 3.3 Full validation. Verification: `npm run check` and `npm test` all green
 
-## 4. Doc Impact 落地
+## 4. Doc Impact follow-through
 
-- [x] 4.1 改写 `docs/architecture/overview.md` 的「运行目录」整段：路径形态改为每次启动唯一目录、`pid` 位置、seed 规则、清扫规则，并同步受管文件表
-- [x] 4.2 改写 `docs/architecture/overview.md` 的「已知限制」：删除"instance 路径固定导致并发互相重写""已删除或改名 profile 的 instance 目录不被清理"两处，新增一行"0.4.x 遗留 instance 目录不被新清扫触及，需用户自行处置"
-- [x] 4.3 在 `docs/architecture/overview.md` 增补 seed 名单小表（当前仅 `missions`），并注明"加条目必须有观察证据，不能靠推断"
-- [x] 4.4 新增 `docs/adr/0010-per-launch-instance-lifecycle.md`（已随本变更落盘）；验证：其决策与 `design.md` 一致，apply 阶段若有设计修订需同步更新该文件
-- [x] 4.5 核对 `docs/prd.md` 与 `CONTEXT.md` 确实无需改动（`instance` 定义已描述 per-launch）；验证：`git diff --stat` 显示这两个文件未被触碰
-- [x] 4.6 运行 `openspec validate per-launch-instance-lifecycle --strict` 通过
+- [x] 4.1 Rewrite the whole "Runtime directory" section of `docs/architecture/overview.md`: path shape becomes a unique directory per launch, `pid` location, seed rules, sweep rules, and the managed file table synced
+- [x] 4.2 Rewrite "Known limitations" in `docs/architecture/overview.md`: remove "fixed instance path causes concurrent launches to rewrite each other" and "instance directories of deleted or renamed profiles are not cleaned"; add one row "legacy 0.4.x instance directories are untouched by the new sweep; users dispose of them manually"
+- [x] 4.3 Add the seed list table to `docs/architecture/overview.md` (currently only `missions`), noting "entries require observed evidence, not inference"
+- [x] 4.4 Add `docs/adr/0010-per-launch-instance-lifecycle.md` (landed with this change). Verification: its decisions match `design.md`; if the design is revised during apply, update that file in sync
+- [x] 4.5 Confirm `docs/prd.md` and `CONTEXT.md` genuinely need no changes (the `instance` definition already describes per-launch). Verification: `git diff --stat` shows these two files untouched
+- [x] 4.6 `openspec validate per-launch-instance-lifecycle --strict` passes
 
-## 5. 本变更范围外
+## 5. Out of scope for this change
 
-- 0.4.x 的 `instances/<profile>/agent` 与 0.1–0.3 的 `<agentDir>/pi-profile/runtime/launch-*` 不迁移、不清理，也不做兼容清扫。
-- 受管目录内部的第三方状态（如 `extensions/subagent/config.json`）不做内层 seed；`chains` 等未经观察的第三方状态目录不进 seed 名单，出现未识别条目时由 2.2 的警告点名。
-- 退出时删除 instance 目录不在本变更内；回收只由启动清扫承担。
+- 0.4.x's `instances/<profile>/agent` and 0.1–0.3's `<agentDir>/pi-profile/runtime/launch-*` are neither migrated nor cleaned, and no compatibility sweep is done.
+- Third-party state inside managed directories (e.g. `extensions/subagent/config.json`) gets no inner seed; unobserved third-party state directories such as `chains` do not enter the seed list — when they surface as unrecognized entries, 2.2's warning names them.
+- Deleting instance directories at exit is not in this change; reclamation is carried solely by the startup sweep.

@@ -2,34 +2,34 @@
 
 ## Why
 
-会话内切换是用户日常接触最多的一层，也是失败代价最高的一层：切换要求重写正在运行的进程所依赖的运行时文件。回滚、overlay 的作用边界、以及状态写在 reload 之后而非之前，这三条决定了失败时是否会留下半切换的 runtime，目前只写在代码注释里。
+In-session switching is the layer users touch most often and the layer with the highest failure cost: switching means rewriting the runtime files a running process depends on. Rollback, the overlay's scope of effect, and state being written after reload rather than before — these three decide whether a failure leaves a half-switched runtime, and they currently exist only in code comments.
 
 ## What Changes
 
-- 新增 `in-session-switch` 能力域的基线规范，覆盖 `/profile` 命令族与模式门禁、切换与 reload 流程、失败回滚、session start 的 plan 应用与变更摘要、runtime overlay、运行时状态文件、观层面（选择器、`list`、`status`）以及 CRUD 的会话内效果。
-- 不改动代码。规范逐条取自 `extensions/pi-profile/index.ts` 与 `src/switching/`、`src/runtime-state-store.ts`。
-- 不写设计文档。reload 与生成式 settings 的机制由 `docs/architecture/overview.md` 的「激活流程」与 ADR-0005 承载。
+- Add the baseline specification for the `in-session-switch` capability domain, covering the `/profile` command family and mode gating, the switch and reload flow, failure rollback, plan application and the change summary at session start, the runtime overlay, the runtime state file, the observability surface (selector, `list`, `status`), and CRUD's in-session effects.
+- No code changes. The specification is taken item by item from `extensions/pi-profile/index.ts`, `src/switching/`, and `src/runtime-state-store.ts`.
+- No design document. The mechanisms of reload and generated settings are carried by "Activation flow" in `docs/architecture/overview.md` and by ADR-0005.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `in-session-switch`: Pi 进程内 `/profile` 命令族的可观察行为——切换与 reload 的时序与失败语义、overlay 的作用范围、运行时状态的位置与合并规则、以及观测与 CRUD 命令对运行时的影响。
+- `in-session-switch`: the observable behavior of the `/profile` command family inside the Pi process — sequencing and failure semantics of switch and reload, the overlay's scope, the location and merge rules of runtime state, and the runtime effects of observability and CRUD commands.
 
 ### Modified Capabilities
 
-（无）
+(none)
 
 ## Impact
 
-- 新增 `openspec/specs/in-session-switch/spec.md`，归档时落地。
-- 代码零改动，不触碰 `src/`、`extensions/`、`bin/`、`test/`。
-- CRUD 的写入语义（失败条件、scope 归属、并发覆盖）已在 `profile-catalog` 能力域规范中，本规范只覆盖它对运行时的**影响**，不重复其写入规则。
-- 本变更为四个能力域基线的最后一块。
+- Adds `openspec/specs/in-session-switch/spec.md`, landed at archive time.
+- Zero code changes; `src/`, `extensions/`, `bin/`, and `test/` are untouched.
+- CRUD's write semantics (failure conditions, scope ownership, concurrent overwrite) already live in the `profile-catalog` capability specification; this specification covers only their **effects** on the runtime and does not repeat the write rules.
+- This change is the final piece of the four capability-domain baselines.
 
 ## Doc Impact
 
-- `docs/prd.md`: none。「切换不重启进程」「overlay 是临时调整且不写 catalog」「切换保留 session」已在产品目标与运行语义中覆盖，本变更不改变定位、目标或非目标。
-- `docs/architecture/overview.md`: none。「激活流程」的会话内切换段与「已知限制」已描述本能力域的机制与偏离；规范只补充可验证行为。
-- `CONTEXT.md`: none。`RuntimeOverlay`、`Runtime state`、`ActivationPlan`、`Runtime reload` 已有定义，规范使用它们而不新增术语。
-- `docs/adr/`: none。本变更不引入难以撤销的决策；reload 机制由 ADR-0005 承载。
+- `docs/prd.md`: none. "Switching without process restart", "the overlay is a temporary adjustment that does not touch the catalog", and "switching preserves the session" are already covered by the product goals and runtime semantics; this change does not alter positioning, goals, or non-goals.
+- `docs/architecture/overview.md`: none. The in-session switching part of "Activation flow" and "Known limitations" already describe this domain's mechanism and deviations; the specification only adds verifiable behavior.
+- `CONTEXT.md`: none. `RuntimeOverlay`, `Runtime state`, `ActivationPlan`, and `Runtime reload` are already defined; the specification uses them without adding terms.
+- `docs/adr/`: none. This change introduces no hard-to-reverse decision; the reload mechanism is carried by ADR-0005.

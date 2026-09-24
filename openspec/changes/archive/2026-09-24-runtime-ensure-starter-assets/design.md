@@ -2,90 +2,90 @@
 
 ## Context
 
-动机见 proposal.md 的「Why」。塑造方案的当前状态与约束：
+Motivation in "Why" of `proposal.md`. The current state and constraints shaping the design:
 
-- `bin/postinstall.js` 必须是纯 Node ESM（npm postinstall 环境限制，文件头有注明），其中 agentDir 解析镜像 Pi 的 `getAgentDir()`，遵循「keep in sync」注释约定。
-- launcher `bin/pi-profile.ts` 直接 import Pi 的 `getAgentDir()` 与本包的 `getGlobalProfilesDir()`，运行时无需镜像。
-- extension（`extensions/pi-profile/index.ts`）在 `PI_CODING_AGENT_DIR` 缺失时直接早退——launcher 是每个会话的唯一入口，instance 在 launcher 内生成。
-- 随包资产 `examples/ask.json` 与 `skills/profile-config/SKILL.md` 均在 `package.json` 的 `files` 中，发布包与开发仓库都可用。
+- `bin/postinstall.js` must be plain Node ESM (an npm postinstall environment constraint, noted in the file header); its agentDir resolution mirrors Pi's `getAgentDir()`, following the "keep in sync" comment convention.
+- The launcher `bin/pi-profile.ts` directly imports Pi's `getAgentDir()` and this package's `getGlobalProfilesDir()`; no mirroring is needed at runtime.
+- The extension (`extensions/pi-profile/index.ts`) early-returns directly when `PI_CODING_AGENT_DIR` is absent — the launcher is every session's single entry point, and the instance is generated inside the launcher.
+- The shipped assets `examples/ask.json` and `skills/profile-config/SKILL.md` are both in `package.json`'s `files`, available in published packages and the development repo alike.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 分发保证：只要用户经 launcher 启动一次，starter profile 与 `profile-config` skill 必就位（规则同 postinstall）。
-- 单一 TS 实现，幂等，开销限于 stat/内容比较；失败永不阻塞启动。
+- Distribution guarantee: once the user starts through the launcher even once, the starter profile and the `profile-config` skill are in place (same rules as postinstall).
+- A single TS implementation, idempotent, cost limited to stat/content comparison; failures never block startup.
 
 **Non-Goals:**
 
-- 不删除 postinstall（降级为提前优化，见 Decisions）。
-- 不在 extension `session_start` 加第二个 ensure 点。
-- 不做卸载清理（沿用既有「卸载后可能残留，接受不清理」的立场）。
-- 不新增用户可见配置字段。
+- Not deleting postinstall (demoted to an early optimization, see Decisions).
+- No second ensure point in the extension's `session_start`.
+- No uninstall cleanup (keeping the existing "residue after uninstall is possible and accepted" stance).
+- No new user-visible configuration fields.
 
 ## Decisions
 
-### D1：新增 `src/starter-assets.ts`，导出面
+### D1: New `src/starter-assets.ts`, export surface
 
 ```ts
 export interface StarterAssetFileResult {
-	/** 目标文件绝对路径 */
+	/** Absolute path of the target file */
 	path: string;
-	/** 本次调用是否发生了写入 */
+	/** Whether this call performed a write */
 	written: boolean;
 }
 
 export interface StarterAssetsResult {
 	profile: StarterAssetFileResult;
 	skill: StarterAssetFileResult;
-	/** 人类可读的降级警告；为空表示全部成功或无操作 */
+	/** Human-readable degradation warnings; empty means all succeeded or no-op */
 	warnings: string[];
 }
 
 export async function ensureStarterAssets(options?: {
-	/** 默认 getGlobalProfilesDir()；测试注入 */
+	/** Defaults to getGlobalProfilesDir(); injected by tests */
 	globalProfilesDir?: string;
-	/** 默认 Pi 的 getAgentDir()；测试注入 */
+	/** Defaults to Pi's getAgentDir(); injected by tests */
 	agentDir?: string;
-	/** 默认由 import.meta.url 定位包根；测试注入 */
+	/** Defaults to locating the package root from import.meta.url; injected by tests */
 	packageRoot?: string;
 }): Promise<StarterAssetsResult>;
 ```
 
-- 不新增错误类型：IO 失败（`NodeJS.ErrnoException`）内部捕获，转为 `warnings` 条目；函数对所有可预期的运行环境失败不抛出。
-- 两个资产独立成败：一个失败不影响另一个的尝试。
+- No new error types: IO failures (`NodeJS.ErrnoException`) are caught internally and turned into `warnings` entries; the function never throws for any anticipated runtime-environment failure.
+- The two assets succeed or fail independently: one failing does not affect the other's attempt.
 
-### D2：launcher 在解析初始 profile 之前调用 ensure
+### D2: The launcher calls ensure before resolving the initial profile
 
-`bin/pi-profile.ts` 中，`parseLauncherArgs` 之后、`resolveInitialProfile` 之前调用 `ensureStarterAssets()`，`warnings` 经 `console.error` 以 `pi-profile: warning:` 前缀打印（与 instance 清扫的 best-effort 输出模式一致）。此时序使播种的 `ask` 对本次启动的初始解析与 `/profile list` 可见。
+In `bin/pi-profile.ts`, `ensureStarterAssets()` is called after `parseLauncherArgs` and before `resolveInitialProfile`; `warnings` are printed via `console.error` with the `pi-profile: warning:` prefix (consistent with the instance sweep's best-effort output pattern). This timing makes the seeded `ask` visible to this launch's initial resolution and `/profile list`.
 
-### D3：资产定位用 `import.meta.url` 相对包根
+### D3: Asset location relative to the package root via `import.meta.url`
 
-`src/starter-assets.ts` 位于 `src/` 下一级，资产路径为 `../examples/ask.json` 与 `../skills/profile-config/SKILL.md`。不读 `package.json` 定位，与 postinstall 的 `new URL("../examples/ask.json", import.meta.url)` 一致。
+`src/starter-assets.ts` sits one level under `src/`; asset paths are `../examples/ask.json` and `../skills/profile-config/SKILL.md`. No `package.json` reading for location, consistent with postinstall's `new URL("../examples/ask.json", import.meta.url)`.
 
-### D4：运行时用 Pi 的 `getAgentDir()`，不再镜像
+### D4: Runtime uses Pi's `getAgentDir()` directly, no more mirroring
 
-postinstall 的镜像实现仅因纯 JS 约束保留；TS 运行时直接复用 launcher 已 import 的 `getAgentDir()`，消除一处漂移源。
+postinstall's mirrored implementation is kept only because of the plain-JS constraint; the TS runtime reuses the `getAgentDir()` the launcher already imports, eliminating one drift source.
 
-### D5：postinstall 保留为 best-effort 提前优化
+### D5: postinstall stays as a best-effort early optimization
 
-放行 `allowScripts` 的用户在安装期即就位，未放行的用户由 launcher 兜底。postinstall 逻辑不变，仅更新文件头注释中的角色定位（权威行为契约指向 `openspec/specs/profile-catalog/spec.md` 的对应 requirement）。两份实现延续既有「keep in sync」约定。
+Users who permit `allowScripts` get everything in place at install time; users who don't are backstopped by the launcher. postinstall's logic is unchanged — only the role positioning in its file-header comment is updated (the authoritative behavior contract points at the corresponding requirements in `openspec/specs/profile-catalog/spec.md`). The two implementations continue under the existing "keep in sync" convention.
 
-### D6：skill 同步先比较内容，不同才覆写
+### D6: Skill sync compares content first, overwriting only on difference
 
-每次启动覆写会产生无谓的磁盘写与 mtime churn；内容一致时跳过。可观察结果与「始终覆写」等价：任何一次启动后内容与随包版本一致。
+Overwriting on every startup would produce pointless disk writes and mtime churn; skip when content matches. The observable result is equivalent to "always overwrite": after any launch, the content matches the shipped version.
 
-### 已否方案
+### Rejected alternatives
 
-见 proposal.md 的 Doc Impact 段（shell 脚本、`--allow-scripts` 文档化、extension 双保险），不重复论证。
+See the Doc Impact section of `proposal.md` (shell script, documenting `--allow-scripts`, extension double-insurance); the reasoning is not repeated here.
 
 ## Risks / Trade-offs
 
-- 用户删光全部 profile 后，下次启动重新播种 `ask.json` → 与安装语义一致（空目录视为 fresh start），spec 的「启动时不覆盖」scenario 界定了仅在完全无 profile 时才播种。
-- 并发 launcher 启动竞态 → 播种沿用 `COPYFILE_EXCL`（败方静默）；skill 覆写目标内容相同，最后写入者胜出，结果一致。
-- postinstall 与运行时两份逻辑漂移 → 「keep in sync」约定 + 行为契约唯一归属 spec；测试对两侧各设镜像用例。
-- ensure 在每次启动增加两次 stat/一次可能的内容读取 → 开销可忽略；内容比较仅在 skill 文件存在时发生。
+- After a user deletes every profile, the next launch re-seeds `ask.json` → consistent with install semantics (an empty directory counts as a fresh start); the spec's "No overwrite at startup" scenario bounds seeding to only when no profile exists at all.
+- Concurrent launcher startup race → seeding keeps using `COPYFILE_EXCL` (the loser is silent); skill overwrites target identical content, last-writer-wins, same result.
+- Drift between the postinstall and runtime copies of the logic → the "keep in sync" convention + the behavior contract owned solely by the spec; tests set up mirror cases on both sides.
+- The ensure adds two stats and one possible content read to every launch → negligible cost; content comparison happens only when the skill file exists.
 
 ## Migration Plan
 
-无迁移步骤：安装期行为不变，存量用户下次 `pi-profile` 启动自动补齐缺失产物。回滚 = 移除 launcher 中的调用。
+No migration steps: install-time behavior is unchanged, and existing users automatically backfill missing artifacts on their next `pi-profile` launch. Rollback = remove the invocation from the launcher.
