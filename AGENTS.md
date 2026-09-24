@@ -56,3 +56,12 @@ pi-profile-switch 是给 Pi 加命名 profile 的 Pi package。一个 profile �
 辅助流程为 `/opsx-sync`、`/opsx-update`，定义见 `.pi/prompts/opsx-*.md`。artifact 规则与归档门禁在 `openspec/config.yaml` 的 `rules` 与 `operations` 段。
 
 不改变上述任何一项的修正直接提交，不必开 change：增删文档文件、修链接与错字、改注释与用例名、重命名纯调整文件。判据是它会不会改变读者对行为的理解：会，就走流程。
+
+### 流程纪律与升舱规则
+
+- **完成即归档**：起新 change 或进入 apply 前，运行 `openspec list`；若存在任务已全部勾选但未归档的 change，必须先执行归档，避免下游变更因 delta 缺少 base 产生依赖链锁开销与校验噪音。
+- **指令调用去重**：同一 change 同一 artifact 的 `openspec instructions` 在主会话中只调用一次，后续引用首次输出，避免重复拉取全量规则模板造成上下文膨胀。
+- **关键路径与 team-workflow 升舱**：team-workflow 的通用升舱规则见 `team-workflow` skill。本项目中凡触及以下每会话必经路径的改动，apply 必须升舱走 team-workflow：
+  - launcher 启动流程与时序（`bin/pi-profile.ts`、`src/launcher/`）
+  - instance 运行时目录生成与清扫（`src/settings-generator.ts`、`src/launcher/runtime-cleanup.ts`）
+  - 资源发现与过滤模型（`src/profile-resolver.ts`、`src/skill-registry.ts`、`src/extension-discovery.ts`）
