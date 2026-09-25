@@ -1,0 +1,18 @@
+{
+  "label": "pi-profile-switch Dev",
+  "description": "Daily development of pi-profile-switch with relevant skills and extensions",
+  "skills": [
+    "profile-config",
+    "git-commit",
+    "doc-writing",
+    "team-workflow",
+    "clean-architecture",
+    "context7-docs",
+    "pi-subagents"
+  ],
+  "extensions": [
+    "@upstash/context7-pi",
+    "pi-subagents",
+    "pi-web-access"
+  ]
+}

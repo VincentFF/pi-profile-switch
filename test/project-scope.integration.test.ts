@@ -1,12 +1,14 @@
-import { execFile } from "node:child_process";
 import { mkdir, readFile, readlink, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+	LAUNCHER_BIN as BIN,
+	launcherEnv,
+	runLauncher,
+} from "./helpers/launcher-runner.ts";
 import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
-
-const BIN = path.resolve("bin/pi-profile.ts");
 
 let fixture: PiFixture;
 
@@ -17,15 +19,6 @@ beforeEach(async () => {
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
-
-function launcherEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		HOME: fixture.root,
-		PI_CODING_AGENT_DIR: fixture.agentDir,
-		PI_OFFLINE: "1",
-	};
-}
 
 async function writeGlobalCatalog(profiles: Record<string, unknown>): Promise<void> {
 	const dir = path.join(fixture.profileSwitchDir, "profiles");
@@ -74,18 +67,6 @@ async function trustProject(): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
 }
 
-function runLauncher(args: string[]): Promise<{ code: number; stderr: string }> {
-	return new Promise((resolve) => {
-		const child = execFile(
-			"node",
-			[BIN, ...args],
-			{ cwd: fixture.cwd, env: launcherEnv() },
-			(error, _stdout, stderr) => resolve({ code: (error as { code?: number })?.code ?? 0, stderr }),
-		);
-		child.stdin?.end();
-	});
-}
-
 describe("launcher integration: project scope and trust", () => {
 	it(
 		"an untrusted project's catalog, skills, and extensions never enter the runtime",
@@ -98,7 +79,7 @@ describe("launcher integration: project scope and trust", () => {
 			await writeGlobalCatalog({ review: { skills: ["alpha-skill"] } });
 
 			// The project profile is invisible when untrusted.
-			const failure = await runLauncher(["impl", "--", "--mode", "rpc"]);
+			const failure = await runLauncher(fixture, ["impl", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("unknown profile: impl");
 
@@ -106,7 +87,7 @@ describe("launcher integration: project scope and trust", () => {
 			// project's auto-discoverable extension code never runs.
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const names = (await rpc.commandNames()).map((command) => command.name);
@@ -137,7 +118,7 @@ describe("launcher integration: project scope and trust", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "impl", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const names = (await rpc.commandNames()).map((command) => command.name);
@@ -182,7 +163,7 @@ describe("launcher integration: project scope and trust", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "impl", "--", "--mode", "rpc", "--approve"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const names = (await rpc.commandNames()).map((command) => command.name);
@@ -211,7 +192,7 @@ describe("launcher integration: project scope and trust", () => {
 			await writeProjectCatalog({ impl: { skills: [] } });
 			await trustProject();
 
-			const failure = await runLauncher(["impl", "--", "--mode", "rpc", "--no-approve"]);
+			const failure = await runLauncher(fixture, ["impl", "--", "--mode", "rpc", "--no-approve"]);
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("unknown profile: impl");
 		},
@@ -229,7 +210,7 @@ describe("launcher integration: project scope and trust", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const names = await rpc.skillCommandNames();
@@ -253,7 +234,7 @@ describe("launcher integration: project scope and trust", () => {
 			);
 			await trustProject();
 
-			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv() });
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv(fixture) });
 			try {
 				const names = await rpc.skillCommandNames();
 				expect(names).toContain("skill:proj-skill");

@@ -2,10 +2,13 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+	LAUNCHER_BIN as BIN,
+	launcherEnv,
+	runLauncher,
+} from "./helpers/launcher-runner.ts";
 import { addGlobalSkill, createPiFixture, listFiles, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
-
-const BIN = path.resolve("bin/pi-profile.ts");
 
 let fixture: PiFixture;
 
@@ -16,15 +19,6 @@ beforeEach(async () => {
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
-
-function launcherEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		HOME: fixture.root,
-		PI_CODING_AGENT_DIR: fixture.agentDir,
-		PI_OFFLINE: "1",
-	};
-}
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	const dir = path.join(fixture.profileSwitchDir, "profiles");
@@ -80,7 +74,7 @@ describe("launcher integration: named global profiles", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const commands = await rpc.commandNames();
@@ -116,7 +110,7 @@ describe("launcher integration: named global profiles", () => {
 				JSON.stringify({ activeProfile: "review" }),
 			);
 
-			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv() });
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv(fixture) });
 			try {
 				const names = await rpc.skillCommandNames();
 				expect(names).toContain("skill:alpha-skill");
@@ -136,7 +130,7 @@ describe("launcher integration: named global profiles", () => {
 
 			const first = new RpcDriver("node", [BIN, "research", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				expect(await first.skillCommandNames()).toEqual(["skill:research-web"]);
@@ -148,7 +142,7 @@ describe("launcher integration: named global profiles", () => {
 			await addGlobalSkill(fixture, "research-docs");
 			const second = new RpcDriver("node", [BIN, "research", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				expect(await second.skillCommandNames()).toEqual(["skill:research-docs", "skill:research-web"]);
@@ -179,7 +173,7 @@ describe("launcher integration: named global profiles", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "focused", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const state = await rpc.send({ type: "get_state" });
@@ -235,7 +229,7 @@ describe("launcher integration: named global profiles", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc", "-e", probe], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				// The prompt fails fast (unreachable fixture provider, retries off),
@@ -259,13 +253,8 @@ describe("launcher integration: named global profiles", () => {
 		{ timeout: 30_000 },
 		async () => {
 			await writeCatalog({ broken: { defaultProvider: "anthropic", defaultModel: "claude-sonnet-4-5" } });
-			const { execFile } = await import("node:child_process");
 
-			const failure = await new Promise<{ code: number; stderr: string }>((resolve) => {
-				execFile("node", [BIN, "broken", "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv() }, (error, _stdout, stderr) => {
-					resolve({ code: (error as { code?: number })?.code ?? 0, stderr });
-				});
-			});
+			const failure = await runLauncher(fixture, ["broken", "--", "--mode", "rpc"]);
 
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("anthropic");
@@ -280,13 +269,8 @@ describe("launcher integration: named global profiles", () => {
 		{ timeout: 30_000 },
 		async () => {
 			await writeCatalog({ review: { extensions: ["nonexistent-ext"] } });
-			const { execFile } = await import("node:child_process");
 
-			const failure = await new Promise<{ code: number; stderr: string }>((resolve) => {
-				execFile("node", [BIN, "review", "--", "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv() }, (error, _stdout, stderr) => {
-					resolve({ code: (error as { code?: number })?.code ?? 0, stderr });
-				});
-			});
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain('unknown extension: "nonexistent-ext"');
@@ -305,7 +289,7 @@ describe("launcher integration: named global profiles", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
