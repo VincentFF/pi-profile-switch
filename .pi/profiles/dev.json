@@ -8,12 +8,10 @@
     "team-workflow",
     "clean-architecture",
     "context7-docs",
-    "context-mode",
     "pi-subagents"
   ],
   "extensions": [
     "@upstash/context7-pi",
-    "context-mode",
     "pi-subagents",
     "pi-web-access"
   ]
