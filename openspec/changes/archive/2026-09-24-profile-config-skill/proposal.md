@@ -2,37 +2,37 @@
 
 ## Why
 
-创建、修改 profile 目前只有两条路：手写 JSON，或会话内的 `/profile create` 表单向导。用户更自然的表达是模糊需求（「帮我配个做 code review 的 profile」），这需要一条对话式的配置路径：agent 按需求澄清、发现可引用资源、落出正确的 profile 文件。随包分发一个 `profile-config` skill 即可提供这条路径，无需新增任何运行时代码。
+There are currently only two ways to create or modify a profile: hand-writing JSON, or the in-session `/profile create` form wizard. The user's more natural expression is a vague requirement ("set up a profile for code review"), which calls for a conversational configuration path: the agent clarifies the requirement, discovers referenceable resources, and writes out the correct profile file. Shipping a `profile-config` skill with the package provides that path without adding any runtime code.
 
-依赖 per-profile 单文件 catalog 格式（`openspec/changes/archive/2026-09-22-per-profile-config-files/`，已合入主 spec `openspec/specs/profile-catalog/spec.md`）：skill 指导 agent 直接读写 `profiles/<name>.json` 单文件，正是该目录格式使「skill 直接写文件」成为可能。
+Depends on the per-profile single-file catalog format (`openspec/changes/archive/2026-09-22-per-profile-config-files/`, merged into the main spec `openspec/specs/profile-catalog/spec.md`): the skill guides the agent to read and write `profiles/<name>.json` single files directly — exactly what that directory format makes possible.
 
 ## What Changes
 
-- 包内新增 `skills/profile-config/SKILL.md`：指导 agent 根据用户的模糊或明确需求创建、修改、删除 profile。内容覆盖：名字字符集约束、裸定义格式与字段语义、全局（`$PI_PROFILE_SWITCH_DIR/profiles/`，默认 `~/.pi-profile-switch/profiles/`）vs 项目（`<projectDir>/.pi/profiles/`）落点、可引用资源的发现位置（`<agentDir>/skills/`、`~/.agents/skills/`、`<agentDir>/settings.json` 声明的已安装 packages、`<agentDir>/extensions/` 散装文件、`<agentDir>/mcp.json`；tool 引用身份为 Pi 工具注册表的工具名；项目级资源可见性不随 profile 收窄，声明无收窄效果）。
-- 安装分发：`postinstall` 把该 skill 写入用户 agentDir 的 `skills/profile-config/`。升级时 SHALL 始终覆写（内容为 package 所有，跟随版本演进）；卸载后可能残留，接受不清理。
-- skill 是普通用户级资源，无运行时特判：default profile 与原生 pi 直接可用；命名 profile 需在 `skills` 中声明它才可用。
-- 创作时默认注入：skill 指导 agent 生成新 profile 时，若该 profile 声明了 `skills` 数组，则默认包含 `"profile-config"`，除非用户明确要求不包含；profile 未声明 `skills` 时不动作（未声明即不收窄）。
-- skill 内容需处理两个边界：无 `write` 工具的窄 profile 中退化为输出 JSON 建议手动保存；项目未受信任的会话中写入项目 scope 前提示 `/trust` + 重启。
+- Add `skills/profile-config/SKILL.md` to the package: guides the agent to create, modify, and delete profiles from the user's vague or explicit requirements. Content covers: the name charset constraint, the bare-definition format and field semantics, the global (`$PI_PROFILE_SWITCH_DIR/profiles/`, default `~/.pi-profile-switch/profiles/`) vs project (`<projectDir>/.pi/profiles/`) storage locations, discovery locations of referenceable resources (`<agentDir>/skills/`, `~/.agents/skills/`, installed packages declared in `<agentDir>/settings.json`, loose files under `<agentDir>/extensions/`, `<agentDir>/mcp.json`; tool reference identity is the tool name in Pi's tool registry; project-level resource visibility does not narrow with profiles, and declaring them has no narrowing effect).
+- Install distribution: `postinstall` writes the skill into the user agentDir's `skills/profile-config/`. On upgrade it SHALL always overwrite (the content is package-owned and evolves with the version); residue after uninstall is possible and accepted as uncleaned.
+- The skill is an ordinary user-level resource with no runtime special-casing: the default profile and native pi can use it directly; a named profile must declare it in `skills` to include it.
+- Default injection at authoring time: when the skill guides the agent to generate a new profile, if that profile declares a `skills` array, `"profile-config"` is included by default unless the user explicitly asks otherwise; no action when the profile does not declare `skills` (undeclared means not narrowed).
+- The skill content must handle two boundaries: degrade to outputting JSON with a manual-save suggestion in narrow profiles without the `write` tool; prompt for `/trust` + restart before writing to project scope in sessions where the project is untrusted.
 
 ## Capabilities
 
 ### New Capabilities
 
-（无）
+(none)
 
 ### Modified Capabilities
 
-- `profile-catalog`：新增 requirement「安装分发 profile-config skill」，与「安装播种 starter profile」并列描述安装期的分发行为。
+- `profile-catalog`: adds the requirement "Distributing the profile-config skill at install", alongside "Seeding the starter profile at install" describing install-time distribution behavior.
 
 ## Impact
 
-- 代码：`bin/postinstall.js`（分发逻辑）、`skills/profile-config/SKILL.md`（新）、`package.json`（`files` 加 `skills`）。
-- 测试：postinstall 分发、覆写与失败降级用例。
-- 文档：README 提及该 skill。
+- Code: `bin/postinstall.js` (distribution logic), `skills/profile-config/SKILL.md` (new), `package.json` (`files` gains `skills`).
+- Tests: postinstall distribution, overwrite, and failure-degradation cases.
+- Docs: README mentions the skill.
 
 ## Doc Impact
 
-- `docs/prd.md`：none——skill 是配置路径的补充，不改变产品定位。
-- `docs/architecture/overview.md`：none——无新机制，分发复用 postinstall 既有模式。
-- `CONTEXT.md`：none——无新术语。
-- `docs/adr/`：none——分发复用 postinstall 既有模式，过滤模型无新规则。已否方案记录于此：经 Pi package 发现机制暴露 skill（skill 不再是普通用户级资源，可见性语义跟随包发现，与「无运行时特判」的定位冲突）；生成 settings 时注入 skill（同上，且声明即控制的过滤模型被破坏）。均不构成难以撤销的决策。
+- `docs/prd.md`: none — the skill supplements the configuration path and does not change product positioning.
+- `docs/architecture/overview.md`: none — no new mechanism; distribution reuses the existing postinstall pattern.
+- `CONTEXT.md`: none — no new terms.
+- `docs/adr/`: none — distribution reuses the existing postinstall pattern and the filtering model gains no rules. Rejected alternatives recorded here: exposing the skill through Pi's package discovery mechanism (the skill would no longer be an ordinary user-level resource; its visibility semantics would follow package discovery, conflicting with the "no runtime special-casing" positioning); injecting the skill when generating settings (same conflict, and the declare-means-control filtering model would be broken). Neither constitutes a hard-to-reverse decision.

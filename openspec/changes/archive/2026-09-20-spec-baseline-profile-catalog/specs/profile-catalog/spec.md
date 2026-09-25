@@ -2,185 +2,185 @@
 
 ## Purpose
 
-定义 profile 从哪里读取、什么内容合法、同名 profile 之间谁生效。它是 profile 选择机制的数据来源：其他三个能力域都从这个能力域解析出的定义出发。
+Defines where profiles are read from, what content is legal, and which definition wins among same-named profiles. It is the data source of the profile selection mechanism: the other three capability domains all start from the definitions resolved by this one.
 
 ## ADDED Requirements
 
-### Requirement: Catalog 文件位置与发现
+### Requirement: Catalog file locations and discovery
 
-系统 SHALL 从两个位置读取 profile 定义：全局 catalog 与项目 catalog。
+The system SHALL read profile definitions from two locations: the global catalog and the project catalog.
 
-全局 catalog 位于工作区根下的 `profiles.json`，工作区根默认为 `~/.pi-profile-switch`，可由 `PI_PROFILE_SWITCH_DIR` 覆盖。当该文件不存在时，系统 SHALL 回退读取 `<agentDir>/profiles.json`。
+The global catalog is the `profiles.json` under the workspace root, which defaults to `~/.pi-profile-switch` and can be overridden by `PI_PROFILE_SWITCH_DIR`. When that file does not exist, the system SHALL fall back to reading `<agentDir>/profiles.json`.
 
-项目 catalog 位于 `<projectDir>/.pi/profiles.json`。
+The project catalog is `<projectDir>/.pi/profiles.json`.
 
-文件不存在 SHALL 被视为空 catalog，而不是错误。
+A missing file SHALL be treated as an empty catalog, not an error.
 
-#### Scenario: 全局首选文件缺失时回退到 legacy 路径
+#### Scenario: Falling back to the legacy path when the preferred global file is missing
 
-- **WHEN** `~/.pi-profile-switch/profiles.json` 不存在，且 `~/.pi/agent/profiles.json` 存在
-- **THEN** 系统读取 `~/.pi/agent/profiles.json` 作为全局 catalog
+- **WHEN** `~/.pi-profile-switch/profiles.json` does not exist and `~/.pi/agent/profiles.json` does
+- **THEN** the system reads `~/.pi/agent/profiles.json` as the global catalog
 
-#### Scenario: 工作区根被环境变量覆盖
+#### Scenario: Workspace root overridden by environment variable
 
-- **WHEN** 设置了 `PI_PROFILE_SWITCH_DIR`，且该目录下存在 `profiles.json`
-- **THEN** 系统读取该文件作为全局 catalog，不读取默认工作区根
+- **WHEN** `PI_PROFILE_SWITCH_DIR` is set and a `profiles.json` exists under it
+- **THEN** the system reads that file as the global catalog and does not read the default workspace root
 
-### Requirement: Catalog 文件格式校验
+### Requirement: Catalog file format validation
 
-系统 SHALL 在 catalog 内容不合法时报错，MUST NOT 静默降级为空 catalog。
+The system SHALL report an error when catalog content is illegal and MUST NOT silently degrade to an empty catalog.
 
-顶层值 SHALL 是对象。`schemaVersion` SHALL 等于 `1`。`profiles` SHALL 是对象，其键为 profile 名、值为 profile 定义。JSON 语法 SHALL 合法。
+The top-level value SHALL be an object. `schemaVersion` SHALL equal `1`. `profiles` SHALL be an object whose keys are profile names and whose values are profile definitions. The JSON syntax SHALL be legal.
 
-校验失败 SHALL 可行动：错误 SHALL 指明出错的文件路径；字段级错误 SHALL 同时指明 profile 名与字段名。
+Validation failures SHALL be actionable: the error SHALL identify the file at fault; field-level errors SHALL additionally identify the profile name and field name.
 
-#### Scenario: catalog 内容不合法
+#### Scenario: Illegal catalog content
 
-- **WHEN** catalog 的 `schemaVersion` 不为 `1`，或其 `profiles` 不是对象，或其内容不是合法 JSON
-- **THEN** 系统报错，消息指出出错的文件路径，且不得到空 catalog
+- **WHEN** the catalog's `schemaVersion` is not `1`, or its `profiles` is not an object, or its content is not legal JSON
+- **THEN** the system reports an error whose message identifies the file at fault, and no empty catalog is produced
 
-### Requirement: Profile 定义字段
+### Requirement: Profile definition fields
 
-一个 profile 定义 SHALL 是对象，并 SHALL 只包含以下字段：`label`、`description`、`skills`、`extensions`、`mcps`、`tools`、`defaultProvider`、`defaultModel`、`defaultThinkingLevel`、`instructions`。
+A profile definition SHALL be an object and SHALL contain only these fields: `label`, `description`, `skills`, `extensions`, `mcps`, `tools`, `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `instructions`.
 
-`skills`、`extensions`、`mcps`、`tools` SHALL 是字符串数组。其余字段 SHALL 是字符串。
+`skills`, `extensions`, `mcps`, and `tools` SHALL be arrays of strings. The remaining fields SHALL be strings.
 
-全部字段可选。未声明的字段 SHALL NOT 产生任何行为变化。
+All fields are optional. Undeclared fields SHALL NOT produce any behavior change.
 
-读取时，未列出的键 SHALL 被忽略。写入时，只有上列字段 SHALL 被写出。
+On read, unlisted keys SHALL be ignored. On write, only the fields listed above SHALL be written out.
 
-#### Scenario: 字段类型不符
+#### Scenario: Field type mismatch
 
-- **WHEN** 某 profile 的 `skills` 含非字符串项，或其 `defaultModel` 不是字符串，或其定义本身不是对象
-- **THEN** 系统报错，消息指出该 profile 名与出错字段
+- **WHEN** a profile's `skills` contains a non-string item, or its `defaultModel` is not a string, or the definition itself is not an object
+- **THEN** the system reports an error whose message identifies the profile name and the field at fault
 
-#### Scenario: 未声明的字段不影响行为
+#### Scenario: Undeclared fields do not affect behavior
 
-- **WHEN** 某 profile 只声明 `skills`
-- **THEN** 该 profile 的模型、thinking level 与 instructions 保持 Pi 的当前状态
+- **WHEN** a profile declares only `skills`
+- **THEN** that profile's model, thinking level, and instructions stay at Pi's current state
 
-#### Scenario: 未知键被忽略且不写回
+#### Scenario: Unknown keys are ignored and not written back
 
-- **WHEN** catalog 中某 profile 带一个未列出的键，随后该 profile 被经向导改写
-- **THEN** 读取不因该键报错，且写回的文件不含该键
+- **WHEN** a profile in the catalog carries an unlisted key, and that profile is then rewritten via the wizard
+- **THEN** reading does not fail because of that key, and the written-back file does not contain it
 
-### Requirement: 内建 default profile
+### Requirement: Built-in default profile
 
-系统 SHALL 始终提供名为 `default` 的内建 profile，其来源为 `builtin`，其定义不含任何字段。
+The system SHALL always provide a built-in profile named `default`, whose source is `builtin` and whose definition contains no fields.
 
-`default` MUST NOT 在 catalog 文件中定义。`default` MUST NOT 可编辑，也 MUST NOT 可删除。
+`default` MUST NOT be defined in a catalog file. `default` MUST NOT be editable and MUST NOT be deletable.
 
-#### Scenario: catalog 中定义 default
+#### Scenario: Default defined in a catalog
 
-- **WHEN** 任一 catalog 文件的 `profiles` 含键 `default`
-- **THEN** 系统报错，消息指出出错的文件路径
+- **WHEN** any catalog file's `profiles` contains the key `default`
+- **THEN** the system reports an error whose message identifies the file path
 
-### Requirement: Profile 来源与项目覆盖
+### Requirement: Profile sources and project override
 
-每个可解析的 profile SHALL 带一个来源，取值为 `builtin`、`global` 或 `project`。全局 catalog 的条目来源为 `global`，项目 catalog 的条目来源为 `project`。
+Every resolvable profile SHALL carry a source: `builtin`, `global`, or `project`. Global catalog entries have source `global`; project catalog entries have source `project`.
 
-项目条目 SHALL 完整替换同名全局条目，MUST NOT 与之合并或追加任何字段。项目条目被删除后，同名全局条目 SHALL 立即重新可解析。
+A project entry SHALL completely replace a same-named global entry and MUST NOT merge with or append to any of its fields. Once the project entry is deleted, the same-named global entry SHALL become resolvable again immediately.
 
-#### Scenario: 项目条目完整替换全局条目
+#### Scenario: Project entry completely replaces global entry
 
-- **WHEN** 全局与项目 catalog 都定义 `review`，全局声明 `skills: ["a"]`，项目声明 `tools: ["read"]`
-- **THEN** 解析 `review` 得到来源 `project`、只含 `tools: ["read"]` 的定义
+- **WHEN** both the global and project catalogs define `review`, the global declaring `skills: ["a"]` and the project declaring `tools: ["read"]`
+- **THEN** resolving `review` yields source `project` and a definition containing only `tools: ["read"]`
 
-#### Scenario: 删除项目覆盖条目后全局条目恢复
+#### Scenario: Global entry restored after project override deleted
 
-- **WHEN** 项目 catalog 删除上例中的 `review`
-- **THEN** 解析 `review` 得到来源 `global`、全局声明的定义
+- **WHEN** the project catalog deletes the `review` from the previous example
+- **THEN** resolving `review` yields source `global` and the globally declared definition
 
-### Requirement: 项目信任门禁
+### Requirement: Project trust gate
 
-项目 catalog 的内容 SHALL 只在项目已受信任时参与解析。项目未受信任时，系统 MUST NOT 读取项目 catalog 文件，以项目 scope 的写入 SHALL 失败。
+The project catalog's content SHALL participate in resolution only when the project is trusted. When the project is untrusted, the system MUST NOT read the project catalog file, and writes with project scope SHALL fail.
 
-#### Scenario: 未受信任项目不读取 catalog 文件
+#### Scenario: Untrusted project's catalog file is not read
 
-- **WHEN** 项目未受信任，且该目录下存在 `.pi/profiles.json`
-- **THEN** 以项目 scope 读取得到空结果、不报错，且该文件未被读取
+- **WHEN** the project is untrusted and a `.pi/profiles.json` exists under it
+- **THEN** reads with project scope return an empty result without an error, and that file is not read
 
-#### Scenario: 写入未受信任项目的 catalog
+#### Scenario: Writing to an untrusted project's catalog
 
-- **WHEN** 以项目 scope 执行任何写入，而项目未受信任
-- **THEN** 操作失败，消息指出该目录未受信任
+- **WHEN** any write is performed with project scope while the project is untrusted
+- **THEN** the operation fails with a message stating that the directory is untrusted
 
-### Requirement: Profile 列表顺序
+### Requirement: Profile list ordering
 
-列表 SHALL 以 `default` 开头，其后按 catalog 文件中的顺序列出全局条目，然后是只存在于项目 catalog 的名字。
+The list SHALL start with `default`, followed by global entries in catalog-file order, then names that exist only in the project catalog.
 
-#### Scenario: 列表顺序
+#### Scenario: List ordering
 
-- **WHEN** 全局 catalog 依次定义 `b`、`a`，项目 catalog 定义 `c`
-- **THEN** 列表顺序为 `default`、`b`、`a`、`c`
+- **WHEN** the global catalog defines `b`, `a` in that order, and the project catalog defines `c`
+- **THEN** the list order is `default`, `b`, `a`, `c`
 
-### Requirement: Profile 创建、编辑与复制
+### Requirement: Profile create, edit, and duplicate
 
-创建 SHALL 在指定 scope 写入一个完整定义；同名 profile 已存在于该 scope 时 SHALL 失败。
+Create SHALL write a complete definition in the specified scope; it SHALL fail when a same-named profile already exists in that scope.
 
-编辑 SHALL 替换指定 scope 中一个已存在 profile 的完整定义；该 profile 不在该 scope 时 SHALL 失败。
+Edit SHALL replace the complete definition of an existing profile in the specified scope; it SHALL fail when the profile is not in that scope.
 
-复制 SHALL 把一个已存在定义的完整副本写入指定 scope 下的新名字；源不存在或新名已存在时 SHALL 失败。
+Duplicate SHALL write a complete copy of an existing definition under a new name in the specified scope; it SHALL fail when the source does not exist or the new name already exists.
 
-写入前 SHALL 校验定义。校验失败或上述任一前置条件不满足时，catalog 文件 MUST NOT 被改动。
+Definitions SHALL be validated before writing. When validation fails or any precondition above is unmet, the catalog file MUST NOT be modified.
 
-#### Scenario: 目标 scope 已存在同名条目
+#### Scenario: Same-named entry exists in target scope
 
-- **WHEN** 在全局 scope 创建 `review`，或把 `review` 复制为 `implement`，而全局 catalog 已含该目标名
-- **THEN** 操作失败，消息指出该名字与 scope，文件未改动
+- **WHEN** creating `review` in the global scope, or duplicating `review` as `implement`, while the global catalog already contains the target name
+- **THEN** the operation fails with a message identifying the name and scope, and the file is unchanged
 
-#### Scenario: 编辑不在该 scope 的 profile
+#### Scenario: Editing a profile not in that scope
 
-- **WHEN** 在项目 scope 编辑一个只存在于全局 catalog 的名字
-- **THEN** 操作失败，消息指出该名字与 scope
+- **WHEN** editing in project scope a name that exists only in the global catalog
+- **THEN** the operation fails with a message identifying the name and scope
 
-#### Scenario: 非法定义不落地
+#### Scenario: Illegal definitions do not land
 
-- **WHEN** 写入一个 `skills` 含非字符串项的定义
-- **THEN** 操作失败，文件内容保持原样
+- **WHEN** writing a definition whose `skills` contains a non-string item
+- **THEN** the operation fails and the file content stays unchanged
 
-### Requirement: Profile 删除
+### Requirement: Profile deletion
 
-删除 SHALL 从指定 scope 移除一个 profile。该 profile 不在该 scope 时 SHALL 失败，而不是空操作。
+Delete SHALL remove a profile from the specified scope. It SHALL fail — rather than no-op — when the profile is not in that scope.
 
-删除当前活动的 profile 时，请求 SHALL 同时指定替代 profile，否则 SHALL 失败。
+When deleting the currently active profile, the request SHALL specify a replacement profile, or it SHALL fail.
 
-#### Scenario: 删除不存在的 profile
+#### Scenario: Deleting a nonexistent profile
 
-- **WHEN** 从全局 scope 删除一个不在全局 catalog 中的名字
-- **THEN** 操作失败，消息指出该名字
+- **WHEN** deleting from the global scope a name not present in the global catalog
+- **THEN** the operation fails with a message identifying the name
 
-#### Scenario: 删除活动 profile 未指定替代
+#### Scenario: Deleting the active profile without a replacement
 
-- **WHEN** 删除当前活动的 profile，且未提供替代 profile
-- **THEN** 操作失败，消息要求先选择替代 profile
+- **WHEN** deleting the currently active profile without providing a replacement
+- **THEN** the operation fails with a message asking to choose a replacement profile first
 
-### Requirement: Catalog 写入
+### Requirement: Catalog writes
 
-写入 SHALL 以整文件覆盖方式进行，输出为格式化 JSON，且顶层含 `schemaVersion: 1` 与 `profiles`。写入 SHALL 只包含通过校验的已声明字段。
+Writes SHALL be whole-file overwrites, emitting formatted JSON whose top level contains `schemaVersion: 1` and `profiles`. Writes SHALL contain only the declared fields that passed validation.
 
-并发修改 SHALL 按整文件最后写入生效处理：写入前读取整个文件，因此一次写入会覆盖其他进程在同一时刻对其他 profile 的改动。向导保存 MUST NOT 因文件被其他实例同时修改而阻塞。
+Concurrent modifications SHALL be treated as last-writer-wins on the whole file: writing reads the entire file first, so one write overwrites another process's simultaneous changes to other profiles. A wizard save MUST NOT block because the file was concurrently modified by another instance.
 
-#### Scenario: 写入文件结构
+#### Scenario: Written file structure
 
-- **WHEN** 一次写入完成
-- **THEN** 文件顶层为 `schemaVersion` 与 `profiles`，并包含该次写入的定义
+- **WHEN** a write completes
+- **THEN** the file's top level is `schemaVersion` and `profiles`, containing that write's definitions
 
-#### Scenario: 并发编辑后保存
+#### Scenario: Saving after concurrent edits
 
-- **WHEN** 向导打开期间，另一个进程向同一 catalog 文件新增了另一个 profile
-- **THEN** 保存成功，但被新增的那个 profile 不保留在文件中
+- **WHEN** another process adds another profile to the same catalog file while the wizard is open
+- **THEN** the save succeeds, but the added profile is not preserved in the file
 
-### Requirement: 安装播种 starter profile
+### Requirement: Seeding the starter profile at install
 
-安装包时，若全局工作区还没有 catalog 文件，系统 SHALL 写入随包提供的 starter catalog，其中含一个名为 `ask` 的 profile。已存在 catalog 文件时 MUST NOT 覆盖。legacy 路径 `<agentDir>/profiles.json` 存在时 SHALL 跳过播种。播种失败 MUST NOT 使安装失败。
+When the package is installed, if the global workspace has no catalog file yet, the system SHALL write the starter catalog shipped with the package, containing a profile named `ask`. When a catalog file already exists it MUST NOT be overwritten. When the legacy path `<agentDir>/profiles.json` exists, seeding SHALL be skipped. Seeding failure MUST NOT fail the install.
 
-#### Scenario: 首次安装
+#### Scenario: First install
 
-- **WHEN** 全局工作区与 legacy 路径都没有 catalog 文件
-- **THEN** 写入 starter catalog，其中含 `ask` profile
+- **WHEN** neither the global workspace nor the legacy path has a catalog file
+- **THEN** the starter catalog is written, containing the `ask` profile
 
-#### Scenario: 已有 catalog
+#### Scenario: Existing catalog
 
-- **WHEN** 全局工作区已存在 `profiles.json`，或 legacy 路径已存在 catalog 文件
-- **THEN** 不写入新文件，安装继续
+- **WHEN** the global workspace already has `profiles.json`, or a catalog file exists at the legacy path
+- **THEN** no new file is written and the install continues

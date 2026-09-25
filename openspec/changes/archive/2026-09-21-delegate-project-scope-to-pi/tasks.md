@@ -1,32 +1,32 @@
 # Tasks
 
-## 1. trust.json 链接与信任 flag 转发
+## 1. trust.json link and trust-flag forwarding
 
-- [x] 1.1 改 `src/settings-generator.ts` 的 `writeRuntimeFiles`：`trust.json` 对每种 profile 都建立指向真实 agentDir 的链接（路径不存在时建立，目标文件不存在时同样建立），删除 `plan.filter === "none"` 判断与删除链接的分支；验证 `test/settings-generator.test.ts` 与 `test/settings-generator-selection.test.ts` 中新增用例（命名 profile 也有链接、目标缺失时仍建立 dangling 链接）通过。
-- [x] 1.2 改 `bin/pi-profile.ts`：信任 flag 不再按 `plan.filter === "none"` 过滤，任何 profile 都转发已记录的一次性输入；验证 `test/project-scope.integration.test.ts` 中 `--approve` 用例（命名 profile 收到 flag 后项目级资源可见）与 `test/launcher-spawn.test.ts` 通过。
-- [x] 1.3 确认链接不破坏清扫与生命周期：`trust.json` 已在受管文件集内，无需新增白名单；验证 `test/runtime-cleanup.test.ts` 与 `test/instance-lifecycle.integration.test.ts` 通过。
+- [x] 1.1 Change `writeRuntimeFiles` in `src/settings-generator.ts`: establish the `trust.json` link to the real agentDir under every profile (established when the path is missing, and also when the target file does not exist yet); delete the `plan.filter === "none"` check and the link-removal branch. Verification: new cases in `test/settings-generator.test.ts` and `test/settings-generator-selection.test.ts` (named profiles get the link too; a dangling link is still established when the target is missing) pass.
+- [x] 1.2 Change `bin/pi-profile.ts`: the trust flag is no longer filtered by `plan.filter === "none"`; every profile forwards the recorded one-shot input. Verification: the `--approve` case in `test/project-scope.integration.test.ts` (project-level resources visible after a named profile receives the flag) and `test/launcher-spawn.test.ts` pass.
+- [x] 1.3 Confirm the link does not break sweeping and lifecycle: `trust.json` is already in the managed file set, no new whitelist entry needed. Verification: `test/runtime-cleanup.test.ts` and `test/instance-lifecycle.integration.test.ts` pass.
 
-## 2. 停止项目级收窄
+## 2. Stop project-level narrowing
 
-- [x] 2.1 改 `src/settings-generator.ts` 的 `buildSelectionSettings`：scope 为 project 的 skill 既不写排除项也不写附加路径；验证 `test/settings-generator-selection.test.ts` 中新增用例（项目级 skill 与 ancestor `.agents/skills` 不产生任何条目）通过。
-- [x] 2.2 同函数：项目 `.pi/extensions` 下的 extension 条目不写入 Generated settings；验证同文件新增用例通过。
-- [x] 2.3 删除项目 settings 合并与 `packages` 剥除：`src/launcher/initial-profile.ts` 的 `readTrustInputs` 不再读取项目 settings，`InitialProfile`/`GenerateOptions`/`RuntimeFileOptions` 去掉 `projectSettings` 字段，`bin/pi-profile.ts` 与 `src/switching/switch-profile.ts` 相应调整；验证 `test/initial-profile.test.ts`、`test/settings-generator.test.ts`、`test/switch-profile.test.ts` 更新后的用例通过，且 `rg -n "projectSettings" src/ bin/` 只余测试或零命中。
-- [x] 2.4 改 `src/mcp-config.ts`：MCP 配置源标记项目来源，合并结果返回项目来源 server 集合；`src/settings-generator.ts` 的 MCP 过滤不再禁用这些 server；验证 `test/mcp-config.test.ts` 的 `projectServers` 用例与 `test/settings-generator-selection.test.ts` 的“项目来源 MCP server 不被禁用”用例通过。
+- [x] 2.1 Change `buildSelectionSettings` in `src/settings-generator.ts`: skills with project scope get neither exclusions nor attached paths. Verification: new cases in `test/settings-generator-selection.test.ts` (project-level skills and ancestor `.agents/skills` produce no entries) pass.
+- [x] 2.2 Same function: extension entries under project `.pi/extensions` are not written into generated settings. Verification: new cases in the same file pass.
+- [x] 2.3 Delete project settings merging and `packages` stripping: `readTrustInputs` in `src/launcher/initial-profile.ts` no longer reads project settings; `InitialProfile`/`GenerateOptions`/`RuntimeFileOptions` lose the `projectSettings` field; `bin/pi-profile.ts` and `src/switching/switch-profile.ts` adjusted accordingly. Verification: updated cases in `test/initial-profile.test.ts`, `test/settings-generator.test.ts`, `test/switch-profile.test.ts` pass, and `rg -n "projectSettings" src/ bin/` hits only tests or nothing.
+- [x] 2.4 Change `src/mcp-config.ts`: MCP configuration sources mark project origin, and the merge result returns the project-sourced server set; the MCP filtering in `src/settings-generator.ts` no longer disables those servers. Verification: the `projectServers` cases in `test/mcp-config.test.ts` and the "project-sourced MCP servers are not disabled" case in `test/settings-generator-selection.test.ts` pass.
 
-## 3. 集成行为验证
+## 3. Integration behavior verification
 
-- [x] 3.1 按新语义重写 `test/project-scope.integration.test.ts` 中受信任项目的断言：未选中的项目级 skill/extension 也可见，项目 `.pi/settings.json` 不再并入 Generated settings；验证该文件通过。
-- [x] 3.2 在 `test/project-scope.integration.test.ts` 或 `test/switch.integration.test.ts` 新增用例：受信任项目下以命名 profile 启动后切换（`/profile use default`）不改变项目级可见性、不需要重启；验证该用例通过。
-- [x] 3.3 在 `test/project-scope.integration.test.ts` 补用例：项目未受信任时项目级 skill/extension 不出现在会话中，且 `--approve` 单次运行会同时放行项目 catalog 与项目级资源；验证该用例通过。
+- [x] 3.1 Rewrite the trusted-project assertions in `test/project-scope.integration.test.ts` to the new semantics: unselected project-level skills/extensions are visible too, and project `.pi/settings.json` is no longer merged into generated settings. Verification: the file passes.
+- [x] 3.2 Add a case in `test/project-scope.integration.test.ts` or `test/switch.integration.test.ts`: under a trusted project, switching after launching with a named profile (`/profile use default`) does not change project-level visibility and needs no restart. Verification: the case passes.
+- [x] 3.3 Add a case in `test/project-scope.integration.test.ts`: when the project is untrusted, project-level skills/extensions do not appear in the session, and a single `--approve` run admits both the project catalog and project-level resources. Verification: the case passes.
 
-## 4. 文档同步
+## 4. Documentation sync
 
-- [x] 4.1 改 `docs/architecture/overview.md`：「项目级」行改为"由 Pi 原生判定，profile 不参与"、`packages（项目）` 行改为原生安装、`trust.json` 行改为每种 profile 都链接、settings 行去掉项目 settings 并入、改写「已知限制」中"项目资源的信任判定只由 launcher 执行"与"项目范围的 package skill 不可引用"两条；验证 `rg -n "抑制全部项目自动发现|命名 profile 不链接" docs/architecture/overview.md` 零命中。
-- [x] 4.2 改 `docs/prd.md`：在非目标段落写入边界——profile 的隔离面是用户级资源，项目级资源由 Pi 的信任判定决定；验证该文件出现该边界条目，且机制细节仍只在架构文档里。
-- [x] 4.3 新增 `docs/adr/0011-project-scope-belongs-to-pi.md`：记录决策、被否掉的替代（继续用 trust 闸门隔离、给项目级资源补排除项）与后果（profile 失去项目级控制力、项目 settings 行为键覆盖 profile 声明）；验证文件存在、编号为下一个可用编号，且 `design.md` 中标注的 "ADR required: project-scope-belongs-to-pi" 已落地。
-- [x] 4.4 检查 `README.md` 与 `README.zh-CN.md` 是否声称项目级隔离能力；`rg -n -i "unselected|hide|hidden|filter|narrow|project" README.md README.zh-CN.md` 无过时描述，未改动。
+- [x] 4.1 Change `docs/architecture/overview.md`: the "Project level" row becomes "decided natively by Pi, profiles do not participate"; the `packages (project)` row becomes native install; the `trust.json` row becomes linked under every profile; the settings row drops project settings merging; rewrite the two "Known limitations" entries "trust determination of project resources is only performed by the launcher" and "project-scope package skills are not referenceable". Verification: `rg -n "suppress all project auto-discovery|named profiles do not link" docs/architecture/overview.md` has zero hits (checked against the pre-update Chinese wording).
+- [x] 4.2 Change `docs/prd.md`: write the boundary into the non-goals section — a profile's isolation surface is user-level resources; project-level resources are decided by Pi's trust determination. Verification: the boundary item appears in the file, and mechanism details remain only in the architecture document.
+- [x] 4.3 Add `docs/adr/0011-project-scope-belongs-to-pi.md`: records the decision, the rejected alternatives (keep isolating via the trust gate, add exclusions for project-level resources), and the consequences (profiles lose project-level control; project settings behavior keys override profile declarations). Verification: the file exists with the next available number, and the "ADR required: project-scope-belongs-to-pi" mark in `design.md` has landed.
+- [x] 4.4 Check whether `README.md` and `README.zh-CN.md` claim project-level isolation capability; `rg -n -i "unselected|hide|hidden|filter|narrow|project" README.md README.zh-CN.md` shows no stale description; unchanged.
 
-## 5. 收尾
+## 5. Wrap-up
 
-- [x] 5.1 运行 `npm run check` 与 `npm test`，全部通过。
-- [x] 5.2 运行 `openspec validate delegate-project-scope-to-pi`，通过且 tasks 与 specs 一致。
+- [x] 5.1 Run `npm run check` and `npm test`; all pass.
+- [x] 5.2 Run `openspec validate delegate-project-scope-to-pi`; passes with tasks and specs consistent.

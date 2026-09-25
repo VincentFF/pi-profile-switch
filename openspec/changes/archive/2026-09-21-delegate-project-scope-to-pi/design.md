@@ -2,73 +2,73 @@
 
 ## Context
 
-见 `proposal.md` 的 Why。设计约束来自 Pi 的三条既有事实（机制细节见 `docs/architecture/overview.md`，不在此复述）：
+See "Why" in `proposal.md`. The design constraints come from three existing Pi facts (mechanism details in `docs/architecture/overview.md`, not restated here):
 
-- 项目级自动发现（`.pi/skills`、`.pi/extensions`、`.pi/prompts`、`.pi/themes`、项目 `settings.json`）由 Pi 的 `SettingsManager.projectTrusted` 一次决定，`session.reload()` 不重算。
-- 排除项（`-<路径>`）的作用域是各自 scope 的 settings：instance 的 settings 是 global scope，它的排除项只过滤 user scope 的发现结果，管不到项目 scope。
-- 会话内 extension 只能追加资源路径，没有移除已发现资源的 API。
+- Project-level auto-discovery (`.pi/skills`, `.pi/extensions`, `.pi/prompts`, `.pi/themes`, project `settings.json`) is decided once by Pi's `SettingsManager.projectTrusted`; `session.reload()` does not recompute it.
+- Exclusion entries (`-<path>`) are scoped to each scope's own settings: the instance's settings are global scope, so its exclusions only filter user-scope discovery results and cannot touch project scope.
+- In-session, extensions can only append resource paths; there is no API to remove discovered resources.
 
-结论：项目级 narrowing 只有"整块关闭"一条路，而"整块关闭"正是本变更要放弃的东西。
+Conclusion: project-level narrowing has exactly one path — "shut the whole block off" — and "shutting the whole block off" is precisely what this change abandons.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 项目级资源的可见性只由 Pi 的项目信任判定决定；profile 的收窄面限定为用户级资源。
-- 会话内切换与直接启动在项目级可见性上等价，不需要重启进程。
-- 受信任项目下 `default` profile 与原生 Pi 的项目级行为一致；本地行为键仍由 Pi 原生合并顺序决定。
+- Project-level resource visibility is decided solely by Pi's project-trust determination; a profile's narrowing surface is limited to user-level resources.
+- In-session switching is equivalent to a direct launch in project-level visibility, without a process restart.
+- Under a trusted project, the `default` profile's project-level behavior matches native Pi; local behavior keys still follow Pi's native merge order.
 
 **Non-Goals:**
 
-- 不引入交互式信任询问到命名 profile：命名 profile 的 Generated settings 保留 `defaultProjectTrust: "never"`，即"没有已存储决定时不询问、项目级资源不可见"。要看到项目级资源，先用原生 Pi 信任一次或带 `--approve`。理由：启动器在 spawn 前已按同一判定完成 catalog 与 MCP 校验，运行时再让用户改判会产生"catalog 不含项目定义、资源却按项目放行"的同会话分歧。
-- 不让 profile 声明覆盖项目 `.pi/settings.json` 的行为键（见 Risks）。
-- 不改 tools 的白名单语义（项目级不存在工具发现）。
+- No interactive trust prompt for named profiles: a named profile's generated settings keep `defaultProjectTrust: "never"`, i.e. "no stored decision means no prompt, and project-level resources stay invisible". To see project-level resources, trust once with native Pi first or pass `--approve`. Rationale: the launcher has already completed catalog and MCP validation under the same determination before spawn; letting the user flip the decision at runtime would produce an intra-session divergence of "the catalog contains no project definitions while resources are admitted as project's".
+- No letting profile declarations override behavior keys of project `.pi/settings.json` (see Risks).
+- No change to tools whitelist semantics (no tool discovery exists at project level).
 
 ## Decisions
 
-### 1. `trust.json` 成为每种 profile 都建立的链接
+### 1. `trust.json` becomes a link established under every profile
 
-instance 建立指向真实 agentDir 的 `trust.json` 链接；路径已被占用时不覆盖（Pi 在本会话内写入过真实文件时保留它，且不再出现）。
+The instance establishes a `trust.json` link to the real agentDir; when the path is already occupied it is not overwritten (if Pi has written a real file within this session it is kept — and no longer occurs).
 
-- 理由：Pi 的项目信任判定从该路径读取；链接让"已存储决定"在命名 profile 下也生效，并让 Pi 通过链接写入的信任决定落在真实 agentDir（与 `auth.json` 同类，见 `docs/adr/0010-per-launch-instance-lifecycle.md`）。
-- 被否掉的替代：给项目级资源补排除项。排除项作用域不覆盖项目 scope（见 Context），该方案在 Pi 侧不可能实现。
-- 被否掉的替代：切换时不改链接、只改 Generated settings。仍然解决不了 Pi 只判定一次这件事。
+- Rationale: Pi's project-trust determination reads from that path; the link lets "stored decisions" take effect under named profiles too, and trust decisions Pi writes through the link land in the real agentDir (same class as `auth.json`, see `docs/adr/0010-per-launch-instance-lifecycle.md`).
+- Rejected alternative: add exclusions for project-level resources. Exclusions do not cover project scope (see Context); impossible on the Pi side.
+- Rejected alternative: keep the link unchanged at switch time and only change generated settings. Still cannot solve Pi determining trust only once.
 - ADR required: project-scope-belongs-to-pi
 
-### 2. Generated settings 不再表达项目级收窄，也不再合并项目 settings
+### 2. Generated settings neither express project-level narrowing nor merge project settings
 
-项目级 skill/extension 既不写排除项也不写附加路径；项目 `.pi/settings.json` 不再并入 Generated settings，随之删除"剥除项目 `packages`"的逻辑。
+Project-level skills/extensions get neither exclusions nor attached paths; project `.pi/settings.json` is no longer merged into generated settings, and the "strip project `packages`" logic is deleted with it.
 
-- 理由其一（正确性）：项目级条目在 runtime 由 Pi 原生发现，附加路径只会产生重复资源与 scope 归属混乱。
-- 理由其二（必须）：并合项目 settings 会把项目 `packages` 变成 instance 的 *global* packages，于是 Pi 会把它们装进全局 npm 根——这正是先前剥除该键的原因。闸门打开后项目 packages 由 Pi 原生处理（装在项目 `.pi/npm`），pi-profile 既不能再剥除，也就不该再合并。
-- 被否掉的替代：保留合并但继续剥离 `packages`。它会让 Generated settings 与 Pi 实际读到的项目 settings 不一致，且需要逐键维护"哪些键不能并"，不可持续。
+- Rationale one (correctness): project-level entries are discovered natively by Pi at runtime; attached paths would only produce duplicate resources and scope-ownership confusion.
+- Rationale two (necessity): merging project settings would turn project `packages` into the instance's *global* packages, and Pi would install them into the global npm root — exactly why that key used to be stripped. With the gate open, project packages are handled natively by Pi (installed under the project `.pi/npm`); pi-profile can no longer strip them, and therefore should no longer merge either.
+- Rejected alternative: keep merging but keep stripping `packages`. It would make generated settings inconsistent with the project settings Pi actually reads, and would need per-key maintenance of "which keys must not be merged" — unsustainable.
 
-### 3. 项目级资源留在解析词汇表内
+### 3. Project-level resources stay in the resolution vocabulary
 
-受信任项目的项目级 skill/extension 仍可被 profile 引用（字面量、glob 都能解析成功），只是选择结果不写入 Generated settings。
+A trusted project's project-level skills/extensions remain referenceable by profiles (literals and globs both resolve successfully); the selection result is simply not written into generated settings.
 
-- 理由：把项目级资源移出词汇表会让"引用项目内 skill"从解析成功变成激活失败，是比原问题更糟的行为回归；`/profile status` 也仍应报告它们。
+- Rationale: moving project-level resources out of the vocabulary would turn "referencing an in-project skill" from a resolution success into an activation failure — a worse behavior regression than the original problem; `/profile status` should also keep reporting them.
 
-### 4. `mcps` 的收窄不作用于项目来源 server
+### 4. `mcps` narrowing does not apply to project-sourced servers
 
-项目 `.mcp.json`、项目 `.pi/mcp.json` 定义的 server 保持启用；仍被禁用的是用户级共享位置里未被允许的 server。
+Servers defined by project `.mcp.json` and project `.pi/mcp.json` stay enabled; the ones still disabled are unselected servers in user-level shared locations.
 
-- 理由：与 skills/extensions 同一条边界——项目级资源不由 profile 收窄。用户级共享位置必须显式标记禁用是 adapter 直接读取这些位置造成的，与项目无关。
-- 被否掉的替代：保持现状（项目 server 可被 profile 禁用）。它与本变更的边界声明自相矛盾。
+- Rationale: the same boundary as skills/extensions — project-level resources are not narrowed by profiles. User-level shared locations needing explicit disable marks is caused by the adapter reading those locations directly, unrelated to projects.
+- Rejected alternative: keep the status quo (project servers can be disabled by profiles). It contradicts this change's boundary statement.
 
-### 5. 一次性信任输入转发给所有 profile
+### 5. One-shot trust input forwarded to all profiles
 
-`--approve` / `--no-approve` 不再只对 `default` 转发。
+`--approve` / `--no-approve` are no longer forwarded only for `default`.
 
-- 理由：不转发时，命名 profile 下启动器按 `--no-approve` 判定不受信任（不读项目 catalog），而 Pi 仍按已存储决定放行项目级资源——同一次启动里两个判定分歧。
+- Rationale: without forwarding, under a named profile the launcher judges untrusted per `--no-approve` (not reading the project catalog), while Pi still admits project-level resources per stored decisions — two diverging determinations within one launch.
 
 ## Risks / Trade-offs
 
-- [profile 失去对项目级资源的任何控制力] → 已受信任项目的 skill/extension 在任何 profile 下都会进入会话，包括只读风格的 profile。缓解：信任判定本身是唯一闸门，这与原生 Pi 一致；在 `docs/architecture/overview.md` 与 PRD 的边界段落写明，不靠隐含假设。
-- [项目 `.pi/settings.json` 的行为键覆盖 profile 声明] → 按 Pi 的合并顺序（项目覆盖 global），项目的 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 会压过 profile 的声明；`defaultTools` 只影响启动基线，extension 在 session start 会按 profile 的 tool 引用重新收紧。缓解：记录为已知边界；如需 profile 的 model 优先，另开变更在 session start 重新施加（本变更不做）。
-- [项目 packages 首次启动会安装，可能联网并变慢] → 这是 Pi 在受信任项目下的原生行为；未受信任项目与 `--no-approve` 不触发。
-- [集成测试期望反转] → `test/project-scope.integration.test.ts` 现有断言（受信任项目里未选中的项目资源不可见、项目 settings 并入）与本变更冲突，需要按新语义重写并补信任链接与 MCP 的用例。
+- [Profiles lose all control over project-level resources] → a trusted project's skills/extensions enter the session under every profile, including read-only-style profiles. Mitigation: the trust determination itself is the only gate, consistent with native Pi; stated in writing in `docs/architecture/overview.md` and the PRD's boundary section rather than left as an implicit assumption.
+- [Behavior keys of project `.pi/settings.json` override profile declarations] → per Pi's merge order (project over global), the project's `defaultProvider`/`defaultModel`/`defaultThinkingLevel` beat the profile's declarations; `defaultTools` only affects the boot baseline — the extension re-tightens tools per the profile's tool references at session start. Mitigation: recorded as a known boundary; if profile-priority model selection is needed, open a separate change to re-apply it at session start (not done here).
+- [Project packages install on first launch, possibly hitting the network and slowing things down] → this is Pi's native behavior in a trusted project; untrusted projects and `--no-approve` do not trigger it.
+- [Integration test expectations invert] → existing assertions in `test/project-scope.integration.test.ts` (unselected project resources invisible in a trusted project, project settings merged) conflict with this change and must be rewritten to the new semantics, with cases added for the trust link and MCP.
 
 ## Migration Plan
 
-无持久化格式变更，无需迁移。回滚即回退了本变更的提交：instance 目录每次启动重建，不携带旧状态。
+No persistent format changes, no migration needed. Rolling back means reverting this change's commits: the instance directory is rebuilt on every launch and carries no old state.

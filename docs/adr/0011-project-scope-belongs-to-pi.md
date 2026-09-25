@@ -1,43 +1,43 @@
-# 项目级资源归 Pi，profile 只收窄用户级资源
+# Project-level resources belong to Pi; profiles narrow user-level resources only
 
-补充 ADR-0005 的背景：它列出的"项目级自动发现可被 `defaultProjectTrust: "never"` 完全抑制"仍是事实，但抑制不再作为过滤手段使用。
+Supplementing ADR-0005's context: its claim that "project-level auto-discovery can be fully suppressed by `defaultProjectTrust: \"never\"`" remains a fact, but suppression is no longer used as a filtering means.
 
-## 背景
+## Context
 
-隔离面是四类资源（skills、extensions、MCP servers、tools），而 Pi 的项目级开关是全或全无的，并且只在启动时被读取一次：
+The isolation surface is four resource categories (skills, extensions, MCP servers, tools), while Pi's project-level switch is all-or-nothing and is read exactly once at startup:
 
-- `SettingsManager.projectTrusted` 按进程、按 cwd 判定一次；`session.reload()` 不重算，Pi 自己的文档也说信任变更需重启进程。
-- 排除项（`-<路径>`）的作用域是各自 scope 的 settings；instance 的 `settings.json` 是 global scope，过滤不到项目 scope 的发现结果，也管不了项目 `.pi/settings.json` 声明的资源数组。
-- 会话内没有移除已发现资源的 API：extension 只能用 `resources_discover` 追加 skill、prompt、theme 路径。
+- `SettingsManager.projectTrusted` is determined once per process, per cwd; `session.reload()` does not recompute it, and Pi's own documentation says trust changes require a process restart.
+- Exclusion entries (`-<path>`) are scoped to each scope's own settings; the instance's `settings.json` is global scope, so it cannot filter project-scope discovery results nor govern resource arrays declared by the project `.pi/settings.json`.
+- There is no in-session API to remove discovered resources: extensions can only append skill, prompt, and theme paths via `resources_discover`.
 
-因此"按 profile 收窄项目级资源"只有一条实现路径：用 trust 闸门整块压制项目级发现。它带来三个代价：隔离面比定位宽（项目级 prompts、themes、settings 被一并屏蔽）；会话内切换回到 `default` 后项目级资源仍不可见（treat 判定已冻结，切回后必须重启）；闸门开着时（`default` 启动后切到命名 profile）项目级资源会泄漏，而排除项对项目 scope 无效。
+Therefore "narrowing project-level resources by profile" has exactly one implementation path: using the trust gate to suppress project-level discovery wholesale. It brings three costs: the isolation surface is wider than the positioning (project-level prompts, themes, and settings get blocked along); after switching back to `default` in-session, project-level resources remain invisible (the trust determination is frozen, so switching back requires a restart); and while the gate is open (started as `default`, then switched to a named profile) project-level resources leak, because exclusions are ineffective against project scope.
 
-## 决策
+## Decision
 
-项目级资源的可见性由 Pi 的项目信任判定单独决定：
+The visibility of project-level resources is decided solely by Pi's project-trust determination:
 
-- instance 的 `trust.json` 是指向真实 trust store 的符号链接，每种 profile 都建立（目标不存在时同样建立）。
-- 一次性信任输入（`--approve` / `--no-approve`）转发给任何 profile 的 Pi 进程，使判定两侧一致。
-- Generated settings 不编码项目级资源：既不加白名单也不加排除项，也不合并项目 `.pi/settings.json`；项目 packages 因此走 Pi 原生安装路径，不会成为全局 npm 根的安装副作用。
-- profile 的收窄面是用户级资源：真实 agentDir 与 `~/.agents/skills`。
+- The instance's `trust.json` is a symlink to the real trust store, established for every profile (also when the target does not exist yet).
+- One-shot trust input (`--approve` / `--no-approve`) is forwarded to the Pi process of any profile, keeping both sides of the determination consistent.
+- Generated settings do not encode project-level resources: no whitelist entries, no exclusions, and no merging of project `.pi/settings.json`; project packages therefore follow Pi's native install path and never become an install side effect of the global npm root.
+- A profile's narrowing surface is user-level resources: the real agentDir and `~/.agents/skills`.
 
-命名 profile 的生成 settings 保留 `defaultProjectTrust: "never"`，其作用收窄为"不发起信任询问"。
+Named profiles keep `defaultProjectTrust: "never"` in their generated settings, its role narrowed to "do not initiate a trust prompt".
 
-## 被否方案
+## Rejected alternatives
 
-**给项目级资源补排除项**（保留闸门，用排除项同时收窄两侧）：排除项只作用于各自 scope 的 settings，无法过滤项目 scope 的发现结果，也无法阻止项目 `.pi/settings.json` 声明的资源数组。该方案在 Pi 侧不可能实现。
+**Adding exclusions for project-level resources** (keeping the gate while narrowing both sides with exclusions): exclusions apply only to their own scope's settings, cannot filter project-scope discovery results, and cannot stop resource arrays declared by project `.pi/settings.json`. This design is impossible on the Pi side.
 
-**在每次 session start 重新施加 profile 的属性**（把项目 settings 的影响再压回去）：等价于与 Pi 的合并顺序对抗，且要逐键维护，无法覆盖任意键。
+**Re-applying the profile's properties at every session start** (pressing the influence of project settings back down): equivalent to fighting Pi's merge order, maintained key by key, and unable to cover arbitrary keys.
 
-**把 Pi 的交互式信任询问引入命名 profile**（运行时补做信任决定）：启动器在 spawn 前已按"未受信任"完成 catalog 与 MCP 校验，运行时改判会出现"项目 catalog 不含项目定义、项目资源却放行"的同会话分歧。
+**Bringing Pi's interactive trust prompt into named profiles** (making trust decisions at runtime): the launcher has already completed catalog and MCP validation as "untrusted" before spawn; flipping the determination at runtime would produce an intra-session divergence of "the project catalog contains no project definitions while project resources are admitted".
 
-## 代价
+## Consequences
 
-- profile 失去对项目级资源的控制力：已受信任项目的 skill、extension 与 MCP server 在任何 profile 下都可用，只读风格的 profile 也不能隐藏它们；项目信任是唯一闸门。
-- 项目 `.pi/settings.json` 的行为键（`defaultProvider`、`defaultModel`、`defaultThinkingLevel`）按 Pi 的合并顺序覆盖 profile 声明；tools 不受影响（extension 在 session start 重新收紧工具）。
-- 命名 profile 在项目未受信任且无已存储决定时不发起询问，项目级资源此时不可见。
-- 与 Pi 的耦合点从"用 `never` 抑制项目发现"转为 trust store 的位置与合并顺序；集成测试用真实 Pi 子进程守卫。
+- Profiles lose control over project-level resources: a trusted project's skills, extensions, and MCP servers are available under every profile, and even read-only-style profiles cannot hide them; project trust is the only gate.
+- Behavior keys in project `.pi/settings.json` (`defaultProvider`, `defaultModel`, `defaultThinkingLevel`) override profile declarations per Pi's merge order; tools are unaffected (the extension re-tightens tools at session start).
+- Named profiles do not initiate a prompt when the project is untrusted and no stored decision exists; project-level resources are invisible in that state.
+- The coupling point with Pi shifts from "suppressing project discovery with `never`" to the trust store's location and merge order; integration tests with real Pi subprocesses stand guard.
 
-## 相关
+## Related
 
-行为契约见 `openspec/specs/launcher/spec.md`、`openspec/specs/resource-reference/spec.md`、`openspec/specs/in-session-switch/spec.md`；机制归属见 `docs/architecture/overview.md` 的过滤模型。
+Behavior contracts: `openspec/specs/launcher/spec.md`, `openspec/specs/resource-reference/spec.md`, `openspec/specs/in-session-switch/spec.md`; mechanism ownership: the filtering model in `docs/architecture/overview.md`.

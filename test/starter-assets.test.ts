@@ -1,6 +1,6 @@
 /**
  * Tests for runtime ensure of starter assets (src/starter-assets.ts).
- * Validates spec delta scenarios for "播种 starter profile" and "分发 profile-config skill".
+ * Validates spec delta scenarios for "Seeding the starter profile" and "Distributing the profile-config skill".
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -27,8 +27,8 @@ afterEach(async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
-describe("ensureStarterAssets - 播种 starter profile", () => {
-	it("Scenario: 启动时补齐 - writes starter profile ask.json when profiles directory is missing", async () => {
+describe("ensureStarterAssets - Seeding the starter profile", () => {
+	it("Scenario: Backfill at startup - writes starter profile ask.json when profiles directory is missing", async () => {
 		const result = await ensureStarterAssets({ globalProfilesDir, agentDir });
 
 		expect(result.profile.written).toBe(true);
@@ -40,7 +40,7 @@ describe("ensureStarterAssets - 播种 starter profile", () => {
 		expect(result.warnings).toEqual([]);
 	});
 
-	it("Scenario: 启动时补齐 - writes starter profile when profiles directory has no .json files", async () => {
+	it("Scenario: Backfill at startup - writes starter profile when profiles directory has no .json files", async () => {
 		await mkdir(globalProfilesDir, { recursive: true });
 		await writeFile(path.join(globalProfilesDir, "notes.txt"), "no profiles yet");
 
@@ -53,7 +53,7 @@ describe("ensureStarterAssets - 播种 starter profile", () => {
 		expect(writtenContent).toBe(templateContent);
 	});
 
-	it("Scenario: 启动时不覆盖 - does not write when a .json profile already exists", async () => {
+	it("Scenario: No overwrite at startup - does not write when a .json profile already exists", async () => {
 		await mkdir(globalProfilesDir, { recursive: true });
 		const customProfile = path.join(globalProfilesDir, "custom.json");
 		await writeFile(customProfile, JSON.stringify({ tools: ["read"] }));
@@ -67,7 +67,7 @@ describe("ensureStarterAssets - 播种 starter profile", () => {
 		await expect(readFile(path.join(globalProfilesDir, "ask.json"))).rejects.toThrow();
 	});
 
-	it("Scenario: 启动时不覆盖 - idempotent across multiple runs", async () => {
+	it("Scenario: No overwrite at startup - idempotent across multiple runs", async () => {
 		const first = await ensureStarterAssets({ globalProfilesDir, agentDir });
 		expect(first.profile.written).toBe(true);
 
@@ -75,7 +75,7 @@ describe("ensureStarterAssets - 播种 starter profile", () => {
 		expect(second.profile.written).toBe(false);
 	});
 
-	it("Scenario: 启动时播种失败降级为警告 - downgrades write failure to warning and does not throw", async () => {
+	it("Scenario: Startup seeding failure degrades to a warning - downgrades write failure to warning and does not throw", async () => {
 		await mkdir(path.dirname(globalProfilesDir), { recursive: true });
 		// Block profiles directory creation with a regular file
 		await writeFile(globalProfilesDir, "blocking file");
@@ -89,8 +89,8 @@ describe("ensureStarterAssets - 播种 starter profile", () => {
 	});
 });
 
-describe("ensureStarterAssets - 分发 profile-config skill", () => {
-	it("Scenario: 启动时补齐或同步 (补齐) - writes shipped skill when SKILL.md does not exist", async () => {
+describe("ensureStarterAssets - Distributing the profile-config skill", () => {
+	it("Scenario: Backfill or sync at startup (backfill) - writes shipped skill when SKILL.md does not exist", async () => {
 		const result = await ensureStarterAssets({ globalProfilesDir, agentDir });
 
 		expect(result.skill.written).toBe(true);
@@ -102,7 +102,7 @@ describe("ensureStarterAssets - 分发 profile-config skill", () => {
 		expect(result.warnings).toEqual([]);
 	});
 
-	it("Scenario: 启动时补齐或同步 (同步) - overwrites existing skill when content differs", async () => {
+	it("Scenario: Backfill or sync at startup (sync) - overwrites existing skill when content differs", async () => {
 		const skillDir = path.join(agentDir, "skills", "profile-config");
 		await mkdir(skillDir, { recursive: true });
 		const targetFile = path.join(skillDir, "SKILL.md");
@@ -118,7 +118,7 @@ describe("ensureStarterAssets - 分发 profile-config skill", () => {
 		expect(writtenContent).toBe(templateContent);
 	});
 
-	it("Scenario: 启动时内容已一致 - does not write when content is already identical", async () => {
+	it("Scenario: Content already in sync at startup - does not write when content is already identical", async () => {
 		const skillDir = path.join(agentDir, "skills", "profile-config");
 		await mkdir(skillDir, { recursive: true });
 		const targetFile = path.join(skillDir, "SKILL.md");
@@ -131,7 +131,7 @@ describe("ensureStarterAssets - 分发 profile-config skill", () => {
 		expect(result.skill.path).toBe(targetFile);
 	});
 
-	it("Scenario: 启动时分发失败降级为警告 - downgrades write failure to warning and does not throw", async () => {
+	it("Scenario: Startup distribution failure degrades to a warning - downgrades write failure to warning and does not throw", async () => {
 		await mkdir(agentDir, { recursive: true });
 		// Block skills directory with a regular file
 		await writeFile(path.join(agentDir, "skills"), "blocking file");
@@ -145,7 +145,7 @@ describe("ensureStarterAssets - 分发 profile-config skill", () => {
 	});
 });
 
-describe("ensureStarterAssets - 独立成败", () => {
+describe("ensureStarterAssets - independent outcomes", () => {
 	it("profile failure does not prevent skill distribution from succeeding", async () => {
 		await mkdir(path.dirname(globalProfilesDir), { recursive: true });
 		await writeFile(globalProfilesDir, "blocking file");

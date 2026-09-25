@@ -1,33 +1,33 @@
-# 引用解析的失败分级
+# Failure tiering for reference resolution
 
-## 背景
+## Context
 
-profile 的引用可以是字面量（skill 名、包名、散装文件名、MCP server 名、tool 名）或 glob，两者的可观测性完全不同。
+A profile's references can be literals (skill names, package names, loose-file names, MCP server names, tool names) or globs, and the two have completely different observability.
 
-字面量写错是确定的错误，可以立刻指出。glob 零匹配既可能是拼错，也可能只是资源本来就还没装——而 glob 是动态引用，每次 reload 都会重新展开。
+A misspelled literal is a definite error that can be pointed out immediately. A zero-match glob might be a typo, but might equally mean the resource simply is not installed yet — and a glob is a dynamic reference, re-expanded on every reload.
 
-## 决策
+## Decision
 
-按错误的确定性分级，不一律失败：
+Tier by error certainty rather than failing uniformly:
 
-| 引用形态 | 结果 |
+| Reference form | Outcome |
 | --- | --- |
-| 字面量未匹配（skill、MCP server） | 硬失败，报 `unknown <kind>` |
-| 字面量未匹配（extension） | 硬失败，错误携带已发现候选列表与相近名提示 |
-| glob 零匹配（skill、extension、MCP） | 软失败，收集进 `plan.unmatched`，作为启动警告与 `/profile status` 可见项，不阻塞激活 |
-| glob 零匹配（tool） | 不记录 |
-| 字面量未匹配（tool） | 透传，不校验 |
+| Unmatched literal (skill, MCP server) | Hard failure, reports `unknown <kind>` |
+| Unmatched literal (extension) | Hard failure; the error carries the discovered candidate list and near-miss hints |
+| Zero-match glob (skill, extension, MCP) | Soft failure; collected into `plan.unmatched`, visible as launch warnings and in `/profile status`, does not block activation |
+| Zero-match glob (tool) | Not recorded |
+| Unmatched literal (tool) | Passed through, not validated |
 
-tool 是唯一的例外，因为它由 extension 提供，在 spawn 前不可知：spawn 前的零匹配不构成证据，字面量也无法校验。
+Tools are the only exception because they are contributed by extensions and unknowable before spawn: a zero match before spawn is not evidence, and literals cannot be validated.
 
-散装文件与包名 ID 碰撞时**散装胜出**并记录 warning，包仍可经 source 别名选中。
+When a loose file and a package name produce the same ID, **the loose file wins**, a warning is logged, and the package remains selectable via its source alias.
 
-## 被否方案
+## Rejected alternatives
 
-**所有引用失败一律硬失败**，与字面量对称。否掉 glob 零匹配应用此方案的理由：glob 是动态引用，把零匹配当错误会让「为新装的资源预留 glob」这种正常用法变成阻塞失败。
+**Hard-failing every reference failure**, symmetric with literals. Rejected for zero-match globs because a glob is a dynamic reference: treating zero matches as an error would turn the legitimate "reserve a glob for resources to be installed later" usage into a blocking failure.
 
-## 代价
+## Consequences
 
-- 写错 glob 不阻塞激活，只在启动警告与 `/profile status` 中提示，可能被忽略。
-- 未匹配的 tool 字面量静默透传，直到调用的工具不存在时才暴露。
-- ID 碰撞的胜出方由磁盘状态决定，包名引用的实际含义依赖散装文件是否存在。
+- A misspelled glob does not block activation; it only appears in launch warnings and `/profile status`, and may be overlooked.
+- An unmatched tool literal passes silently until the called tool turns out not to exist.
+- The winner of an ID collision is decided by on-disk state; the actual meaning of a package-name reference depends on whether a loose file exists.

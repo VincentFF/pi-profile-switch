@@ -1,40 +1,40 @@
-# 带扫描守门的条件收养与 real wins 冲突删除
+# Conditional adoption with scan gating and real-wins conflict deletion
 
-instance 生命周期见 [ADR-0010](0010-per-launch-instance-lifecycle.md)；本文件只记录启动清扫对未识别条目的处置决策。
+For the instance lifecycle, see [ADR-0010](0010-per-launch-instance-lifecycle.md); this file records only the startup sweep's disposition of unrecognized entries.
 
-## 背景
+## Context
 
-ADR-0010 让清扫对未识别条目一律"保留 + 警告"：第三方状态一个字节都不动，代价是死目录与用户手动搬运的负担在每次启动重复出现。扩展写 instance 内文件是已观察事实（pi-mcp-adapter 的 `mcp-cache.json`），而 pi-subagents 台账等记录内嵌 instance 绝对路径（`recordPath`、`ownerSessionId`、artifacts 路径）也是事实，搬走即 stale——ADR-0010 因此否决了"回收时吸收"。但该否决针对的是"无条件"：它反对的是不看内容就搬，不是搬这个动作本身。"条目是否在意自己住在哪"是机械可检测的——字节扫描即可判定。
+ADR-0010 made the sweep uniformly "keep + warn" for unrecognized entries: not one byte of third-party state is touched, at the cost of dead directories and the burden of manual moves recurring on every launch. Extensions writing files inside the instance is an observed fact (pi-mcp-adapter's `mcp-cache.json`), and records such as pi-subagents' ledger embedding instance absolute paths (`recordPath`, `ownerSessionId`, artifact paths) are also facts — moving them makes them stale, which is why ADR-0010 rejected "absorb on reclaim". But that rejection targeted the *unconditional* version: it objected to moving without looking at content, not to moving itself. "Does an entry care where it lives" is mechanically detectable — a byte scan decides it.
 
-## 决策
+## Decision
 
-对待回收 instance 目录第一层的每个未识别条目，清扫按内容扫描分流（文件与目录同一状态机，目录递归全部成员）：
+For each unrecognized entry at the first level of a reclaimable instance directory, the sweep routes by content scan (files and directories share one state machine; directories are recursed over all members):
 
-- 条目内容引用其所在 instance 目录的绝对路径、扫描超出体积/数量上限无法判定、或条目不是常规文件/目录 → 保留 + 警告，与现状逐字节一致。
-- 扫描阴性（内容不引用 instance 路径，即位置无关）且真实 agentDir 无同名条目 → rename 搬入真实 agentDir，stderr 输出一行指明条目与去向的 notice。收养后下次启动经镜像转为符号链接，此后写入穿透进真实 agentDir，不再产生警告。
-- 扫描阴性但真实 agentDir 已有同名条目 → 删除 instance 内副本（real wins），stderr 输出一行 notice，不做内容比较。
+- The entry's content references the absolute path of its own instance directory, the scan exceeds size/count limits and cannot decide, or the entry is not a regular file/directory → keep + warn, byte-for-byte identical to the status quo.
+- Scan negative (content does not reference the instance path, i.e. location-agnostic) and no same-named entry in the real agentDir → rename-move into the real agentDir, with a one-line notice to stderr naming the entry and its destination. After adoption, the next launch turns it into a symlink via mirroring; subsequent writes pass through into the real agentDir and no more warnings appear.
+- Scan negative but a same-named entry exists in the real agentDir → delete the instance copy (real wins), with a one-line notice to stderr, without comparing content.
 
-分流依据：镜像的链接方向本身就表达"instance 是临时的、真实 agentDir 是权威的"，冲突分支只是把这个层级延伸到收养路径。同名冲突按构造只在"真实条目于该 instance 启动之后才出现"的竞态窗口触发，其丢失代价显式接受。收养与删除都向 stderr 输出 notice，自动但可见，不越 ADR-0010"不静默销毁"的红线。
+Routing rationale: the mirror's link direction itself expresses "the instance is temporary, the real agentDir is authoritative"; the conflict branch merely extends that hierarchy to the adoption path. Same-name conflicts by construction only trigger in the race window where "the real entry appeared after that instance launched", and the loss cost in that window is explicitly accepted. Both adoption and deletion print a notice to stderr — automatic but visible, staying within ADR-0010's red line of "no silent destruction".
 
-实现落在 `src/launcher/runtime-cleanup.ts`：扫描上限是实现内部常量（超限即"无法判定"），不进用户配置。受管目录 `extensions/` 内部的未识别条目只走保留 + 警告分支，不参与收养或删除。
+The implementation lives in `src/launcher/runtime-cleanup.ts`: scan limits are internal implementation constants (over-limit means "cannot decide") and never enter user configuration. Unrecognized entries inside the managed `extensions/` directory only take the keep + warn branch and never participate in adoption or deletion.
 
-## 被否方案
+## Rejected alternatives
 
-**扩大 seed 名单**。名单是对未来的预测，扩展改路径即静默失效（ADR-0010 已否决同一方案）。内容扫描对一切未来扩展成立，无需先验知识。
+**Expanding the seed list.** The list is a prediction of the future and fails silently when an extension changes paths (ADR-0010 rejected the same design). Content scanning holds for all future extensions without prior knowledge.
 
-**无条件"回收时吸收"**。即 ADR-0010 否决的方案本身：内嵌 instance 路径的记录被搬走即 stale，且需要一套冲突合并策略。本决策不推翻该否决——扫描守门保留的正是否决要保护的对象。
+**Unconditional "absorb on reclaim".** The very design ADR-0010 rejected: records embedding instance paths go stale when moved, and it requires a conflict-merge strategy. This decision does not overturn that rejection — the scan gate preserves exactly what the rejection protected.
 
-**两侧内容比较后再决定收养或删除**。字节比较回答的是"两副本是否一致"，而收养的安全性取决于"条目是否在意自己住在哪"，是另一个问题；相同内容删了本无损失，分歧情形只落在上述竞态窗口。
+**Comparing content on both sides before deciding adoption or deletion.** A byte comparison answers "are the two copies identical", while adoption safety depends on "does the entry care where it lives" — a different question; identical content deleted is no loss, and divergent cases only fall in the race window above.
 
-**分歧时保留 + 警告**。把一个已有明确取舍规则的分支退回人工，警告会每次启动复发，正是本次要消除的困扰。
+**Keep + warn on divergence.** Returning a branch with an explicit trade-off rule to manual handling would make the warning recur on every launch — precisely the annoyance this change eliminates.
 
-## 代价
+## Consequences
 
-- 扫描假阴性（路径被 gzip、URL 编码等形式藏住）会把嵌路径记录错误收养。后果上限等于用户按现行警告文本手动执行 mv 的同类后果，非新增伤害类别；缓解是上限内全量字节扫描 + 超限即保留。
-- 冲突窗口比"两个实例同时启动"宽：任何在真实条目出现之前启动的 instance，其私有副本在它死后的下次清扫被删。
-- 目录递归扫描增加启动 I/O：仅作用于本来就要警告的死目录（罕见路径），上限保证有界。
-- 收养 rename 跨设备可能失败：instance 根与真实 agentDir 同在 `$HOME` 下，正常情况下可用；失败按 best-effort 落入保留 + 警告，不阻塞启动。
+- Scan false negatives (paths hidden by gzip, URL encoding, etc.) can wrongly adopt path-embedding records. The consequence ceiling equals the user manually running `mv` per the current warning text — not a new category of harm; mitigation is full byte scanning within limits plus keep-on-overflow.
+- The conflict window is wider than "two instances launching simultaneously": for any instance launched before the real entry appeared, its private copy is deleted at the next sweep after its death.
+- Recursive directory scanning adds startup I/O: it applies only to dead directories that would have been warned about anyway (a rare path), and limits keep it bounded.
+- Adoption rename can fail across devices: the instance root and the real agentDir both live under `$HOME`, so it works normally; failure degrades best-effort into keep + warn and does not block startup.
 
-## 相关
+## Related
 
-行为契约见 `openspec/specs/launcher/spec.md` 的「陈旧 instance 清扫」；实现机制归属见 `docs/architecture/overview.md` 的「instance 清扫」。
+Behavior contract: "Stale instance sweep" in `openspec/specs/launcher/spec.md`; implementation mechanism: "Instance sweep" in `docs/architecture/overview.md`.

@@ -2,30 +2,30 @@
 
 ## MODIFIED Requirements
 
-### Requirement: 启动诊断输出
+### Requirement: Launch diagnostic output
 
-启动器 SHALL 把非致命的诊断信息输出到 stderr 并继续启动：extension 发现的警告、解析阶段零匹配的 glob 引用，以及未受信任项目提示。
+The launcher SHALL print non-fatal diagnostics to stderr and continue startup: extension discovery warnings, glob references with zero matches during resolution, and the untrusted-project notice.
 
-项目信任判定为未受信任，且项目目录中存在因不信任而不可用的内容——pi-profile 的项目文件或任何需要信任的 Pi 项目资源——时，启动器 SHALL 输出一条诊断，说明项目未受信任、哪些内容因此不可见、以及如何授权：`/trust` 持久保存信任决定（下次启动生效），`-- --approve` 本次一次性信任。该诊断 SHALL 对所有 profile 一致，包括 `default`。启动 SHALL 照常继续，退出码不变。
+When the project-trust determination is untrusted and the project directory contains content unavailable because of that — pi-profile's project files or any trust-requiring Pi project resources — the launcher SHALL print one diagnostic stating that the project is untrusted, which content is therefore invisible, and how to authorize: `/trust` persists the trust decision (effective on the next launch), `-- --approve` grants one-shot trust for this launch. This diagnostic SHALL behave identically for every profile, including `default`. Startup SHALL continue as usual and the exit code is unchanged.
 
-项目受信任，或未受信任但项目不含任何需要信任的内容时，SHALL NOT 输出该诊断。
+When the project is trusted, or untrusted but contains no trust-requiring content, this diagnostic SHALL NOT be printed.
 
-#### Scenario: 零匹配 glob
+#### Scenario: Zero-match glob
 
-- **WHEN** profile 的某个 glob 引用本次解析零匹配
-- **THEN** 启动继续，stderr 输出一条指明该引用零匹配的警告
+- **WHEN** a glob reference in the profile matches nothing in this resolution
+- **THEN** startup continues, and stderr carries a warning identifying the zero-match reference
 
-#### Scenario: 未受信任项目存在被跳过的内容
+#### Scenario: Untrusted project has skipped content
 
-- **WHEN** 项目未受信任，且项目目录下存在 `.pi/profiles.json` 或 `.pi/extensions` 等需要信任的内容
-- **THEN** 启动继续、退出码不变，stderr 输出一条诊断，说明项目未受信任、不可见的内容与授权方式（`/trust` 与 `-- --approve`）
+- **WHEN** the project is untrusted and trust-requiring content such as `.pi/profiles.json` or `.pi/extensions` exists under the project directory
+- **THEN** startup continues with an unchanged exit code, and stderr carries a diagnostic stating the project is untrusted, the invisible content, and how to authorize (`/trust` and `-- --approve`)
 
-#### Scenario: 受信任项目无诊断
+#### Scenario: No diagnostic for trusted projects
 
-- **WHEN** 项目已受信任
-- **THEN** 不输出未受信任项目诊断
+- **WHEN** the project is trusted
+- **THEN** the untrusted-project diagnostic is not printed
 
-#### Scenario: 未受信任但无需要信任的内容
+#### Scenario: Untrusted but no trust-requiring content
 
-- **WHEN** 以 `--no-approve` 启动，且项目目录不含任何需要信任的资源与 pi-profile 项目文件
-- **THEN** 不输出未受信任项目诊断
+- **WHEN** launched with `--no-approve` and the project directory contains neither trust-requiring resources nor pi-profile project files
+- **THEN** the untrusted-project diagnostic is not printed

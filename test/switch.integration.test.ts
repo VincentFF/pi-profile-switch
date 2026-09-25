@@ -89,7 +89,7 @@ describe("launcher integration: in-session switching", () => {
 
 				// No restart, same session, unchanged project-level visibility. Default
 				// is unfiltered, so it additionally exposes the launcher-distributed
-				// profile-config skill (spec: 分发 profile-config skill).
+				// profile-config skill (spec: Distributing the profile-config skill).
 				const after = await getState(rpc);
 				expect(after.sessionId).toBe(before.sessionId);
 				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([

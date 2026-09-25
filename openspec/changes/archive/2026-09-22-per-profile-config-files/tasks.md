@@ -1,28 +1,28 @@
 # Tasks
 
-## 1. 读侧：目录形态的 catalog
+## 1. Read side: the directory-form catalog
 
-- [x] 1.1 `src/workspace.ts`：用 `getGlobalProfilesDir()`（工作区根下 `profiles/`）替换 `getGlobalProfilesPath`/`resolveGlobalProfilesPath`，删除 agentDir legacy 回退；`npm run check` 通过（调用方暂存编译错误可在 1.3 一并修复）
-- [x] 1.2 `src/profile-catalog.ts`：读侧改为枚举 `profiles/` 目录的 `*.json` 常规文件，basename 即 profile 名；忽略非 `.json` 条目与子目录；单文件非法 JSON 或顶层非对象时抛 `CatalogError` 并指明文件路径；`default.json` 存在时报错；非法名字（不匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$`）的文件报错并指明路径；覆盖语义保持逐名字完整替换。验证：新增/改写的单测覆盖 specs delta 中「Catalog 目录位置与发现」「Catalog 文件格式校验」「内建 default profile」「Profile 名字约束」的全部 scenario
+- [x] 1.1 `src/workspace.ts`: replace `getGlobalProfilesPath`/`resolveGlobalProfilesPath` with `getGlobalProfilesDir()` (`profiles/` under the workspace root), deleting the agentDir legacy fallback; `npm run check` passes (callers with transient compile errors may be fixed together in 1.3)
+- [x] 1.2 `src/profile-catalog.ts`: the read side now enumerates `*.json` regular files in the `profiles/` directory, basename as profile name; ignores non-`.json` entries and subdirectories; throws `CatalogError` identifying the file path when a single file is illegal JSON or has a non-object top level; errors when `default.json` exists; errors identifying the path for files with illegal names (not matching `^[A-Za-z0-9][A-Za-z0-9._-]*$`); override semantics stay per-name complete replacement. Verification: new/rewritten unit tests cover every scenario of "Catalog directory locations and discovery", "Catalog file format validation", "Built-in default profile", and "Profile name constraints" in the specs delta
 
-## 2. 写侧：单文件 upsert / delete
+## 2. Write side: single-file upsert / delete
 
-- [x] 2.1 `src/profile-catalog-store.ts`：upsert 写 `<dir>/<name>.json`（先经 `parseProfileDefinition` 校验，写临时文件再 rename），delete 删对应文件；删除 `writeDefinitions` 与写时重读逻辑；非法名字写入失败并说明规则。验证：单测覆盖「Catalog 写入」「Profile 创建、编辑与复制」「Profile 删除」「Profile 名字约束」写侧 scenario
-- [x] 2.2 `src/switching/profile-crud.ts`：store 构造改传目录路径（全局 `getGlobalProfilesDir()`，项目 `<cwd>/.pi/profiles/`）。验证：`npm run check` 通过，相关单测通过
+- [x] 2.1 `src/profile-catalog-store.ts`: upsert writes `<dir>/<name>.json` (validated by `parseProfileDefinition` first, temp file then rename); delete removes the corresponding file; `writeDefinitions` and the re-read-on-write logic are deleted; illegal names fail the write with the rule explained. Verification: unit tests cover the write-side scenarios of "Catalog writes", "Profile create, edit, and duplicate", "Profile deletion", and "Profile name constraints"
+- [x] 2.2 `src/switching/profile-crud.ts`: the store constructor now takes a directory path (global `getGlobalProfilesDir()`, project `<cwd>/.pi/profiles/`). Verification: `npm run check` passes, related unit tests pass
 
-## 3. 播种与 schema
+## 3. Seeding and schema
 
-- [x] 3.1 `bin/postinstall.js`：播种目标改为全局 `profiles/ask.json`，仅当目录中没有任何 `.json` 文件时写入（仍 `COPYFILE_EXCL`、失败不阻塞安装），删除 legacy 路径检测。验证：postinstall 单测覆盖「安装播种 starter profile」两个 scenario
-- [x] 3.2 `examples/`：`profiles.json` 拆为 starter 单文件 `ask.json`（裸定义）；`example.json` 保持全字段示例但改为裸定义形态。验证：postinstall 测试引用新文件通过
-- [x] 3.3 `schemas/profiles.schema.json`：改为单 profile 文件的 schema（裸 `ProfileDefinition`，无 `schemaVersion` 信封）。验证：schema 校验测试通过
+- [x] 3.1 `bin/postinstall.js`: the seeding target becomes the global `profiles/ask.json`, written only when the directory contains no `.json` file (still `COPYFILE_EXCL`, failure does not block install); legacy path detection deleted. Verification: postinstall unit tests cover both scenarios of "Seeding the starter profile at install"
+- [x] 3.2 `examples/`: `profiles.json` split into the starter single file `ask.json` (bare definition); `example.json` stays the full-field demo but in bare-definition form. Verification: the postinstall tests referencing the new file pass
+- [x] 3.3 `schemas/profiles.schema.json`: changed to the schema of a single profile file (bare `ProfileDefinition`, no `schemaVersion` envelope). Verification: schema validation tests pass
 
-## 4. 整体回归
+## 4. Overall regression
 
-- [x] 4.1 全仓搜索 `profiles.json` 残留引用并清理（源码、测试）；`npm run check` 与 `npm test` 全部通过
+- [x] 4.1 Search the whole repo for leftover `profiles.json` references and clean them (source, tests); `npm run check` and `npm test` all pass
 
-## 5. 文档
+## 5. Documentation
 
-- [x] 5.1 `CONTEXT.md`：Catalog 术语定义改为「持有 profile 定义的 `profiles/` 目录：全局一个，每个项目一个，每 profile 一个 `<name>.json` 文件」
-- [x] 5.2 `docs/architecture/overview.md`：模块表、schema 权威段、`bin/` 与 `examples/` 条目中的 `profiles.json` 路径与播种描述改为目录形态
-- [x] 5.3 `README.md` 与 `README.zh-CN.md`：路径表改为 `~/.pi-profile-switch/profiles/<name>.json` 与 `<project>/.pi/profiles/<name>.json`，删除 legacy 回退说明，补一段旧格式手动搬家说明
-- [x] 5.4 新增 `docs/adr/0013-per-profile-file-storage.md`：记录每 profile 一个文件的决策，被否方案为保留单文件 catalog；并在相关旧 ADR 顶部按需标注
+- [x] 5.1 `CONTEXT.md`: the Catalog term definition becomes "the `profiles/` directory holding profile definitions: one global, one per project, one `<name>.json` file per profile"
+- [x] 5.2 `docs/architecture/overview.md`: the module table, schema-authority section, and the `bin/` and `examples/` entries have their `profiles.json` paths and seeding descriptions changed to the directory form
+- [x] 5.3 `README.md` and `README.zh-CN.md`: the path table becomes `~/.pi-profile-switch/profiles/<name>.json` and `<project>/.pi/profiles/<name>.json`, the legacy fallback note is deleted, and a manual-move paragraph for the old format is added
+- [x] 5.4 Add `docs/adr/0013-per-profile-file-storage.md`: records the one-file-per-profile decision; the rejected alternative is keeping the single-file catalog; mark the tops of related old ADRs as needed

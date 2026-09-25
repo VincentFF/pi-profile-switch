@@ -2,47 +2,47 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Skill 引用解析
+### Requirement: Skill reference resolution
 
-skill 引用的身份 SHALL 是 Pi 的 skill name。解析 SHALL 以只读方式取 Pi 自身的完整发现结果，MUST NOT 自行实现目录扫描，也 MUST NOT 因解析 profile 而执行任何 extension 代码或安装任何包。
+A skill reference's identity SHALL be Pi's skill name. Resolution SHALL take Pi's own complete discovery result in a read-only manner, MUST NOT implement directory scanning of its own, and MUST NOT execute any extension code or install any package because of resolving a profile.
 
-同名 skill SHALL 按 Pi 原有的发现优先级裁决。
+Same-named skills SHALL be adjudicated by Pi's existing discovery precedence.
 
-发现 SHALL 在每次解析时重新运行，因此新增或删除的 skill 在下一次启动或 reload 生效。
+Discovery SHALL run again on every resolution, so added or removed skills take effect on the next launch or reload.
 
-项目范围的 skill SHALL 只在项目已受信任时参与。由项目范围 package 提供的 skill MUST NOT 可引用。受信任项目提供的项目级 skill 留在解析词汇表内，但其可见性不随 profile 的选择变化；收窄边界见「项目级资源的收窄边界」。
+Project-scope skills SHALL participate only when the project is trusted. Skills provided by project-scope packages MUST NOT be referenceable. Project-level skills provided by a trusted project stay in the resolution vocabulary, but their visibility does not change with the profile's selection; the narrowing boundary is in "Narrowing boundary of project-level resources".
 
-#### Scenario: skill 未匹配
+#### Scenario: Skill not matched
 
-- **WHEN** profile 声明一个字面量 skill 名，而发现结果中没有该名字
-- **THEN** 激活失败，错误指明该名字
+- **WHEN** a profile declares a literal skill name absent from the discovery result
+- **THEN** activation fails with an error identifying the name
 
-#### Scenario: 未受信任项目的 skill 不参与
+#### Scenario: Untrusted project's skills do not participate
 
-- **WHEN** 项目未受信任，且该项目目录下存在 skill
-- **THEN** 该 skill 不出现在可引用集合中，发现过程不扫描该项目
+- **WHEN** the project is untrusted and skills exist under the project directory
+- **THEN** those skills do not appear in the referenceable set and the discovery process does not scan that project
 
 ## ADDED Requirements
 
-### Requirement: 项目级资源的收窄边界
+### Requirement: Narrowing boundary of project-level resources
 
-profile 的 skill 与 extension 选择 SHALL 只作用于用户级资源：真实 agentDir 下的资源与 `~/.agents/skills`。
+A profile's skill and extension selection SHALL apply only to user-level resources: resources under the real agentDir and `~/.agents/skills`.
 
-项目级资源（项目 `.pi/skills`、项目 `.pi/extensions`、ancestor `.agents/skills`）的可见性 SHALL 由 Pi 按项目信任判定决定：项目已受信任时它们在任何 profile 下都可见，项目未受信任时都不可见。
+The visibility of project-level resources (project `.pi/skills`, project `.pi/extensions`, ancestor `.agents/skills`) SHALL be decided by Pi's project-trust determination: when the project is trusted they are visible under every profile; when untrusted, visible under none.
 
-profile 未选中的项目级资源 MUST NOT 被排除，profile 选中的项目级资源 MUST NOT 因此被写成额外的资源路径。受信任项目的项目级资源 SHALL 留在解析词汇表内，引用它们 MUST NOT 因未匹配而使激活失败，也 MUST NOT 产生零匹配警告。
+Project-level resources not selected by the profile MUST NOT be excluded, and project-level resources selected by the profile MUST NOT thereby be written as additional resource paths. A trusted project's project-level resources SHALL stay in the resolution vocabulary; referencing them MUST NOT fail activation as unmatched and MUST NOT produce zero-match warnings.
 
-#### Scenario: 未选中的项目级 skill 仍然可见
+#### Scenario: Unselected project-level skills stay visible
 
-- **WHEN** 项目已受信任，项目内有 skill A 与 skill B，活动 profile 只声明 A
-- **THEN** A 与 B 在会话中都可用
+- **WHEN** the project is trusted, the project contains skill A and skill B, and the active profile declares only A
+- **THEN** both A and B are usable in the session
 
-#### Scenario: 项目级引用解析成功
+#### Scenario: Project-level references resolve successfully
 
-- **WHEN** 项目已受信任，profile 声明项目内的 skill 名、extension ID 或它们的 glob
-- **THEN** 解析成功，既不为字面量失败，也不产生零匹配警告
+- **WHEN** the project is trusted and the profile declares skill names, extension IDs, or their globs found in the project
+- **THEN** resolution succeeds — neither failing on literals nor producing zero-match warnings
 
-#### Scenario: 未受信任时项目级资源不参与
+#### Scenario: Project-level resources do not participate when untrusted
 
-- **WHEN** 项目未受信任，且项目目录下存在 skill 与 extension
-- **THEN** 两者都不出现在可引用集合中，也不出现在会话里
+- **WHEN** the project is untrusted and the project directory contains skills and extensions
+- **THEN** neither appears in the referenceable set nor in the session

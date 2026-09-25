@@ -2,159 +2,159 @@
 
 ## ADDED Requirements
 
-### Requirement: Catalog 目录位置与发现
+### Requirement: Catalog directory locations and discovery
 
-系统 SHALL 从两个位置读取 profile 定义：全局 catalog 与项目 catalog。
+The system SHALL read profile definitions from two locations: the global catalog and the project catalog.
 
-全局 catalog 位于工作区根下的 `profiles/` 目录，工作区根默认为 `~/.pi-profile-switch`，可由 `PI_PROFILE_SWITCH_DIR` 覆盖。
+The global catalog is the `profiles/` directory under the workspace root, which defaults to `~/.pi-profile-switch` and can be overridden by `PI_PROFILE_SWITCH_DIR`.
 
-项目 catalog 位于 `<projectDir>/.pi/profiles/` 目录。
+The project catalog is the `<projectDir>/.pi/profiles/` directory.
 
-目录中每个扩展名为 `.json` 的常规文件 SHALL 定义一个 profile，文件名去掉 `.json` 后缀即为 profile 名。其他条目（非 `.json` 文件、子目录）SHALL 被忽略。
+Each regular file with the `.json` extension in the directory SHALL define one profile; the filename minus the `.json` suffix is the profile name. Other entries (non-`.json` files, subdirectories) SHALL be ignored.
 
-目录不存在 SHALL 被视为空 catalog，而不是错误。系统 MUST NOT 读取上述两个位置之外的任何历史路径。
+A missing directory SHALL be treated as an empty catalog, not an error. The system MUST NOT read any historical paths outside the two locations above.
 
-#### Scenario: 工作区根被环境变量覆盖
+#### Scenario: Workspace root overridden by environment variable
 
-- **WHEN** 设置了 `PI_PROFILE_SWITCH_DIR`，且该目录下存在 `profiles/` 目录
-- **THEN** 系统读取该目录作为全局 catalog，不读取默认工作区根
+- **WHEN** `PI_PROFILE_SWITCH_DIR` is set and a `profiles/` directory exists under it
+- **THEN** the system reads that directory as the global catalog and does not read the default workspace root
 
-#### Scenario: 目录不存在
+#### Scenario: Directory does not exist
 
-- **WHEN** 全局或项目的 `profiles/` 目录不存在
-- **THEN** 对应 catalog 视为空，不报错
+- **WHEN** the global or project `profiles/` directory does not exist
+- **THEN** the corresponding catalog is treated as empty, without an error
 
-#### Scenario: 非 JSON 条目被忽略
+#### Scenario: Non-JSON entries are ignored
 
-- **WHEN** `profiles/` 目录中同时存在 `review.json`、子目录与无 `.json` 后缀的文件
-- **THEN** 只有 `review.json` 参与解析，其余条目不报错、不产生 profile
+- **WHEN** a `profiles/` directory contains `review.json`, a subdirectory, and a file without the `.json` suffix
+- **THEN** only `review.json` participates in resolution; the other entries produce neither errors nor profiles
 
 ## MODIFIED Requirements
 
-### Requirement: Catalog 文件格式校验
+### Requirement: Catalog file format validation
 
-系统 SHALL 在任一 profile 文件内容不合法时报错，MUST NOT 静默降级。
+The system SHALL report an error when any profile file's content is illegal and MUST NOT degrade silently.
 
-每个 profile 文件的顶层值 SHALL 是一个对象，即该 profile 的完整定义，不含 `schemaVersion` 等信封字段。JSON 语法 SHALL 合法。
+Each profile file's top-level value SHALL be an object — the complete definition of that profile — without envelope fields such as `schemaVersion`. The JSON syntax SHALL be legal.
 
-校验失败 SHALL 可行动：错误 SHALL 指明出错的文件路径；字段级错误 SHALL 同时指明 profile 名与字段名。
+Validation failures SHALL be actionable: the error SHALL identify the file at fault; field-level errors SHALL additionally identify the profile name and field name.
 
-#### Scenario: catalog 内容不合法
+#### Scenario: Illegal catalog content
 
-- **WHEN** 某 profile 文件的内容不是合法 JSON，或其顶层值不是对象
-- **THEN** 系统报错，消息指出出错的文件路径，且整个 catalog 读取失败
+- **WHEN** a profile file's content is not legal JSON, or its top-level value is not an object
+- **THEN** the system reports an error whose message identifies the file at fault, and the whole catalog read fails
 
-### Requirement: 内建 default profile
+### Requirement: Built-in default profile
 
-系统 SHALL 始终提供名为 `default` 的内建 profile，其来源为 `builtin`，其定义不含任何字段。
+The system SHALL always provide a built-in profile named `default`, whose source is `builtin` and whose definition contains no fields.
 
-`default` MUST NOT 在 catalog 中定义：任何 profiles 目录下存在 `default.json` 均为错误。`default` MUST NOT 可编辑，也 MUST NOT 可删除。
+`default` MUST NOT be defined in a catalog: a `default.json` under any profiles directory is an error. `default` MUST NOT be editable and MUST NOT be deletable.
 
-#### Scenario: catalog 中定义 default
+#### Scenario: Default defined in a catalog
 
-- **WHEN** 任一 profiles 目录下存在 `default.json`
-- **THEN** 系统报错，消息指出出错的文件路径
+- **WHEN** a `default.json` exists under any profiles directory
+- **THEN** the system reports an error whose message identifies the file path
 
-### Requirement: 项目信任门禁
+### Requirement: Project trust gate
 
-项目 catalog 的内容 SHALL 只在项目已受信任时参与解析。项目未受信任时，系统 MUST NOT 读取项目 catalog 的任何文件，以项目 scope 的写入 SHALL 失败。
+The project catalog's content SHALL participate in resolution only when the project is trusted. When the project is untrusted, the system MUST NOT read any file of the project catalog, and writes with project scope SHALL fail.
 
-#### Scenario: 未受信任项目不读取 catalog 文件
+#### Scenario: Untrusted project's catalog files are not read
 
-- **WHEN** 项目未受信任，且该目录下存在 `.pi/profiles/` 目录
-- **THEN** 以项目 scope 读取得到空结果、不报错，且该目录中的文件未被读取
+- **WHEN** the project is untrusted and a `.pi/profiles/` directory exists under it
+- **THEN** reads with project scope return an empty result without an error, and the files in that directory are not read
 
-#### Scenario: 写入未受信任项目的 catalog
+#### Scenario: Writing to an untrusted project's catalog
 
-- **WHEN** 以项目 scope 执行任何写入，而项目未受信任
-- **THEN** 操作失败，消息指出该目录未受信任
+- **WHEN** any write is performed with project scope while the project is untrusted
+- **THEN** the operation fails with a message stating that the directory is untrusted
 
-### Requirement: Profile 列表顺序
+### Requirement: Profile list ordering
 
-列表 SHALL 以 `default` 开头，其后按文件名字典序列出全局条目，然后是只存在于项目 catalog 的名字，同样按文件名字典序。
+The list SHALL start with `default`, followed by global entries in filename lexicographic order, then names that exist only in the project catalog, also in filename lexicographic order.
 
-#### Scenario: 列表顺序
+#### Scenario: List ordering
 
-- **WHEN** 全局 catalog 含 `b.json`、`a.json`，项目 catalog 含 `c.json`
-- **THEN** 列表顺序为 `default`、`a`、`b`、`c`
+- **WHEN** the global catalog contains `b.json` and `a.json`, and the project catalog contains `c.json`
+- **THEN** the list order is `default`, `a`, `b`, `c`
 
-### Requirement: Profile 创建、编辑与复制
+### Requirement: Profile create, edit, and duplicate
 
-创建 SHALL 在指定 scope 写入一个完整定义；同名 profile 已存在于该 scope 时 SHALL 失败。
+Create SHALL write a complete definition in the specified scope; it SHALL fail when a same-named profile already exists in that scope.
 
-编辑 SHALL 替换指定 scope 中一个已存在 profile 的完整定义；该 profile 不在该 scope 时 SHALL 失败。
+Edit SHALL replace the complete definition of an existing profile in the specified scope; it SHALL fail when the profile is not in that scope.
 
-复制 SHALL 把一个已存在定义的完整副本写入指定 scope 下的新名字；源不存在或新名已存在时 SHALL 失败。
+Duplicate SHALL write a complete copy of an existing definition under a new name in the specified scope; it SHALL fail when the source does not exist or the new name already exists.
 
-写入前 SHALL 校验定义。校验失败或上述任一前置条件不满足时，profiles 目录 MUST NOT 被改动。
+Definitions SHALL be validated before writing. When validation fails or any precondition above is unmet, the profiles directory MUST NOT be modified.
 
-#### Scenario: 目标 scope 已存在同名条目
+#### Scenario: Same-named entry exists in target scope
 
-- **WHEN** 在全局 scope 创建 `review`，或把 `review` 复制为 `implement`，而全局 catalog 已含该目标名
-- **THEN** 操作失败，消息指出该名字与 scope，目标文件未改动
+- **WHEN** creating `review` in the global scope, or duplicating `review` as `implement`, while the global catalog already contains the target name
+- **THEN** the operation fails with a message identifying the name and scope, and the target file is unchanged
 
-#### Scenario: 编辑不在该 scope 的 profile
+#### Scenario: Editing a profile not in that scope
 
-- **WHEN** 在项目 scope 编辑一个只存在于全局 catalog 的名字
-- **THEN** 操作失败，消息指出该名字与 scope
+- **WHEN** editing in project scope a name that exists only in the global catalog
+- **THEN** the operation fails with a message identifying the name and scope
 
-#### Scenario: 非法定义不落地
+#### Scenario: Illegal definitions do not land
 
-- **WHEN** 写入一个 `skills` 含非字符串项的定义
-- **THEN** 操作失败，目标文件保持原样或不产生
+- **WHEN** writing a definition whose `skills` contains a non-string item
+- **THEN** the operation fails, and the target file stays unchanged or is not created
 
-### Requirement: Catalog 写入
+### Requirement: Catalog writes
 
-写入 SHALL 只影响目标 profile 自己的文件：创建与编辑写 `<name>.json`，删除移除 `<name>.json`，其余文件 MUST NOT 被改动。文件内容为格式化 JSON 的完整定义，且只包含通过校验的已声明字段。
+A write SHALL affect only the target profile's own file: create and edit write `<name>.json`, delete removes `<name>.json`, and all other files MUST NOT be touched. The file content is the complete definition as formatted JSON, containing only the declared fields that passed validation.
 
-并发修改 SHALL 按同名单文件最后写入生效处理；不同名字的并发写入互不影响。向导保存 MUST NOT 因目录被其他实例同时修改而阻塞。
+Concurrent modifications SHALL be treated as last-writer-wins per same-named single file; concurrent writes to different names do not affect each other. A wizard save MUST NOT block because the directory was concurrently modified by another instance.
 
-#### Scenario: 写入文件结构
+#### Scenario: Written file structure
 
-- **WHEN** 一次写入完成
-- **THEN** 目标 profile 的文件为格式化 JSON，顶层即该 profile 的定义，不含 `schemaVersion` 等信封字段
+- **WHEN** a write completes
+- **THEN** the target profile's file is formatted JSON whose top level is the profile's definition, without envelope fields such as `schemaVersion`
 
-#### Scenario: 并发编辑后保存
+#### Scenario: Saving after concurrent edits
 
-- **WHEN** 向导打开期间，另一个进程向同一 profiles 目录新增了另一个 profile
-- **THEN** 保存成功，且被新增的那个 profile 不受影响
+- **WHEN** another process adds another profile to the same profiles directory while the wizard is open
+- **THEN** the save succeeds and the added profile is unaffected
 
-### Requirement: 安装播种 starter profile
+### Requirement: Seeding the starter profile at install
 
-安装包时，若全局 profiles 目录中尚无任何 profile 文件，系统 SHALL 写入随包提供的 starter profile 文件，其中定义一个名为 `ask` 的 profile。目录中已存在任何 profile 文件时 MUST NOT 覆盖。播种失败 MUST NOT 使安装失败。
+When the package is installed, if the global profiles directory contains no profile file yet, the system SHALL write the starter profile file shipped with the package, defining a profile named `ask`. When any profile file already exists in the directory, it MUST NOT be overwritten. Seeding failure MUST NOT fail the install.
 
-#### Scenario: 首次安装
+#### Scenario: First install
 
-- **WHEN** 全局 `profiles/` 目录不存在或其中没有任何 `.json` 文件
-- **THEN** 写入 starter profile 文件 `ask.json`
+- **WHEN** the global `profiles/` directory does not exist or contains no `.json` file
+- **THEN** the starter profile file `ask.json` is written
 
-#### Scenario: 已有 catalog
+#### Scenario: Existing catalog
 
-- **WHEN** 全局 `profiles/` 目录中已存在至少一个 `.json` 文件
-- **THEN** 不写入新文件，安装继续
+- **WHEN** the global `profiles/` directory already contains at least one `.json` file
+- **THEN** no new file is written and the install continues
 
 ## ADDED Requirements
 
-### Requirement: Profile 名字约束
+### Requirement: Profile name constraints
 
-Profile 名 SHALL 匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$`。读取时，profiles 目录中存在名字非法的 `.json` 文件 SHALL 报错并指明文件路径；写入时，名字非法 SHALL 失败并说明该规则。
+Profile names SHALL match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. On read, a `.json` file with an illegal name in the profiles directory SHALL be an error identifying the file path; on write, an illegal name SHALL fail with an explanation of the rule.
 
-仅大小写不同的两个名字在大小写不敏感的文件系统上是同一文件；系统 SHALL NOT 为这种情形提供额外校验。
+Two names differing only in case are the same file on case-insensitive filesystems; the system SHALL NOT provide extra validation for this case.
 
-#### Scenario: 非法名字的文件
+#### Scenario: File with an illegal name
 
-- **WHEN** 全局 `profiles/` 目录中存在 `我的 profile.json`
-- **THEN** 系统报错，消息指出该文件路径与名字规则
+- **WHEN** the global `profiles/` directory contains `我的 profile.json`
+- **THEN** the system reports an error whose message identifies the file path and the name rule
 
-#### Scenario: 写入非法名字
+#### Scenario: Writing an illegal name
 
-- **WHEN** 创建名为 `foo bar` 的 profile
-- **THEN** 操作失败，消息说明允许的名字字符集
+- **WHEN** creating a profile named `foo bar`
+- **THEN** the operation fails with a message explaining the allowed name charset
 
 ## REMOVED Requirements
 
-### Requirement: Catalog 文件位置与发现
+### Requirement: Catalog file locations and discovery
 
-**Reason**: catalog 从单文件 `profiles.json` 改为每 profile 一个文件的 `profiles/` 目录，legacy 回退路径随之删除；发现规则由「Catalog 目录位置与发现」接替。
+**Reason**: the catalog changed from a single-file `profiles.json` to a `profiles/` directory of one file per profile, and the legacy fallback path was deleted with it; the discovery rules are taken over by "Catalog directory locations and discovery".
 
-**Migration**: 把旧 `profiles.json` 中的每个 profile 拆为 `profiles/<name>.json`（裸定义，不含 `schemaVersion` 信封）；`<agentDir>/profiles.json` 不再被读取。
+**Migration**: split each profile in the old `profiles.json` into `profiles/<name>.json` (bare definitions, without the `schemaVersion` envelope); `<agentDir>/profiles.json` is no longer read.

@@ -121,7 +121,7 @@ All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizar
 
 ## Docs
 
-- [Architecture](docs/architecture/overview.md) · [ADRs](docs/adr/) · [Glossary](CONTEXT.md) (Chinese)
+- [Architecture](docs/architecture/overview.md) · [ADRs](docs/adr/) · [Glossary](CONTEXT.md)
 - JSON Schemas: [`schemas/`](schemas/)
 
 ## License

@@ -1,58 +1,67 @@
 # pi-profile-switch
 
-pi-profile-switch 是给 Pi 加命名 profile 的 Pi package。一个 profile 引用既有的 skills、extensions、MCP servers 与 tools，并可在同一个 Pi 会话内切换。产品意图、设计原则与非目标见 `docs/prd.md`。
+pi-profile-switch is a Pi package that adds named profiles to Pi. A profile references existing skills, extensions, MCP servers, and tools, and can be switched within the same Pi session. See `docs/prd.md` for product intent, design principles, and non-goals.
 
-## 进场先读
+## Read first
 
-按任务读，不要一次全读。
+Read per task; do not read everything up front.
 
-| 你要做的事 | 先读 |
+| What you are doing | Read first |
 | --- | --- |
-| 改行为、命令或配置语义 | `docs/prd.md` 的「非目标」段，再读 `openspec/specs/` 对应能力域 |
-| 改模块边界、生成物或激活流程 | `docs/architecture/overview.md` |
-| 想提出一个更顺手的方案 | `docs/adr/`；该方案很可能已被否掉 |
-| 起新变更 | `openspec/config.yaml` 的 `context` 段 |
-| 改主 spec 的 `## Purpose` | `docs/prd.md`；与定位重复时改为链接 |
+| Changing behavior, commands, or configuration semantics | The "Non-goals" section of `docs/prd.md`, then the matching capability domain in `openspec/specs/` |
+| Changing module boundaries, generated artifacts, or the activation flow | `docs/architecture/overview.md` |
+| About to propose a more convenient design | `docs/adr/`; the design has likely already been rejected |
+| Starting a new change | The `context` section of `openspec/config.yaml` |
+| Editing `## Purpose` of a main spec | `docs/prd.md`; replace duplicated positioning with a link |
 
-术语以 `CONTEXT.md` 为准，其中标注的规避词不得使用。
+Terminology is defined by `CONTEXT.md`; the avoid-words flagged there must not be used.
 
-## 操作约束
+## Operating constraints
 
-### Pi 兼容优先
+### Pi compatibility first
 
-- 改动前确认它不影响未被 profile 声明控制的行为。Pi 的 settings、资源发现与会话行为必须保持原样。
-- 不引入 Pi 没有的概念。扩展依赖图、常驻扩展、资源副本都属于此类。
-- profile 未声明的字段不得产生任何副作用。
+- Before changing anything, confirm it does not affect behavior that no profile has declared control over. Pi's settings, resource discovery, and session behavior must remain intact.
+- Do not introduce concepts Pi does not have. Extension dependency graphs, always-on extensions, and resource copies all fall in this category.
+- Fields a profile does not declare must produce no side effects.
 
-### 极简
+### Minimalism
 
-- 新增用户可见配置字段前，先证明它不能由发现机制或默认值替代。
-- 新增命令前，先确认现有命令族里没有合适位置，且不占用其他 Pi package 的命名空间。
-- 错误必须可行动：给出候选、相近名或修复方式，不静默失败。
+- Before adding a user-visible configuration field, prove it cannot be replaced by discovery or a default value.
+- Before adding a command, confirm there is no suitable place in the existing command family and that it does not occupy another Pi package's namespace.
+- Errors must be actionable: offer candidates, near-miss names, or a fix; never fail silently.
 
-### 文档
+### Documentation
 
-- 事实归属判据与能力域在 `openspec/config.yaml` 的 `context` 段，不要在别处重复。
-- 一个事实只写一次；需要引用别处的事实时写链接，不重抄。
-- 不改写既有 ADR 的决定。决策变化时新增编号文件，并在旧文件顶部加一行 `**Superseded by ADR-XXXX.**`。
-- 新增 ADR 用 `docs/adr/` 中下一个可用编号，不复用旧编号。
-- ADR 用编号引用，如 `ADR-0005`。文件链接用仓库相对路径。
+- Fact-ownership criteria and capability domains live in the `context` section of `openspec/config.yaml`; do not repeat them elsewhere.
+- Write each fact exactly once; link instead of restating when referencing facts owned elsewhere.
+- Do not rewrite the decisions of existing ADRs. When a decision changes, add a new numbered file and mark the old one with a single top line: `**Superseded by ADR-XXXX.**`
+- New ADRs use the next available number in `docs/adr/`; numbers are never reused.
+- Reference ADRs by number, e.g. `ADR-0005`. Use repo-relative paths for file links.
 
-### 代码
+### Code
 
-- TypeScript ESM，import 带 `.ts` 扩展名，跟随现有文件的写法。
-- 不新增运行时依赖，除非现有依赖无法完成。
-- 改动后运行 `npm run check` 与 `npm test`。
-- 提交信息用 conventional commits，一次提交只做一件事。
+- TypeScript ESM, imports carry the `.ts` extension, following the style of existing files.
+- No new runtime dependencies unless existing ones cannot do the job.
+- Run `npm run check` and `npm test` after changes.
+- Commit messages use conventional commits; one commit does one thing.
 
-## 变更流程
+## Change process
 
-会改变可观察行为、规范内容或决策的改动走 OpenSpec，不直接改代码或文档：
+Changes that alter observable behavior, specification content, or decisions go through OpenSpec — never edit code or docs directly:
 
 ```text
 /opsx-explore → /opsx-propose → /opsx-apply → /opsx-verify → /opsx-archive
 ```
 
-辅助流程为 `/opsx-sync`、`/opsx-update`，定义见 `.pi/prompts/opsx-*.md`。artifact 规则与归档门禁在 `openspec/config.yaml` 的 `rules` 与 `operations` 段。
+Auxiliary flows are `/opsx-sync` and `/opsx-update`, defined in `.pi/prompts/opsx-*.md`. Artifact rules and archive gates live in the `rules` and `operations` sections of `openspec/config.yaml`.
 
-不改变上述任何一项的修正直接提交，不必开 change：增删文档文件、修链接与错字、改注释与用例名、重命名纯调整文件。判据是它会不会改变读者对行为的理解：会，就走流程。
+Fixes that change none of the above are committed directly without opening a change: adding or removing documentation files, fixing links and typos, adjusting comments and test names, renaming files for pure restructuring. The criterion is whether it changes the reader's understanding of behavior: if it does, run the process.
+
+### Process discipline and escalation
+
+- **Archive on completion**: before starting a new change or entering apply, run `openspec list`; if a change has all tasks checked but is not yet archived, archive it first. Otherwise downstream changes pay dependency-chain lock overhead and validation noise when their deltas lack a base.
+- **Deduplicate instruction calls**: for the same change and the same artifact, call `openspec instructions` only once in the main session; reuse the first output afterwards. Repeatedly pulling the full rule template inflates context.
+- **Critical paths and team-workflow escalation**: the general escalation rules of team-workflow are in the `team-workflow` skill. In this project, apply must escalate to team-workflow for any change touching these per-session hot paths:
+  - launcher startup flow and sequencing (`bin/pi-profile.ts`, `src/launcher/`)
+  - instance runtime directory generation and sweeping (`src/settings-generator.ts`, `src/launcher/runtime-cleanup.ts`)
+  - resource discovery and the filtering model (`src/profile-resolver.ts`, `src/skill-registry.ts`, `src/extension-discovery.ts`)

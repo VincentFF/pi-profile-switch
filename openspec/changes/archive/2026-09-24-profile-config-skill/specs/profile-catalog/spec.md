@@ -2,25 +2,25 @@
 
 ## ADDED Requirements
 
-### Requirement: 安装分发 profile-config skill
+### Requirement: Distributing the profile-config skill at install
 
-安装包时，系统 SHALL 把随包的 `profile-config` skill 写入用户 agentDir 的 `skills/profile-config/` 目录。该 skill 指导 agent 创建、修改与删除 profile 文件。
+When the package is installed, the system SHALL write the shipped `profile-config` skill into the user agentDir's `skills/profile-config/` directory. The skill guides the agent to create, modify, and delete profile files.
 
-该 skill 是普通用户级资源：系统 MUST NOT 为它引入过滤豁免或运行时特判；命名 profile 只在声明引用它时才包含它。
+The skill is an ordinary user-level resource: the system MUST NOT introduce filtering exemptions or runtime special-casing for it; a named profile includes it only when it declares a reference to it.
 
-升级安装时 SHALL 始终覆写该 skill 的内容，使其与包版本一致。分发失败 MUST NOT 使安装失败。
+Upgrade installs SHALL always overwrite the skill's content to match the package version. Distribution failure MUST NOT fail the install.
 
-#### Scenario: 首次安装
+#### Scenario: First install
 
-- **WHEN** 用户 agentDir 的 `skills/` 下尚不存在 `profile-config`
-- **THEN** 安装写入随包的 skill 文件
+- **WHEN** `profile-config` does not yet exist under the user agentDir's `skills/`
+- **THEN** the install writes the shipped skill files
 
-#### Scenario: 升级覆写
+#### Scenario: Upgrade overwrite
 
-- **WHEN** 用户 agentDir 的 `skills/profile-config/` 已存在，且内容与随包版本不同
-- **THEN** 安装以随包版本覆写
+- **WHEN** the user agentDir's `skills/profile-config/` already exists and its content differs from the shipped version
+- **THEN** the install overwrites it with the shipped version
 
-#### Scenario: 分发失败降级为警告
+#### Scenario: Distribution failure degrades to a warning
 
-- **WHEN** 写入 skill 文件失败（如目标目录不可写）
-- **THEN** 安装降级为警告继续，安装本身不失败
+- **WHEN** writing the skill files fails (e.g. the target directory is not writable)
+- **THEN** the install degrades to a warning and continues; the install itself does not fail

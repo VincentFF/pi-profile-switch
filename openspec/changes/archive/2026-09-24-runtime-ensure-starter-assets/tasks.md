@@ -1,23 +1,23 @@
 # Tasks
 
-## 1. 前置排序
+## 1. Ordering prerequisite
 
-- [x] 1.1 归档 `profile-config-skill`（`/opsx-archive`），使「安装分发 profile-config skill」进入主 spec `openspec/specs/profile-catalog/spec.md`。验证：归档后运行 `openspec validate runtime-ensure-starter-assets`，不再出现「RENAMED failed … source not found」的 INFO 提示
+- [x] 1.1 Archive `profile-config-skill` (`/opsx-archive`) so that "Distributing the profile-config skill at install" enters the main spec `openspec/specs/profile-catalog/spec.md`. Verification: running `openspec validate runtime-ensure-starter-assets` after archiving no longer shows the "RENAMED failed … source not found" INFO note
 
-## 2. 运行时 ensure 模块
+## 2. Runtime ensure module
 
-- [x] 2.1 新增 `src/starter-assets.ts`：按 design.md D1 导出面实现 `ensureStarterAssets()`。播种规则：目标目录无任何 `.json` 时以 `COPYFILE_EXCL` 语义写入 starter profile；skill 规则：目标缺失或内容不同才覆写，一致则不写；两个资产独立成败，IO 失败转为 `warnings` 不抛出。验证：覆盖 specs delta「播种 starter profile」的「启动时补齐」「启动时不覆盖」「启动时播种失败降级为警告」与「分发 profile-config skill」的「启动时补齐或同步」「启动时内容已一致」「启动时分发失败降级为警告」六个 scenario；`npx vitest run test/starter-assets.test.ts` 通过。事实 → 权威来源：资产相对路径 `examples/ask.json`、`skills/profile-config/SKILL.md` → 仓库内实际文件与 `package.json` 的 `files` 数组；agentDir 默认解析 → `@earendil-works/pi-coding-agent` 导出的 `getAgentDir()`（`node_modules/@earendil-works/pi-coding-agent` 源码）
-- [x] 2.2 `bin/pi-profile.ts`：在 `parseLauncherArgs` 之后、`resolveInitialProfile` 之前调用 `ensureStarterAssets()`，`warnings` 经 `console.error` 打印且启动继续。验证：覆盖「启动时补齐」scenario 的端到端可见性（播种结果对初始 profile 解析可见）；`npx vitest run test/launcher.integration.test.ts` 通过。事实 → 权威来源：警告输出前缀 `pi-profile: warning:` → `bin/pi-profile.ts` 既有 sweep 警告输出写法
+- [x] 2.1 Add `src/starter-assets.ts`: implement `ensureStarterAssets()` per design.md D1's export surface. Seeding rule: write the starter profile with `COPYFILE_EXCL` semantics when the target directory has no `.json` at all; skill rule: overwrite only when the target is missing or its content differs, no write when identical; the two assets succeed or fail independently, and IO failures become `warnings` without throwing. Verification: covers six scenarios — "Backfill at startup", "No overwrite at startup", "Startup seeding failure degrades to a warning" from "Seeding the starter profile", and "Backfill or sync at startup", "Content already in sync at startup", "Startup distribution failure degrades to a warning" from "Distributing the profile-config skill" in the specs delta; `npx vitest run test/starter-assets.test.ts` passes. Fact → authoritative source: asset relative paths `examples/ask.json`, `skills/profile-config/SKILL.md` → the actual files in the repo and the `files` array of `package.json`; agentDir default resolution → `getAgentDir()` exported by `@earendil-works/pi-coding-agent` (source under `node_modules/@earendil-works/pi-coding-agent`)
+- [x] 2.2 `bin/pi-profile.ts`: call `ensureStarterAssets()` after `parseLauncherArgs` and before `resolveInitialProfile`; `warnings` printed via `console.error` and startup continues. Verification: end-to-end visibility covering the "Backfill at startup" scenario (the seeded result is visible to initial profile resolution); `npx vitest run test/launcher.integration.test.ts` passes. Fact → authoritative source: the warning output prefix `pi-profile: warning:` → the existing sweep warning output in `bin/pi-profile.ts`
 
-## 3. postinstall 角色更新
+## 3. postinstall role update
 
-- [x] 3.1 `bin/postinstall.js`：仅更新文件头注释——角色从唯一分发渠道改为 best-effort 提前优化，权威行为契约指向 `openspec/specs/profile-catalog/spec.md` 的「播种 starter profile」「分发 profile-config skill」；分发逻辑不变。验证：`npx vitest run test/postinstall.test.ts` 既有用例（覆盖「首次安装」「已有 catalog」「升级覆写」「分发失败降级为警告」scenario）全部通过
+- [x] 3.1 `bin/postinstall.js`: only the file-header comment is updated — the role changes from sole distribution channel to best-effort early optimization, with the authoritative behavior contract pointing at "Seeding the starter profile" and "Distributing the profile-config skill" in `openspec/specs/profile-catalog/spec.md`; distribution logic unchanged. Verification: existing cases of `npx vitest run test/postinstall.test.ts` (covering the "First install", "Existing catalog", "Upgrade overwrite", and "Distribution failure degrades to a warning" scenarios) all pass
 
-## 4. 文档同步
+## 4. Documentation sync
 
-- [x] 4.1 `README.md` 与 `README.zh-CN.md`：把 `profile-config` skill 的「distributed on install」表述改为「安装时 best-effort 分发，launcher 启动时保证就位」。验证：grep 两份 README 不再含仅归因于 install 的分发表述。事实 → 权威来源：分发时机语义 → 本 change 的 specs delta
-- [x] 4.2 `docs/architecture/overview.md`：更新 `bin/` 表行中 `postinstall.js` 的角色描述；在 `src/` 模块表中新增 `starter-assets.ts` 行。验证：表中描述与 design.md D1/D5 一致，且不复述 spec 行为契约（写链接）。事实 → 权威来源：模块导出面 → design.md D1
+- [x] 4.1 `README.md` and `README.zh-CN.md`: change the `profile-config` skill's "distributed on install" wording to "distributed best-effort at install, guaranteed in place at launcher startup". Verification: grep shows neither README still contains distribution wording attributed to install alone. Fact → authoritative source: distribution-timing semantics → this change's specs delta
+- [x] 4.2 `docs/architecture/overview.md`: update the `postinstall.js` role description in the `bin/` table row; add a `starter-assets.ts` row to the `src/` module table. Verification: the table descriptions match design.md D1/D5 and do not restate the spec behavior contract (links used instead). Fact → authoritative source: module export surface → design.md D1
 
-## 5. 回归
+## 5. Regression
 
-- [x] 5.1 `npm run check` 与 `npm test` 全部通过。验证：两条命令退出码为 0
+- [x] 5.1 `npm run check` and `npm test` all pass. Verification: both commands exit with code 0

@@ -2,38 +2,38 @@
 
 ## MODIFIED Requirements
 
-### Requirement: 会话内切换
+### Requirement: In-session switching
 
-`/profile use <name>` SHALL 依次执行：等待当前 agent turn 结束、快照运行时文件、按完整启动路径重新解析目标 profile、就地重写运行时文件、触发 Pi 的原生 reload。
+`/profile use <name>` SHALL execute in order: wait for the current agent turn to finish, snapshot the runtime files, re-resolve the target profile through the full launch path, rewrite the runtime files in place, and trigger Pi's native reload.
 
-等待 SHALL 使用 Pi 原生的空闲等待，MUST NOT 打断正在进行的 turn。
+Waiting SHALL use Pi's native idle wait and MUST NOT interrupt an in-flight turn.
 
-重新解析 SHALL 包含与启动路径相同的校验：信任判定、catalog 读取、资源发现、模型与 MCP 校验。解析失败时 SHALL NOT 写入任何运行时文件，运行时保持切换前的状态。
+Re-resolution SHALL include the same validation as the launch path: trust determination, catalog read, resource discovery, model and MCP validation. When resolution fails, NO runtime file SHALL be written and the runtime stays in its pre-switch state.
 
-切换 SHALL NOT 重启 Pi 进程；当前 session 的 sessionId 与消息历史 SHALL 保持不变。
+Switching SHALL NOT restart the Pi process; the current session's sessionId and message history SHALL remain unchanged.
 
-切换 SHALL NOT 改变 Pi 的项目信任输入：instance 的 `trust.json` 链接形态在切换前后相同，项目级资源的可见性因此在同一进程内保持稳定。切换后的项目级可见性 SHALL 与直接以目标 profile 启动一致，MUST NOT 需要重启进程才生效。
+Switching SHALL NOT change Pi's project-trust input: the instance's `trust.json` link form is identical before and after a switch, so project-level resource visibility stays stable within one process. Post-switch project-level visibility SHALL match launching directly with the target profile and MUST NOT require a process restart to take effect.
 
-`/profile use` SHALL 保存该选择，并 SHALL 丢弃切换前 profile 的 overlay。
+`/profile use` SHALL persist the selection and SHALL discard the pre-switch profile's overlay.
 
-`/profile reload` SHALL 走同一路径，但 SHALL NOT 产生变更摘要，并 SHALL 保持当前 profile 既有的选择持久性不变（启动时的一次性选择在 reload 后仍是一次性的）。
+`/profile reload` SHALL follow the same path, but SHALL NOT produce a change summary and SHALL preserve the current profile's existing selection persistence (a one-shot selection made at launch remains one-shot after reload).
 
-#### Scenario: 切换成功
+#### Scenario: Successful switch
 
-- **WHEN** 执行 `/profile use implement`，且解析与 reload 都成功
-- **THEN** 运行时文件被重写为该 profile 的解析结果，session 未中断
+- **WHEN** `/profile use implement` is executed and both resolution and reload succeed
+- **THEN** the runtime files are rewritten with that profile's resolution result and the session is not interrupted
 
-#### Scenario: 项目级可见性不因切换而改变
+#### Scenario: Project-level visibility unchanged by switching
 
-- **WHEN** 项目已受信任，以命名 profile 启动后执行 `/profile use default`
-- **THEN** 项目级 skill 与 extension 在两个 profile 下都可见，进程未重启，sessionId 与消息历史不变
+- **WHEN** the project is trusted, started with a named profile, and `/profile use default` is executed
+- **THEN** project-level skills and extensions are visible under both profiles, the process is not restarted, and sessionId and message history are unchanged
 
-#### Scenario: 解析阶段失败
+#### Scenario: Failure at resolution stage
 
-- **WHEN** 目标 profile 的引用无法解析
-- **THEN** 操作失败并报告原因，运行时文件未被改动
+- **WHEN** the target profile's references cannot resolve
+- **THEN** the operation fails reporting the cause, and no runtime file is modified
 
-#### Scenario: reload 保持一次性选择
+#### Scenario: Reload preserves one-shot selection
 
-- **WHEN** 以 `pi-profile review` 启动（一次性选择），随后执行 `/profile reload`
-- **THEN** 仍运行 `review`，且该选择不因此被写入运行时状态
+- **WHEN** launched as `pi-profile review` (one-shot selection), followed by `/profile reload`
+- **THEN** `review` is still running and the selection is not thereby written into runtime state

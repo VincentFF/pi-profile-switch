@@ -1,67 +1,67 @@
 ---
 name: profile-config
-description: 指导创建、修改或删除 pi-profile-switch 的 profile。当用户想要创建、修改、配置或删除 profile 时触发。
+description: Guides the creation, modification, and deletion of pi-profile-switch profiles. Trigger when the user wants to create, modify, configure, or delete a profile.
 ---
 
 # profile-config
 
-本 skill 指导 agent 理解用户的模糊需求或明确指令，协助用户创建、修改或删除 `pi-profile-switch` 的 profile 文件。
+This skill guides the agent in understanding the user's vague requirements or explicit instructions, and assists in creating, modifying, or deleting `pi-profile-switch` profile files.
 
-> **声明**：本 skill 文件由 `pi-profile-switch` package 安装分发并在随包升级时自动覆写，请勿手动修改此文件。
+> **Notice**: This skill file is distributed by the `pi-profile-switch` package install and is automatically overwritten on package upgrades. Do not modify this file manually.
 
 ---
 
-## 1. 核心概念与约束
+## 1. Core concepts and constraints
 
-### 1.1 Profile 与 Catalog
-- **Profile**：命名的能力定义，引用 skills、extensions、MCP servers 与 tools，可选声明 model、thinking level 与 instructions。
-- **Catalog**：保存 profile 定义的 `profiles/` 目录。每个 profile 对应目录下的一个独立 JSON 文件：`<name>.json`。
-- **default profile**：由 Pi 提供，不可删除、不可编辑的 profile，加载 Pi 可发现的全部资源。**严禁**在任何 profiles 目录下创建 `default.json`。
+### 1.1 Profiles and catalogs
+- **Profile**: a named capability definition referencing skills, extensions, MCP servers, and tools, optionally declaring model, thinking level, and instructions.
+- **Catalog**: the `profiles/` directory holding profile definitions. Each profile corresponds to one standalone JSON file in the directory: `<name>.json`.
+- **default profile**: provided by Pi; cannot be deleted or edited; loads every resource Pi can discover. **Strictly forbidden** to create `default.json` in any profiles directory.
 
-### 1.2 名字字符集规范
-Profile 名字必须完全匹配正则：
+### 1.2 Name charset rules
+A profile name must fully match the regex:
 ```regex
 ^[A-Za-z0-9][A-Za-z0-9._-]*$
 ```
-- 必须以英文字母或数字开头。
-- 只允许英文字母、数字、点（`.`）、下划线（`_`）和连字符（`-`）。
-- 不允许包含空格、中文或特殊符号。
+- Must start with an ASCII letter or digit.
+- Only ASCII letters, digits, dots (`.`), underscores (`_`), and hyphens (`-`) are allowed.
+- Spaces, CJK characters, and special symbols are not allowed.
 
-### 1.3 作用域（Source scope）与存储落点
-Profile 文件存放在两个位置之一：
+### 1.3 Scopes (source scope) and storage locations
+Profile files live in one of two locations:
 
-| 作用域 | 路径 | 说明 |
+| Scope | Path | Notes |
 | --- | --- | --- |
-| **全局（global）** | `$PI_PROFILE_SWITCH_DIR/profiles/<name>.json`<br>（缺省为 `~/.pi-profile-switch/profiles/<name>.json`） | 对所有项目通用。若环境变量 `PI_PROFILE_SWITCH_DIR` 存在且非空，则以其下的 `profiles/` 目录为准。 |
-| **项目（project）** | `<projectDir>/.pi/profiles/<name>.json` | 仅在当前项目生效，且仅当项目已受信任时可用。 |
+| **Global** | `$PI_PROFILE_SWITCH_DIR/profiles/<name>.json`<br>(default `~/.pi-profile-switch/profiles/<name>.json`) | Applies to all projects. If the `PI_PROFILE_SWITCH_DIR` environment variable exists and is non-empty, the `profiles/` directory under it is authoritative. |
+| **Project** | `<projectDir>/.pi/profiles/<name>.json` | Effective only in the current project, and only when the project is trusted. |
 
-- **覆盖规则**：项目 scope 的同名 profile 会完整替换（replace）全局条目，**不会**与全局配置合并字段。
-- **项目信任门禁**：若当前项目未受信任，项目 scope 的 profile 无法解析，向项目 scope 写入也会失败。写入项目 scope 前若项目未受信任，必须提示用户在会话中执行 `/trust` 并重启 Pi。
+- **Override rule**: a same-named profile in project scope completely replaces the global entry; fields are **not** merged with the global configuration.
+- **Project trust gate**: if the current project is untrusted, profiles in project scope cannot resolve, and writes to project scope fail. Before writing to project scope while the project is untrusted, you must tell the user to run `/trust` in the session and restart Pi.
 
 ---
 
-## 2. Profile 文件格式与字段定义
+## 2. Profile file format and fields
 
-文件内容必须为格式化 JSON，**顶层即为裸定义对象**，严禁包裹 `schemaVersion`、`profiles` 或其他外层信封字段。
+The file content must be formatted JSON, with **the bare definition object at the top level** — strictly no `schemaVersion`, `profiles`, or other outer envelope fields.
 
-全部字段均为可选（optional）。未声明的字段保持原生 Pi 行为或当前状态，不产生任何副作用。
+All fields are optional. Undeclared fields keep native Pi behavior or current state and produce no side effects.
 
-### 字段详细语义
+### Field semantics
 
-| 字段 | 类型 | 语义与约束 |
+| Field | Type | Semantics and constraints |
 | --- | --- | --- |
-| `label` | `string` | 人类可读的显示名称（如 `"Code Review"`）。 |
-| `description` | `string` | Profile 的简要描述（如 `"Read-only review profile"`）。 |
-| `skills` | `string[]` | 引用的 skill 名称或 glob 列表。未声明时不收窄可用 skills。 |
-| `extensions` | `string[]` | 引用的 extension 标识或 glob 列表。未声明时不收窄可用 extensions。 |
-| `mcps` | `string[]` | 引用的 MCP server 名称或 glob 列表。未声明时不依赖 `pi-mcp-adapter`。 |
-| `tools` | `string[]` | 白名单工具名称或 glob 列表。未声明时不收窄工具，保持 Pi 原生工具集合。 |
-| `defaultProvider` | `string` | 默认模型提供商（如 `"anthropic"`、`"openai"`）。与 `defaultModel` 必须同时声明才生效。 |
-| `defaultModel` | `string` | 默认模型名称（如 `"claude-sonnet-4-5"`）。与 `defaultProvider` 必须同时声明才生效。 |
-| `defaultThinkingLevel` | `string` | 默认思考等级，可选值：`"off"`、`"minimal"`、`"low"`、`"medium"`、`"high"`、`"xhigh"`、`"max"`。仅在模型声明成立时生效。 |
-| `instructions` | `string` | 激活该 profile 时追加到系统提示词的指令文本。 |
+| `label` | `string` | Human-readable display name (e.g. `"Code Review"`). |
+| `description` | `string` | Short description of the profile (e.g. `"Read-only review profile"`). |
+| `skills` | `string[]` | Skill names or globs to reference. When undeclared, available skills are not narrowed. |
+| `extensions` | `string[]` | Extension identifiers or globs to reference. When undeclared, available extensions are not narrowed. |
+| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, there is no dependency on `pi-mcp-adapter`. |
+| `tools` | `string[]` | Whitelisted tool names or globs. When undeclared, tools are not narrowed and Pi's native tool set is kept. |
+| `defaultProvider` | `string` | Default model provider (e.g. `"anthropic"`, `"openai"`). Effective only when declared together with `defaultModel`. |
+| `defaultModel` | `string` | Default model name (e.g. `"claude-sonnet-4-5"`). Effective only when declared together with `defaultProvider`. |
+| `defaultThinkingLevel` | `string` | Default thinking level; allowed values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Effective only when the model declaration holds. |
+| `instructions` | `string` | Instruction text appended to the system prompt when this profile is active. |
 
-### 示例格式
+### Example
 ```json
 {
   "label": "Review Mode",
@@ -86,82 +86,82 @@ Profile 文件存放在两个位置之一：
 
 ---
 
-## 3. 可引用资源发现指引
+## 3. Discovering referenceable resources
 
-当帮助用户配置 profile 时，可检查或参考以下位置发现用户当前已有的可用资源：
+When helping the user configure a profile, check or consult the following locations to discover the resources the user currently has:
 
-1. **Skills**：
-   - 发现位置：`<agentDir>/skills/` 以及全局 `~/.agents/skills/`。
-   - 引用身份：Pi 的 skill 名称（即 skill 目录下的 `SKILL.md` frontmatter 中声明的 `name`，或目录名）。
-   - 支持 glob（如 `"git-*"`）。
-2. **Extensions**：
-   - 发现位置：`<agentDir>/settings.json` 中声明的已安装 packages、`<agentDir>/extensions/` 下的散装文件（`.ts` 或 `.js`）。
-   - 引用形式：
-     - 已安装包的包名或 source 别名。
-     - 多入口包的入口 ID：`<包名>:<相对路径>`。
-     - 散装文件 ID：相对扩展目录的路径去掉 `.ts`/`.js`（如 `sub/index.ts` 引用为 `sub`）。
-     - 绝对路径或 `~/` 路径。
-     - glob 匹配。
-3. **MCP Servers**：
-   - 发现位置：`pi-mcp-adapter` 识别的标准配置位置——全局侧 `~/.config/mcp/mcp.json`、`~/.agents/mcp.json`、`~/.agents/mcp/mcp.json`、`<agentDir>/mcp.json`；受信任项目另有 `<projectDir>/.mcp.json` 与 `<projectDir>/.pi/mcp.json`。
-   - 引用身份：上述配置文件中 `mcpServers` 对象下的 server 键名。
-   - 声明了 `mcps` 的 profile 需要同时确保 `pi-mcp-adapter` extension 处于可用状态。
-4. **Tools**：
-   - 引用身份：Pi 实时工具注册表中的工具名。
-   - 包括内建工具（`read`、`write`、`edit`、`bash` 等）、extension 贡献的工具、以及 MCP server 暴露的工具（代理工具 `mcp__<server>` 与直接工具 `<server>_<tool>`）。
-   - 支持 glob（如 `"mcp__*"`、`"github_*"`）。
-5. **项目级资源的收窄边界（重要）**：
-   - Profile 的资源选择（`skills`、`extensions`）**仅作用于用户级资源**（真实 agentDir 与 `~/.agents/skills`）。
-   - 项目级资源（如项目 `.pi/skills`、项目 `.pi/extensions`、上级 `.agents/skills`）的可见性由 Pi 项目信任判定决定：在受信任项目中，它们在**任何** profile 下都始终可见；在未受信任项目中均不可见。
-   - 因此，项目级资源的可见性**不随 profile 收窄**，无需也不指导在 profile 中声明项目级资源。
-
----
-
-## 4. 创作时的默认注入规则
-
-当为用户创建或生成声明了 `skills` 的新 profile 时，必须遵守以下约定：
-
-1. **默认注入 `"profile-config"`**：
-   - 若生成的 profile 声明了 `skills` 数组，默认在 `skills` 列表中包含 `"profile-config"`，以保证切入该 profile 后用户仍可继续通过本 skill 配置 profile。
-   - **例外 1**：用户明确要求不包含 `"profile-config"` 时除外。
-   - **例外 2**：若 `skills` 列表中已包含具有覆盖性的 glob（例如 `"*"`），则无需重复显式添加 `"profile-config"`。
-2. **未声明 `skills` 时不动作**：
-   - 若 profile 未声明 `skills` 字段，表示不收窄 skills，全部 skill（包括 `profile-config`）天然可用，因此绝对不要主动添加 `skills` 字段。
+1. **Skills**:
+   - Discovery locations: `<agentDir>/skills/` and the global `~/.agents/skills/`.
+   - Reference identity: Pi's skill name (the `name` declared in the frontmatter of the skill directory's `SKILL.md`, or the directory name).
+   - Globs supported (e.g. `"git-*"`).
+2. **Extensions**:
+   - Discovery locations: installed packages declared in `<agentDir>/settings.json`, and loose files (`.ts` or `.js`) under `<agentDir>/extensions/`.
+   - Reference forms:
+     - An installed package's package name or source alias.
+     - Entry ID of a multi-entry package: `<package>:<relative path>`.
+     - Loose-file ID: the path relative to the extension directory minus the `.ts`/`.js` suffix (e.g. `sub/index.ts` is referenced as `sub`).
+     - Absolute paths or `~/` paths.
+     - Glob matching.
+3. **MCP servers**:
+   - Discovery locations: the standard configuration locations recognized by `pi-mcp-adapter` — on the global side `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`; trusted projects additionally have `<projectDir>/.mcp.json` and `<projectDir>/.pi/mcp.json`.
+   - Reference identity: the server key names under the `mcpServers` object in those configuration files.
+   - A profile declaring `mcps` must also ensure the `pi-mcp-adapter` extension is available.
+4. **Tools**:
+   - Reference identity: tool names in Pi's live tool registry.
+   - Includes built-in tools (`read`, `write`, `edit`, `bash`, etc.), extension-contributed tools, and tools exposed by MCP servers (the proxy tool `mcp__<server>` and direct tools `<server>_<tool>`).
+   - Globs supported (e.g. `"mcp__*"`, `"github_*"`).
+5. **Narrowing boundary of project-level resources (important)**:
+   - A profile's resource selection (`skills`, `extensions`) **applies only to user-level resources** (the real agentDir and `~/.agents/skills`).
+   - The visibility of project-level resources (project `.pi/skills`, project `.pi/extensions`, ancestor `.agents/skills`) is decided by Pi's project-trust determination: in a trusted project they are always visible under **any** profile; in an untrusted project they are never visible.
+   - Therefore project-level resource visibility **does not narrow with profiles** — there is no need, and no guidance, to declare project-level resources in a profile.
 
 ---
 
-## 5. 交互与执行流程
+## 4. Default injection rule at authoring time
 
-### 5.1 创建（Create）
-1. **需求澄清**：根据用户自然语言描述（如「帮我配一个用于安全审计的只读 profile」），明确：
-   - 目标名称（校验符合 `^[A-Za-z0-9][A-Za-z0-9._-]*$`，且非 `default`）。
-   - 目标 scope（全局还是项目级）。
-   - 需要收窄的工具、skills、extensions、MCP servers 或特定模型设定。
-2. **资源与环境核对**：根据上述规则构造合法 JSON 定义，应用创作时默认注入规则。
-3. **写入文件**：
-   - 全局路径：`$PI_PROFILE_SWITCH_DIR/profiles/<name>.json`（默认 `~/.pi-profile-switch/profiles/<name>.json`）。
-   - 项目路径：`<projectDir>/.pi/profiles/<name>.json`。
-   - 确保目录存在，写入格式化的 JSON。
-4. **提示用户生效**：告知用户可通过 `/profile reload` 或 `/profile use <name>` 立即使用新 profile。
+When creating or generating a new profile that declares `skills` for the user, follow these conventions:
 
-### 5.2 修改（Edit）
-1. 读取目标 profile 文件已有内容。
-2. 根据用户要求调整对应字段，保持其余字段完整。
-3. 校验并写回格式化 JSON。
-4. 提示用户执行 `/profile reload`。
-
-### 5.3 删除（Delete）
-1. 确认要删除的 profile 存在于指定 scope。
-2. 严禁尝试删除 `default` profile。
-3. 删除对应的 `<name>.json` 文件。若当前正在使用该 profile，提醒用户先切换到其他 profile（如 `/profile use default`）。
+1. **Inject `"profile-config"` by default**:
+   - If the generated profile declares a `skills` array, include `"profile-config"` in the `skills` list by default, so that after switching into the profile the user can still configure profiles through this skill.
+   - **Exception 1**: the user explicitly asks not to include `"profile-config"`.
+   - **Exception 2**: the `skills` list already contains a covering glob (e.g. `"*"`), so there is no need to add `"profile-config"` explicitly again.
+2. **Do nothing when `skills` is undeclared**:
+   - If the profile does not declare the `skills` field, skills are not narrowed and every skill (including `profile-config`) is naturally available — never proactively add a `skills` field in that case.
 
 ---
 
-## 6. 边界与退化处理
+## 5. Interaction and execution flows
 
-1. **只读 / 无 `write` 工具环境**：
-   - 如果当前会话处于收窄工具的 profile 中（例如没有 `write` 工具的只读模式）：
-   - 退化为在回复中输出完整的格式化 JSON 内容与建议保存的文件绝对路径，建议用户手动保存或切换至具备文件写入能力的 profile（如 `/profile use default`）后再行保存。
-2. **未受信任项目**：
-   - 如果需要写入项目 scope（`<projectDir>/.pi/profiles/`），而当前项目尚未受信任：
-   - 必须向用户说明项目未受信任无法生效，提示用户执行 `/trust` 并重启 Pi，或改将 profile 保存至全局 scope。
+### 5.1 Create
+1. **Clarify requirements**: from the user's natural-language description (e.g. "set up a read-only profile for security auditing"), determine:
+   - The target name (validate against `^[A-Za-z0-9][A-Za-z0-9._-]*$`, and not `default`).
+   - The target scope (global or project).
+   - The tools, skills, extensions, MCP servers, or specific model settings to narrow.
+2. **Check resources and environment**: construct a legal JSON definition per the rules above, applying the default injection rule.
+3. **Write the file**:
+   - Global path: `$PI_PROFILE_SWITCH_DIR/profiles/<name>.json` (default `~/.pi-profile-switch/profiles/<name>.json`).
+   - Project path: `<projectDir>/.pi/profiles/<name>.json`.
+   - Ensure the directory exists and write formatted JSON.
+4. **Tell the user how to take effect**: the new profile is immediately usable via `/profile reload` or `/profile use <name>`.
+
+### 5.2 Edit
+1. Read the existing content of the target profile file.
+2. Adjust the requested fields per the user's requirements, keeping all other fields intact.
+3. Validate and write back formatted JSON.
+4. Tell the user to run `/profile reload`.
+
+### 5.3 Delete
+1. Confirm the profile to delete exists in the specified scope.
+2. Never attempt to delete the `default` profile.
+3. Delete the corresponding `<name>.json` file. If the profile is currently in use, remind the user to switch to another profile first (e.g. `/profile use default`).
+
+---
+
+## 6. Boundaries and degradation
+
+1. **Read-only / no `write` tool environments**:
+   - If the current session is in a profile with narrowed tools (e.g. a read-only mode without the `write` tool):
+   - Degrade to outputting the complete formatted JSON content in the reply along with the suggested absolute file path, and suggest the user save it manually or switch to a profile with file-write capability (e.g. `/profile use default`) before saving.
+2. **Untrusted projects**:
+   - If a write to project scope (`<projectDir>/.pi/profiles/`) is needed while the current project is not yet trusted:
+   - You must explain to the user that an untrusted project cannot take effect, and suggest running `/trust` and restarting Pi, or saving the profile to global scope instead.

@@ -2,35 +2,35 @@
 
 ## Why
 
-pi-profile-switch 已经实现并可运行，但 `openspec/specs/` 是空的。行为契约目前只存在于三处间接位置：代码本身、`docs/architecture/overview.md` 的机制描述、7 条 ADR 的决策记录。没有可验证的规范，后续变更就只能是"改代码、顺手改描述"，无法判断一次改动是否破坏了既有行为，也无法在评审时指出"这条要求被违反了"。
+pi-profile-switch is implemented and working, but `openspec/specs/` is empty. Behavior contracts currently exist only in three indirect places: the code itself, the mechanism descriptions in `docs/architecture/overview.md`, and the decision records of 7 ADRs. Without a verifiable specification, later changes can only be "change the code, touch up the description along the way" — there is no way to tell whether a change breaks existing behavior, nor to point at "this requirement was violated" in review.
 
-本变更建立基线的第一部分：`profile-catalog` 能力域。
+This change establishes the first part of the baseline: the `profile-catalog` capability domain.
 
 ## What Changes
 
-- 新增 `profile-catalog` 能力域的基线规范，覆盖 profile 定义与字段校验、catalog 文件解析、profile 来源与覆盖规则、create/edit/delete/duplicate 的可观察行为。
-- 不改动代码。规范逐条取自现存实现：`src/profile-catalog.ts`、`src/profile-catalog-store.ts`、`src/switching/profile-crud.ts`、`src/workspace.ts`、`bin/postinstall.js`。
-- 不写设计文档。本能力域的机制已由 `docs/architecture/overview.md` 与 ADR-0003、ADR-0004 承载，没有待决的新设计。
+- Add the baseline specification for the `profile-catalog` capability domain, covering profile definitions and field validation, catalog file parsing, profile sources and override rules, and the observable behavior of create/edit/delete/duplicate.
+- No code changes. The specification is taken item by item from the existing implementation: `src/profile-catalog.ts`, `src/profile-catalog-store.ts`, `src/switching/profile-crud.ts`, `src/workspace.ts`, `bin/postinstall.js`.
+- No design document. This domain's mechanisms are already carried by `docs/architecture/overview.md` and ADR-0003, ADR-0004; there is no pending new design.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `profile-catalog`: profile 定义与字段校验、catalog 文件的读写、profile 来源与项目覆盖全局的解析规则、create/edit/delete/duplicate 的可观察行为。
+- `profile-catalog`: profile definitions and field validation, catalog file reading and writing, profile sources and the resolution rule of project-over-global, and the observable behavior of create/edit/delete/duplicate.
 
 ### Modified Capabilities
 
-（无）
+(none)
 
 ## Impact
 
-- 新增 `openspec/specs/profile-catalog/spec.md`，归档时落地。
-- 代码零改动，不触碰 `src/`、`extensions/`、`bin/`、`test/`。
-- 后续变更依次为 `resource-reference`、`launcher`、`in-session-switch` 三个能力域建立基线。
+- Adds `openspec/specs/profile-catalog/spec.md`, landed at archive time.
+- Zero code changes; `src/`, `extensions/`, `bin/`, and `test/` are untouched.
+- Follow-up changes establish baselines for the `resource-reference`, `launcher`, and `in-session-switch` capability domains in turn.
 
 ## Doc Impact
 
-- `docs/prd.md`: none。本变更不改变定位、目标或非目标；「项目级定义覆盖全局定义」已是非目标的对应目标项。
-- `docs/architecture/overview.md`: none。catalog 模块与来源解析已在该文档描述，规范只补充可验证行为，不引入新机制。归档时需核对没有把机制写进规范。
-- `CONTEXT.md`: none。`Profile`、`Catalog`、`Source scope`、`default profile` 四个术语已有定义，规范使用它们而不新增术语。
-- `docs/adr/`: none。本变更不引入难以撤销的决策；非继承语义由 ADR-0003 承载，引用而非复制语义由 ADR-0004 承载。
+- `docs/prd.md`: none. This change does not alter positioning, goals, or non-goals; "project-level definitions override global definitions" is already the goal corresponding to a non-goal item.
+- `docs/architecture/overview.md`: none. The catalog module and source resolution are already described there; the specification only adds verifiable behavior and introduces no new mechanism. At archive time, verify no mechanism leaked into the specification.
+- `CONTEXT.md`: none. The four terms `Profile`, `Catalog`, `Source scope`, and `default profile` are already defined; the specification uses them without adding terms.
+- `docs/adr/`: none. This change introduces no hard-to-reverse decision; non-inheritance semantics are carried by ADR-0003, reference-not-copy semantics by ADR-0004.
