@@ -13,10 +13,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
-
-const BIN = path.resolve("bin/pi-profile.ts");
 
 let fixture: PiFixture;
 let driver: RpcDriver;
@@ -39,7 +38,7 @@ afterEach(async () => {
 async function start(profile: string): Promise<void> {
 	driver = new RpcDriver("node", [BIN, profile, "--", "--mode", "rpc"], {
 		cwd: fixture.cwd,
-		env: { ...process.env, HOME: fixture.root, PI_CODING_AGENT_DIR: fixture.agentDir, PI_OFFLINE: "1" },
+		env: launcherEnv(fixture),
 	});
 	await driver.send({ type: "get_state" });
 }

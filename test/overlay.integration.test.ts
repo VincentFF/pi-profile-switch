@@ -2,10 +2,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
-
-const BIN = path.resolve("bin/pi-profile.ts");
 
 let fixture: PiFixture;
 
@@ -16,15 +15,6 @@ beforeEach(async () => {
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
-
-function launcherEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		HOME: fixture.root,
-		PI_CODING_AGENT_DIR: fixture.agentDir,
-		PI_OFFLINE: "1",
-	};
-}
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	const dir = path.join(fixture.profileSwitchDir, "profiles");
@@ -53,7 +43,7 @@ describe("launcher integration: runtime overlay", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
@@ -85,7 +75,7 @@ describe("launcher integration: runtime overlay", () => {
 			// (the launcher never reads stored overlays).
 			const relaunched = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				expect(await skillNames(relaunched)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
@@ -116,7 +106,7 @@ describe("launcher integration: runtime overlay", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const commands = await rpc.commandNames();
@@ -149,7 +139,7 @@ describe("launcher integration: runtime overlay", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.send({ type: "prompt", message: "/profile customize disable skill beta-skill" }, 60_000);
