@@ -1,11 +1,15 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+	LAUNCHER_BIN as BIN,
+	launcherEnv,
+	runLauncher,
+} from "./helpers/launcher-runner.ts";
 import { addGlobalExtension, addGlobalSkill, createPiFixture, listFiles, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
-const BIN = path.resolve("bin/pi-profile.ts");
 let fixture: PiFixture;
 beforeEach(async () => {
 	fixture = await createPiFixture();
@@ -16,16 +20,6 @@ beforeEach(async () => {
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
-function launcherEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		HOME: fixture.root,
-		// The launcher resolves the real agent dir through pi's own override,
-		// keeping every real-pi side effect inside the fixture.
-		PI_CODING_AGENT_DIR: fixture.agentDir,
-		PI_OFFLINE: "1",
-	};
-}
 describe("launcher integration: real pi subprocess, default profile", () => {
 	it(
 		"starts the default profile exposing all fixture resources, and leaves the real agent dir untouched",
@@ -36,7 +30,7 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 			const agentDirBefore = await listFiles(fixture.agentDir);
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const commands = await rpc.commandNames();
@@ -86,36 +80,17 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 			// pi prints its own "Unknown option" error and then continues into
 			// interactive mode; with stdin at EOF it exits. The point here: the
 			// flag reaches pi — pi-profile never rejects it with a whitelist error.
-			const output = await new Promise<{ code: number | null; text: string }>((resolve, reject) => {
-				const child = execFile(
-					"node",
-					[BIN, "--", "--definitely-not-a-pi-flag"],
-					{ cwd: fixture.cwd, env: launcherEnv() },
-					(error, stdout, stderr) => {
-						resolve({ code: error ? ((error as { code?: number }).code ?? 0) : 0, text: `${stdout}\n${stderr}` });
-					},
-				);
-				child.stdin?.end();
-				setTimeout(() => reject(new Error("launcher did not exit after pi reached EOF on stdin")), 30_000);
-			});
-			expect(output.text).toContain("Unknown option: --definitely-not-a-pi-flag");
-			expect(output.text).not.toContain("unsupported pi argument");
+			const output = await runLauncher(fixture, ["--", "--definitely-not-a-pi-flag"]);
+			const text = `${output.stdout}\n${output.stderr}`;
+			expect(text).toContain("Unknown option: --definitely-not-a-pi-flag");
+			expect(text).not.toContain("unsupported pi argument");
 		},
 	);
 	it(
 		"rejects an unknown profile name before spawning pi",
 		{ timeout: 30_000 },
 		async () => {
-			const failure = await new Promise<{ code: number; stderr: string }>((resolve) => {
-				execFile(
-					"node",
-					[BIN, "review", "--", "--mode", "rpc"],
-					{ cwd: fixture.cwd, env: launcherEnv() },
-					(error, _stdout, stderr) => {
-						resolve({ code: (error as { code?: number })?.code ?? 0, stderr });
-					},
-				);
-			});
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("unknown profile: review");
 		},
@@ -148,7 +123,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			await writeFile(path.join(stale, "pid"), String(await deadPid()));
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
@@ -169,7 +144,7 @@ describe("launcher integration: instance dir cleanup", () => {
 		async () => {
 			const first = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await first.commandNames();
@@ -187,7 +162,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			await writeFile(path.join(previousPath, "pid"), String(await deadPid()));
 			const second = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await second.commandNames();
@@ -228,7 +203,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			);
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
@@ -254,7 +229,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			await writeFile(path.join(stale, "mcp-cache.json"), JSON.stringify({ cache: "portable" }));
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
@@ -282,7 +257,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			await writeFile(path.join(stale, "custom-state.json"), JSON.stringify({ instance: true }));
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
@@ -310,7 +285,7 @@ describe("launcher integration: instance dir cleanup", () => {
 			await writeFile(path.join(stale, "extensions", "some-ext", "config.json"), "{}");
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				await rpc.commandNames();
@@ -337,7 +312,7 @@ describe("launcher integration: starter assets ensure", () => {
 			expect(existsSync(path.join(profilesDir, "ask.json"))).toBe(false);
 			const rpc = new RpcDriver("node", [BIN, "ask", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const commands = await rpc.commandNames();

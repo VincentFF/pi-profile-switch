@@ -42,6 +42,7 @@ Terminology is defined by `CONTEXT.md`; the avoid-words flagged there must not b
 
 - TypeScript ESM, imports carry the `.ts` extension, following the style of existing files.
 - No new runtime dependencies unless existing ones cannot do the job.
+- Integration tests spawn the launcher only via `runLauncher` from `test/helpers/launcher-runner.ts` — it closes child stdin, without which pi never exits (guarded by `test/launcher-runner.test.ts`).
 - Run `npm run check` and `npm test` after changes.
 - Commit messages use conventional commits; one commit does one thing.
 

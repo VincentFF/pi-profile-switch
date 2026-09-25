@@ -1,13 +1,15 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+	LAUNCHER_BIN as BIN,
+	launcherEnv,
+	runLauncher,
+} from "./helpers/launcher-runner.ts";
 import { createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
-
-const BIN = path.resolve("bin/pi-profile.ts");
 
 let fixture: PiFixture;
 
@@ -18,15 +20,6 @@ beforeEach(async () => {
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
-
-function launcherEnv(): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		HOME: fixture.root,
-		PI_CODING_AGENT_DIR: fixture.agentDir,
-		PI_OFFLINE: "1",
-	};
-}
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	const dir = path.join(fixture.profileSwitchDir, "profiles");
@@ -48,18 +41,6 @@ async function installFakeAdapter(): Promise<void> {
 	await writeFile(extFile, "export default function () {}\n");
 }
 
-function runLauncher(args: string[]): Promise<{ code: number; stderr: string }> {
-	return new Promise((resolve) => {
-		const child = execFile(
-			"node",
-			[BIN, ...args],
-			{ cwd: fixture.cwd, env: launcherEnv() },
-			(error, _stdout, stderr) => resolve({ code: (error as { code?: number })?.code ?? 0, stderr }),
-		);
-		child.stdin?.end();
-	});
-}
-
 describe("launcher integration: mcp coordination", () => {
 	it(
 		"a profile declaring mcp fails before spawn when the adapter is absent",
@@ -68,7 +49,7 @@ describe("launcher integration: mcp coordination", () => {
 			await writeMcpConfig({ github: { url: "https://x" } });
 			await writeCatalog({ review: { mcps: ["github"] } });
 
-			const failure = await runLauncher(["review", "--", "--mode", "rpc"]);
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("pi-mcp-adapter is not active");
 		},
@@ -82,7 +63,7 @@ describe("launcher integration: mcp coordination", () => {
 			await writeMcpConfig({ github: {} });
 			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["typo-server"] } });
 
-			const failure = await runLauncher(["review", "--", "--mode", "rpc"]);
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain('unknown MCP server: "typo-server"');
 		},
@@ -99,7 +80,7 @@ describe("launcher integration: mcp coordination", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const response = await rpc.send({ type: "get_state" });
@@ -136,7 +117,7 @@ describe("launcher integration: mcp coordination", () => {
 
 			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
-				env: launcherEnv(),
+				env: launcherEnv(fixture),
 			});
 			try {
 				const response = await rpc.send({ type: "get_state" });
