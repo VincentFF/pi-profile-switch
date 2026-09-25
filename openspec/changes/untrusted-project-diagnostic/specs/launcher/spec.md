@@ -17,7 +17,7 @@ When the project is trusted, or untrusted but contains no trust-requiring conten
 
 #### Scenario: Untrusted project has skipped content
 
-- **WHEN** the project is untrusted and trust-requiring content such as `.pi/profiles.json` or `.pi/extensions` exists under the project directory
+- **WHEN** the project is untrusted and trust-requiring content such as `.pi/profiles/` or `.pi/extensions` exists under the project directory
 - **THEN** startup continues with an unchanged exit code, and stderr carries a diagnostic stating the project is untrusted, the invisible content, and how to authorize (`/trust` and `-- --approve`)
 
 #### Scenario: No diagnostic for trusted projects

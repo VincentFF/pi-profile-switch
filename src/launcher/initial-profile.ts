@@ -55,6 +55,10 @@ export interface InitialProfile {
 	discovery?: LauncherDiscovery;
 	/** The trusted project directory, when trusted. */
 	projectDir?: string;
+	/** The launcher's project-trust determination. Drives the untrusted-
+	 *  project diagnostic; not inferable from projectDir, which the dangling
+	 *  saved-profile fallback returns unset while the project is trusted. */
+	projectTrusted: boolean;
 	/** Non-fatal notices for the user (e.g. a dangling restored profile that
 	 *  fell back to default). The launcher prints them. */
 	warnings: string[];
@@ -116,7 +120,7 @@ export async function resolveInitialProfile(
 			throw new UnknownProfileError(selected);
 		}
 		warnings.push(`saved profile "${selected}" no longer exists; starting the default profile`);
-		return { plan: defaultPlan(), warnings };
+		return { plan: defaultPlan(), projectTrusted, warnings };
 	}
 	if (profile.source === "builtin") {
 		// The default profile is normally unfiltered. With an overlay it becomes
@@ -131,7 +135,7 @@ export async function resolveInitialProfile(
 				(overlay.disabledMcps?.length ?? 0) > 0 ||
 				overlay.tools !== undefined);
 		if (!narrowed) {
-			return { plan: defaultPlan(), warnings };
+			return { plan: defaultPlan(), projectTrusted, warnings };
 		}
 		if ((overlay.disabledMcps?.length ?? 0) > 0) {
 			throw new ActivationError(
@@ -151,7 +155,7 @@ export async function resolveInitialProfile(
 			overlay,
 		});
 		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
-		return { plan, discovery, projectDir, warnings };
+		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
@@ -172,5 +176,5 @@ export async function resolveInitialProfile(
 		// silently do nothing or leak through unfiltered.
 		throw new MissingMcpAdapterError(plan.profile);
 	}
-	return { plan, discovery, projectDir, warnings };
+	return { plan, discovery, projectDir, projectTrusted, warnings };
 }

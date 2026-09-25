@@ -76,11 +76,14 @@ export function resolveProjectTrust(input: ProjectTrustInput): boolean {
 	return input.userDefaultProjectTrust === "always";
 }
 
-/** pi-profile's own project files are trust-requiring even though Pi's
- *  native list doesn't know them: a committed catalog/state file would
- *  otherwise inject profile definitions (and instructions) unguarded. */
-function hasPiProfileProjectFiles(cwd: string): boolean {
-	return ["profiles", "pi-profile-state.json"].some((name) =>
-		existsSync(path.join(cwd, ".pi", name)),
-	);
+/** pi-profile's own project files, relative to the project's `.pi`
+ *  directory. They are trust-requiring even though Pi's native list doesn't
+ *  know them: a committed catalog/state file would otherwise inject profile
+ *  definitions (and instructions) unguarded. Exported so the launcher's
+ *  untrusted-project diagnostic names exactly the files the trust gate
+ *  skips — the two must never drift apart. */
+export const PI_PROFILE_PROJECT_FILES = ["profiles", "pi-profile-state.json"] as const;
+
+export function hasPiProfileProjectFiles(cwd: string): boolean {
+	return PI_PROFILE_PROJECT_FILES.some((name) => existsSync(path.join(cwd, ".pi", name)));
 }

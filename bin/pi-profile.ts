@@ -16,6 +16,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { ExtensionError } from "../src/extension-discovery.ts";
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
+import { untrustedProjectDiagnostic } from "../src/launcher/untrusted-project-diagnostic.ts";
 import { sweepStaleInstances } from "../src/launcher/runtime-cleanup.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
 import { McpConfigError, MissingMcpAdapterError } from "../src/mcp-config.ts";
@@ -37,13 +38,20 @@ try {
 	}
 	// Fails before spawning when the profile is unknown or cannot activate.
 	// --approve/--no-approve are consumed here as a one-run trust input.
-	const { plan, discovery, projectDir, warnings } = await resolveInitialProfile(args.profile, {
+	const { plan, discovery, projectDir, projectTrusted, warnings } = await resolveInitialProfile(args.profile, {
 		agentDir,
 		cwd: process.cwd(),
 		trustOverride: args.trustOverride,
 	});
 	for (const warning of warnings) {
 		console.error(`pi-profile: warning: ${warning}`);
+	}
+	// Untrusted-project notice: fires identically for every profile (default
+	// included) because it is driven by the trust determination, not by which
+	// profile branch resolution took. Startup continues either way.
+	const untrustedNotice = untrustedProjectDiagnostic(process.cwd(), projectTrusted);
+	if (untrustedNotice) {
+		console.error(`pi-profile: warning: ${untrustedNotice}`);
 	}
 	// Stale per-launch instance dirs (dead pid, or no pid past the grace
 	// window) are swept before this launch materializes its own. Unrecognized
