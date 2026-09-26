@@ -285,6 +285,64 @@ describe("overlay application (ticket 06)", () => {
 		expect(plan.toolReferences).toEqual(["read"]);
 	});
 
+	it("narrows resolved skills by a glob disable entry", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review", "git-commit", "git-rebase"] }),
+			skills: [skill("code-review"), skill("git-commit"), skill("git-rebase")],
+			extensions: await extensionsWith(),
+			overlay: { disabledSkills: ["git-*"] },
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+	});
+
+	it("narrows resolved extensions by a glob disable entry", async () => {
+		const extensions = await extensionsWith(["linter", "github-pr", "github-ci"]);
+
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter", "github-pr", "github-ci"] }),
+			skills: [],
+			extensions,
+			overlay: { disabledExtensions: ["github-*"] },
+		});
+
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+	});
+
+	it("narrows resolved MCP servers by a glob disable entry", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { mcps: ["github", "linear", "linter-docs"] }),
+			skills: [],
+			extensions: await extensionsWith(),
+			discoveredMcpServers: ["github", "linear", "linter-docs"],
+			overlay: { disabledMcps: ["linear", "linter-*"] },
+		});
+
+		expect(plan.mcps).toEqual(["github"]);
+	});
+
+	it("lands a zero-match glob disable in unmatched with an overlay prefix instead of failing", async () => {
+		const skills = [skill("code-review")];
+		const extensions = await extensionsWith(["linter"]);
+
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"], extensions: ["linter"], mcps: ["github"] }),
+			skills,
+			extensions,
+			discoveredMcpServers: ["github"],
+			overlay: { disabledSkills: ["ghost-*"], disabledExtensions: ["ghost-*"], disabledMcps: ["ghost-*"] },
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(plan.mcps).toEqual(["github"]);
+		expect(plan.unmatched).toEqual([
+			"overlay skill:ghost-*",
+			"overlay extension:ghost-*",
+			"overlay mcp:ghost-*",
+		]);
+	});
+
 	it("rejects disabling an MCP server the profile does not resolve", async () => {
 		await expect(
 			resolveProfile({

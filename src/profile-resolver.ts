@@ -120,6 +120,40 @@ function isGlob(reference: string): boolean {
 	return reference.includes("*") || reference.includes("?");
 }
 
+/** Expands overlay disable entries against the names the profile resolved.
+ *  Entries are names or globs stored as written, re-expanded at every
+ *  resolution with the same matcher as profile references (ADR-0009 tiering):
+ *  an unmatched literal fails and identifies the entry; a zero-match glob is
+ *  reported through `onZeroMatch` instead of failing. Returns the resolved
+ *  names to disable. */
+function expandDisableEntries(
+	entries: string[],
+	activeNames: readonly string[],
+	kind: string,
+	profileName: string,
+	onZeroMatch: (entry: string) => void,
+): Set<string> {
+	const disabled = new Set<string>();
+	for (const entry of entries) {
+		if (isGlob(entry)) {
+			let matched = 0;
+			for (const name of activeNames) {
+				if (minimatch(name, entry)) {
+					disabled.add(name);
+					matched += 1;
+				}
+			}
+			if (matched === 0) onZeroMatch(entry);
+			continue;
+		}
+		if (!activeNames.includes(entry)) {
+			throw new ActivationError(`profile "${profileName}": overlay disables unknown ${kind} "${entry}"`);
+		}
+		disabled.add(entry);
+	}
+	return disabled;
+}
+
 /** Expands one reference list against a named universe. Literal misses fail
  *  when `literalMustExist`; globs expand to zero or more matches, and a
  *  zero-match glob is reported through `onZeroMatch`. */
@@ -195,39 +229,42 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	);
 
 	// --- overlay narrowing (ticket 06) ---
-	// Overlay references must name resources the profile actually resolves
-	// (typos fail loudly). Overlays can disable any resolved extension.
+	// Overlay disable entries are names or globs stored as written and
+	// re-expanded at every resolution; unmatched literals fail and identify
+	// the entry, zero-match globs join `unmatched` with an `overlay ` prefix.
+	// Overlays can disable any resolved extension.
 	let toolReferences = definition.tools;
 	if (overlay !== undefined) {
 		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
-			const active = new Set(selectedSkills.map((skill) => skill.name));
-			for (const name of overlay.disabledSkills) {
-				if (!active.has(name)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown skill "${name}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledSkills);
+			const disabled = expandDisableEntries(
+				overlay.disabledSkills,
+				selectedSkills.map((skill) => skill.name),
+				"skill",
+				profile.name,
+				(entry) => unmatched.push(`overlay skill:${entry}`),
+			);
 			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
 		}
 		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
-			const activeIds = new Set(planExtensions.map((entry) => entry.id));
-			for (const id of overlay.disabledExtensions) {
-				if (!activeIds.has(id)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown extension "${id}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledExtensions);
+			const disabled = expandDisableEntries(
+				overlay.disabledExtensions,
+				planExtensions.map((entry) => entry.id),
+				"extension",
+				profile.name,
+				(entry) => unmatched.push(`overlay extension:${entry}`),
+			);
 			planExtensions = planExtensions.filter((entry) => !disabled.has(entry.id));
 		}
 		if (overlay.disabledMcps !== undefined && overlay.disabledMcps.length > 0) {
-			const active = new Set(mcps ?? []);
-			for (const name of overlay.disabledMcps) {
-				if (!active.has(name)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown MCP server "${name}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledMcps);
-			mcps = (mcps ?? []).filter((name) => !disabled.has(name));
+			const active = mcps ?? [];
+			const disabled = expandDisableEntries(
+				overlay.disabledMcps,
+				active,
+				"MCP server",
+				profile.name,
+				(entry) => unmatched.push(`overlay mcp:${entry}`),
+			);
+			mcps = active.filter((name) => !disabled.has(name));
 		}
 		if (overlay.tools !== undefined) {
 			toolReferences = overlay.tools;
