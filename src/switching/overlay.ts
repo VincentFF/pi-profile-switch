@@ -130,11 +130,9 @@ export function parseOverlayArgs(args: string): OverlayCommand {
 			kind: "mutate",
 			mutate: (overlay) => {
 				const current = overlay[field] ?? [];
-				const nextList = [...new Set([...current, name])];
-				const next = { ...overlay };
-				if (nextList.length === 0) delete next[field];
-				else next[field] = nextList;
-				return next;
+				// `name` is always appended, so the list never empties here (the
+			// enable closure below owns the delete-when-empty branch).
+				return { ...overlay, [field]: [...new Set([...current, name])] };
 			},
 		};
 	}
