@@ -17,7 +17,7 @@ The accepted `/profile` subcommand set and overlay grammar are defined by the de
 
 ## 4. Overlay integration coverage
 
-- [ ] 4.1 Update `test/overlay.integration.test.ts`: rename all `customize`/`reset` invocations to `overlay`/`overlay clear`; add an integration case where a stored glob disable is re-expanded on `/profile reload` and narrows a newly resolved resource; add a non-TUI case running an `overlay` form. Verification: `npx vitest run test/overlay.integration.test.ts` — covers delta scenarios "Stored glob is re-expanded on reload", "Non-TUI availability", and the renamed survivors "Overlay does not touch the catalog", "MCP disabling on the default profile is rejected".
+- [x] 4.1 Update `test/overlay.integration.test.ts`: rename all `customize`/`reset` invocations to `overlay`/`overlay clear`; add an integration case where a stored glob disable is re-expanded on `/profile reload` and narrows a newly resolved resource; add a non-TUI case running an `overlay` form. Verification: `npx vitest run test/overlay.integration.test.ts` — covers delta scenarios "Stored glob is re-expanded on reload", "Non-TUI availability", and the renamed survivors "Overlay does not touch the catalog", "MCP disabling on the default profile is rejected".
 
 ## 5. Remove the CRUD modules
 
