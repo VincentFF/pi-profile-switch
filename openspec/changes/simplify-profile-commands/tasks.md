@@ -30,4 +30,4 @@ The accepted `/profile` subcommand set and overlay grammar are defined by the de
 
 ## 7. Gate
 
-- [ ] 7.1 Run `npm run check`, `npm test`, and `openspec validate simplify-profile-commands`; all three pass. Verification: exit codes 0; the full suite runs with no file from task 5.1 referenced.
+- [x] 7.1 Run `npm run check`, `npm test`, and `openspec validate simplify-profile-commands`; all three pass. Verification: exit codes 0; the full suite runs with no file from task 5.1 referenced.
