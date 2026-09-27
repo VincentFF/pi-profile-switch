@@ -176,10 +176,11 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					});
 					return;
 				}
-				// Bare /profile: the interactive selector. Outside TUI mode (or
-				// without dialog-capable UI) there is no interactive selector to
-				// open: degrade to the trust-gated list, carrying the structured
-				// payload the removed `list` subcommand emitted.
+				// Bare /profile: the interactive selector. Degradation boundary
+				// (delta "Observability surface"): outside TUI mode the selector
+				// does not run — the bare invocation degrades to the trust-gated
+				// list, carrying the structured payload the removed `list`
+				// subcommand emitted.
 				if (!ctx.hasUI || ctx.mode !== "tui") {
 					pi.sendMessage({
 						customType: "pi-profile",

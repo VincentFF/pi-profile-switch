@@ -259,6 +259,19 @@ describe("pi-profile extension", () => {
 			expect(String(pi.sentMessages[0]?.content)).toContain("default [builtin]");
 		});
 
+		it("bare /profile with a UI but outside TUI mode degrades to the list", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeGlobalProfiles({ review: { label: "Code review" } });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("" as never, fakeCtx({ hasUI: true, mode: "rpc" }) as never);
+
+			expect(pi.sentMessages).toHaveLength(1);
+			expect(pi.sentMessages[0]?.customType).toBe("pi-profile");
+			expect(String(pi.sentMessages[0]?.content)).toContain("review [global] — Code review");
+		});
+
 		it("bare /profile with UI offers every visible profile and cancels cleanly", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 			await writeGlobalProfiles({ review: {} });
