@@ -1,6 +1,6 @@
 /**
- * ProfileListing: the `/profile list` and `/profile` selector data surface
- * (ticket 07).
+ * ProfileListing: the profile selector's and the degraded bare `/profile`
+ * list's data surface (ticket 07).
  *
  * Trust-gated exactly like activation: an untrusted project's profiles are
  * invisible. The listing reports each visible profile with the source of
