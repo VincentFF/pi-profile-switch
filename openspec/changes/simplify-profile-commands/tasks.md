@@ -26,7 +26,7 @@ The accepted `/profile` subcommand set and overlay grammar are defined by the de
 ## 6. Documentation sync
 
 - [x] 6.1 Rewrite the command table and its surrounding notes in `README.md` (the rows listing CRUD and `customize`/`reset`, and the "CRUD wizards are TUI-only" note): five forms per the delta, overlay glob support, and the migration mapping (removed subcommand → replacement). Verification: `rg -n "customize|/profile reset|/profile list|create\\\\|edit\\\\|delete\\\\|duplicate" README.md` returns nothing, and the new table rows are present.
-- [ ] 6.2 Update `docs/architecture/overview.md`: remove the module-table rows for `profile-wizard.ts`, `profile-crud.ts`, `profile-catalog-store.ts`; rename the `customize.ts` row to `overlay.ts` with updated exports; fix the `extensions/pi-profile/index.ts` row (no CRUD wizards) and the `src/switching/` group description. Verification: `rg -n "profile-wizard|profile-crud|profile-catalog-store|customize" docs/architecture/overview.md` returns nothing.
+- [x] 6.2 Update `docs/architecture/overview.md`: remove the module-table rows for `profile-wizard.ts`, `profile-crud.ts`, `profile-catalog-store.ts`; rename the `customize.ts` row to `overlay.ts` with updated exports; fix the `extensions/pi-profile/index.ts` row (no CRUD wizards) and the `src/switching/` group description. Verification: `rg -n "profile-wizard|profile-crud|profile-catalog-store|customize" docs/architecture/overview.md` returns nothing.
 
 ## 7. Gate
 
