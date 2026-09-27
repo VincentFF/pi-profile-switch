@@ -77,7 +77,7 @@ export class RuntimeStateStore {
 	}
 
 	/** Read-modify-write merge. A field set to `undefined` is deleted; absent
-	 *  fields keep their stored value. Used by the switch/customize paths so
+	 *  fields keep their stored value. Used by the switch/overlay paths so
 	 *  one concern (selection, anchor, overlay) never clobbers another. */
 	async update(patch: Partial<RuntimeState>): Promise<RuntimeState> {
 		const current = await this.read();
