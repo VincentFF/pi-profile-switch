@@ -184,6 +184,25 @@ describe("applyOverlayMutation / clearOverlay", () => {
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 	});
 
+	it("stores a zero-match glob disable entry as written, succeeding with a warning", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ review: { skills: ["alpha-skill"] } });
+		await activate("review");
+
+		const result = await applyOverlayMutation(deps(), mutate("disable skill ghost-*"));
+
+		expect(
+			result.warnings.some(
+				(warning) => warning.includes('"overlay skill:ghost-*" matched nothing this resolution'),
+			),
+		).toBe(true);
+		// The entry is stored verbatim, exactly as written.
+		expect((await readState()).overlay).toEqual({ disabledSkills: ["ghost-*"] });
+		// Nothing matched, so the runtime is unchanged.
+		const settings = await readSettings();
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+	});
+
 	it("rejects disabling an MCP server on the default profile, writing nothing", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await writeCatalog({});
