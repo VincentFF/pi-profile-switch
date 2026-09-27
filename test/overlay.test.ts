@@ -184,6 +184,21 @@ describe("applyOverlayMutation / clearOverlay", () => {
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 	});
 
+	it("rejects disabling an MCP server on the default profile, writing nothing", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({});
+		// The launch profile is default (the beforeEach generated it).
+		const before = await readSettings();
+
+		await expect(applyOverlayMutation(deps(), mutate("disable mcp github"))).rejects.toThrow(
+			/no MCP allowlist to narrow/,
+		);
+
+		expect(await readSettings()).toEqual(before);
+		const { existsSync } = await import("node:fs");
+		expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+	});
+
 	it("narrows the default profile via a synthetic everything-minus-disabled selection", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await addGlobalSkill(fixture, "beta-skill");
