@@ -89,8 +89,8 @@ function readOptionalString(value: unknown, field: string, profileName: string, 
 	return value;
 }
 
-/** Parses one raw profile definition; exported for the write-side store
- *  (profile-catalog-store.ts) so anything written is loadable. */
+/** Parses one raw profile definition; the single read-time validator so
+ *  catalog files and any external writer stay loadable. */
 export function parseProfileDefinition(name: string, raw: unknown, filePath?: string): ProfileDefinition {
 	if (!isRecord(raw)) {
 		const prefix = filePath ? `${filePath}: ` : "";

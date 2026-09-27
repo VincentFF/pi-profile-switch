@@ -21,7 +21,7 @@ The accepted `/profile` subcommand set and overlay grammar are defined by the de
 
 ## 5. Remove the CRUD modules
 
-- [ ] 5.1 Delete `src/switching/profile-wizard.ts`, `src/switching/profile-crud.ts`, `src/profile-catalog-store.ts`, and the tests `test/profile-wizard.test.ts`, `test/profile-crud.test.ts`, `test/profile-crud.integration.test.ts`, `test/profile-catalog-store.test.ts`; clean the stale comment referencing `profile-catalog-store.ts` in `src/profile-catalog.ts`. Verification: `npm run check` compiles, and `rg -n "profile-wizard|profile-crud|profile-catalog-store|ProfileCatalogStore|CatalogScope" src/ extensions/ bin/ test/` returns no references — mechanically covers the profile-catalog delta's REMOVED requirements (create/edit/duplicate, deletion, catalog writes have no remaining actor).
+- [x] 5.1 Delete `src/switching/profile-wizard.ts`, `src/switching/profile-crud.ts`, `src/profile-catalog-store.ts`, and the tests `test/profile-wizard.test.ts`, `test/profile-crud.test.ts`, `test/profile-crud.integration.test.ts`, `test/profile-catalog-store.test.ts`; clean the stale comment referencing `profile-catalog-store.ts` in `src/profile-catalog.ts`. Verification: `npm run check` compiles, and `rg -n "profile-wizard|profile-crud|profile-catalog-store|ProfileCatalogStore|CatalogScope" src/ extensions/ bin/ test/` returns no references — mechanically covers the profile-catalog delta's REMOVED requirements (create/edit/duplicate, deletion, catalog writes have no remaining actor).
 
 ## 6. Documentation sync
 
