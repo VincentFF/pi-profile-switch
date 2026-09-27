@@ -264,7 +264,13 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				profile.name,
 				(entry) => unmatched.push(`overlay mcp:${entry}`),
 			);
-			mcps = active.filter((name) => !disabled.has(name));
+			// A profile that declared no `mcps` has no MCP restriction; overlay
+			// narrowing must not turn that into an empty whitelist. Literals
+			// still fail and zero-match globs still warn — the expansion above
+			// runs either way — only the reassignment is guarded.
+			if (mcps !== undefined) {
+				mcps = active.filter((name) => !disabled.has(name));
+			}
 		}
 		if (overlay.tools !== undefined) {
 			toolReferences = overlay.tools;

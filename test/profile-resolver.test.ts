@@ -343,6 +343,29 @@ describe("overlay application (ticket 06)", () => {
 		]);
 	});
 
+	it("a zero-match MCP glob disable on a profile without declared mcps stays unrestricted and warns", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"] }),
+			skills: [skill("code-review")],
+			extensions: await extensionsWith(),
+			overlay: { disabledMcps: ["ghost-*"] },
+		});
+
+		expect(plan.mcps).toBeUndefined();
+		expect(plan.unmatched).toEqual(["overlay mcp:ghost-*"]);
+	});
+
+	it("a literal MCP disable on a profile without declared mcps still fails identifying the entry", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { skills: ["code-review"] }),
+				skills: [skill("code-review")],
+				extensions: await extensionsWith(),
+				overlay: { disabledMcps: ["github"] },
+			}),
+		).rejects.toThrow(/overlay disables unknown MCP server "github"/);
+	});
+
 	it("rejects disabling an MCP server the profile does not resolve", async () => {
 		await expect(
 			resolveProfile({
