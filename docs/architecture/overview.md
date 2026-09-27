@@ -62,7 +62,6 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | Module | Interface |
 | --- | --- |
 | `profile-catalog.ts` | Catalog read side: `ProfileCatalog` lists and parses winning definitions, producing `ResolvedProfile` (with `source: builtin \| global \| project`) |
-| `profile-catalog-store.ts` | Catalog write side (`profiles/<name>.json`), used only by the TUI CRUD path |
 | `project-trust.ts` | `resolveProjectTrust(input)` → boolean; mirrors Pi's decision order; decides whether pi-profile reads the project catalog, project state, and project MCP configuration (project-level resources themselves belong to Pi) |
 | `skill-registry.ts` | `discoverSkills(options)` → `SkillEntry[]`; read-only calls into Pi SDK discovery, never scans directories itself |
 | `extension-discovery.ts` | `discoverExtensions(options)` → `DiscoveredExtensions` (read-only, never executes extension code); `.select(refs)` resolves package names, aliases, loose-file stems, globs, and absolute paths |
@@ -82,13 +81,11 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 
 | Module | Interface |
 | --- | --- |
-| `extensions/pi-profile/index.ts` | Registers the `/profile` command family, profile selector, CRUD wizards, and status views; loaded via `-e` |
+| `extensions/pi-profile/index.ts` | Registers the `/profile` command family, the profile selector (degrading to the list without interactive UI), and the status view; loaded via `-e` |
 | `switching/switch-profile.ts` | `switchProfile(profile, deps, options)` → `SwitchResult`; orchestrates snapshot → rewrite → reload → rollback |
 | `switching/apply-plan.ts` | `readLaunchPlanFile(runtimeDir)` + `applyLaunchPlan(input)`; at `session_start` and after reload, applies the tools whitelist, persists runtime state, and emits the one-shot change summary |
-| `switching/customize.ts` | `customizeOverlay` / `resetOverlay` / `parseCustomizeArgs`; reads and writes the runtime overlay |
-| `switching/profile-crud.ts` | Semantic layer for create / edit / delete / duplicate |
-| `switching/profile-wizard.ts` | Interactive wizards for create / edit / duplicate; UI injected via parameters |
-| `switching/list-profiles.ts` | `/profile list`, with trust gating and the `shadowsGlobal` marker |
+| `switching/overlay.ts` | `OVERLAY_USAGE` / `parseOverlayArgs` / `applyOverlayMutation` / `clearOverlay`; reads and writes the runtime overlay |
+| `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; profile entries for the selector and the degraded bare `/profile` list, with trust gating and the `shadowsGlobal` marker |
 | `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP tri-state, conflicts |
 | `switching/tool-references.ts` | `expandToolReferences(refs, liveToolNames)`; expands tool references against Pi's live registry |
 
@@ -192,7 +189,7 @@ The authoritative schema for profile definition files (global `~/.pi-profile-swi
 | Profiles do not govern project-level resources | A trusted project's skills, extensions, and MCP servers are available under every profile; even a read-only-style profile cannot hide them — project trust is the only gate. In an untrusted project, project-level resources are uniformly invisible |
 | Behavior keys in project `.pi/settings.json` override profile declarations | Pi's merge order is project-over-global, so the project's `defaultProvider`/`defaultModel`/`defaultThinkingLevel` beat the profile's declarations; `defaultTools` only affects the boot baseline (the extension re-tightens tools at session start) |
 | The extension `project_trust` event is not consulted | Consulting it would require executing extension code inside the launcher; third-party extensions depending on that event cannot influence the trust determination |
-| `pi install` and `pi config` write into the generated settings mid-session | Lost on exit; persistent changes go through `/profile edit` or native `pi` |
+| `pi install` and `pi config` write into the generated settings mid-session | Lost on exit; persistent changes go through direct catalog file editing or native `pi` |
 | Legacy 0.4.x `instances/<profile>/agent` directories are untouched by the new sweep | Neither cleaned nor migrated; users dispose of them manually. The pi-subagents mission records inside carry absolute paths pointing at old instance paths and cannot be repaired (see ADR-0010) |
 | Concurrent instances do not serialize writes to credential files | `auth.json` and `models-store.json` are shared through seed symlinks, but Pi's lock lands next to the symlink path, so two sessions do not serialize against each other and one concurrent refresh may be lost (see ADR-0010) |
 | Skills provided by project packages are not referenceable | They are visible through Pi's native loading but do not appear in a profile's reference vocabulary; project `.pi/skills` and ancestor `.agents/skills` are referenceable |
@@ -205,7 +202,7 @@ The authoritative schema for profile definition files (global `~/.pi-profile-swi
 | `extensions/pi-profile/` | The extension inside the pi process: `/profile` command family, switch orchestration, status views |
 | `src/starter-assets.ts` | Starter-asset ensure at launcher startup: a single TS implementation exporting `ensureStarterAssets()` (returns `path`/`written` per asset; IO failures degrade to `warnings`, never throw — design in [design.md D1/D5](../../openspec/changes/archive/2026-09-24-runtime-ensure-starter-assets/design.md)); the behavior contract is not restated here — see [openspec/specs/profile-catalog/spec.md](../../openspec/specs/profile-catalog/spec.md) |
 | `src/launcher/` | Everything before spawn: argument parsing, initial-profile resolution, read-only discovery, model check, spawn, stale-directory sweep |
-| `src/switching/` | In-session switching, overlay, CRUD, observability surface |
+| `src/switching/` | In-session switching, overlay, observability surface |
 | `src/*.ts` | Modules shared by both sides: catalog, trust, discovery, resolver, settings generation, state stores |
 | `schemas/` | `profiles.schema.json`, the authoritative definition of user configuration |
 | `examples/` | `ask.json` (seeded starter) and `example.json` (full-field demo) |

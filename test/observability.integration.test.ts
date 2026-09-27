@@ -1,8 +1,10 @@
 /**
- * Integration: /profile list and /profile status against a real spawned pi.
+ * Integration: the bare /profile degraded list and /profile status against
+ * a real spawned pi.
  *
- * - `/profile list` shows built-in/global/project profiles with the winning
- *   source (a same-name project profile shadows the global one).
+ * - Bare `/profile` without dialog-capable UI degrades to the trust-gated
+ *   profile list (a same-name project profile shadows the global one),
+ *   carrying the structured `{kind, profiles}` payload for RPC consumers.
  * - `/profile status` reports resolved absolute skill paths, the MCP
  *   tri-state, and — after an in-session switch — the glob delta versus
  *   the previous activation.
@@ -68,16 +70,26 @@ async function messageContaining(fragment: string): Promise<unknown> {
 }
 
 describe("observability surface against a real spawned pi", () => {
-	it("/profile list shows sources and project shadowing", async () => {
+	it("bare /profile degrades to the list with sources, project shadowing, and the structured payload", async () => {
 		await start();
 
-		await command("profile list");
+		await command("profile");
 
 		await messageContaining("shared [project] (shadows global)");
 		const seen = driver.messages.map((message) => JSON.stringify(message)).join("\n");
 		expect(seen).toContain("default [builtin]");
 		expect(seen).toContain("review [global]");
 		expect(seen).toContain("shared [project] (shadows global) — project shared");
+		// RPC-consumable structured form: the degraded list carries the same
+		// {kind, profiles} payload the removed `list` subcommand emitted.
+		const structured = driver.messages.find(
+			(message) =>
+				typeof message === "object" &&
+				message !== null &&
+				JSON.stringify(message).includes('"kind":"list"') &&
+				JSON.stringify(message).includes('"name":"review","source":"global"'),
+		);
+		expect(structured).toBeDefined();
 	}, 90_000);
 
 	it("/profile status shows resolved paths, mcp tri-state, and the switch delta", async () => {

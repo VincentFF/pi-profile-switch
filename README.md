@@ -107,17 +107,27 @@ If you used an earlier version that stored all profiles in a single `profiles.js
 
 ## Commands
 
-In the TUI, the `/profile` command family manages everything in-session:
+The `/profile` command family manages everything in-session:
 
 | Command | What it does |
 | --- | --- |
-| `/profile` | Interactive profile picker |
-| `/profile list` / `/profile status` | Show profiles / active profile details |
+| `/profile` | Interactive profile picker; without interactive UI it prints the profile list instead |
 | `/profile use <name>` / `/profile reload` | Switch / reload without restarting (rollback on failure) |
-| `/profile create\|edit\|delete\|duplicate` | Guided profile CRUD (TUI only) |
-| `/profile customize` / `/profile reset` | Narrow the active profile for this session only |
+| `/profile status` | Active profile details: resolved resources and paths, stored overlay, MCP server tri-state |
+| `/profile overlay disable\|enable skill\|extension\|mcp <name-or-glob>` | Narrow / un-narrow the active profile for this session only; `disable` entries accept names or globs |
+| `/profile overlay tools [ref...]` | Replace the tool reference set for this session only (`tools` alone clears it) |
+| `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
 
-All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizards are TUI-only.
+All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart.
+
+Removed subcommands and their replacements:
+
+| Removed | Replacement |
+| --- | --- |
+| `/profile list` | bare `/profile` (degrades to the profile list without interactive UI) |
+| `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | edit the catalog JSON files directly, or configure profiles conversationally with the [`profile-config`](skills/profile-config/SKILL.md) skill |
+| `/profile customize` | `/profile overlay` |
+| `/profile reset` | `/profile overlay clear` |
 
 ## Docs
 

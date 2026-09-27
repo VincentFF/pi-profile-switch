@@ -34,7 +34,7 @@ async function readState(): Promise<Record<string, unknown>> {
 
 describe("launcher integration: runtime overlay", () => {
 	it(
-		"customize narrows the runtime only: state holds the overlay, the catalog is untouched, the next launch ignores it",
+		"overlay narrows the runtime only: state holds the overlay, the catalog is untouched, the next launch ignores it",
 		{ timeout: 90_000 },
 		async () => {
 			await addGlobalSkill(fixture, "alpha-skill");
@@ -48,11 +48,11 @@ describe("launcher integration: runtime overlay", () => {
 			try {
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
 
-				const customized = await rpc.send(
-					{ type: "prompt", message: "/profile customize disable skill beta-skill" },
+				const narrowed = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable skill beta-skill" },
 					60_000,
 				);
-				expect(customized.success).toBe(true);
+				expect(narrowed.success).toBe(true);
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill"]);
 
 				// Overlay persisted to runtime state; the catalog file is untouched.
@@ -62,9 +62,9 @@ describe("launcher integration: runtime overlay", () => {
 				);
 				expect(profile.skills).toEqual(["alpha-skill", "beta-skill"]);
 
-				// Reset restores the declared set.
-				const reset = await rpc.send({ type: "prompt", message: "/profile reset" }, 60_000);
-				expect(reset.success).toBe(true);
+				// overlay clear restores the declared set.
+				const cleared = await rpc.send({ type: "prompt", message: "/profile overlay clear" }, 60_000);
+				expect(cleared.success).toBe(true);
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
 				expect((await readState()).overlay).toBeUndefined();
 			} finally {
@@ -113,7 +113,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect(commands.some((c) => c.name === "my-ext-cmd")).toBe(true);
 
 				const disableAttempt = await rpc.send(
-					{ type: "prompt", message: "/profile customize disable extension my-ext" },
+					{ type: "prompt", message: "/profile overlay disable extension my-ext" },
 					60_000,
 				);
 				expect(disableAttempt.success).toBe(true);
@@ -142,7 +142,7 @@ describe("launcher integration: runtime overlay", () => {
 				env: launcherEnv(fixture),
 			});
 			try {
-				await rpc.send({ type: "prompt", message: "/profile customize disable skill beta-skill" }, 60_000);
+				await rpc.send({ type: "prompt", message: "/profile overlay disable skill beta-skill" }, 60_000);
 				expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 
 				const switched = await rpc.send({ type: "prompt", message: "/profile use impl" }, 60_000);
@@ -152,6 +152,82 @@ describe("launcher integration: runtime overlay", () => {
 				const state = await readState();
 				expect(state.activeProfile).toBe("impl");
 				expect(state.overlay).toBeUndefined();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"a stored glob disable is re-expanded on reload and narrows a newly resolved skill",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "git-commit");
+			await writeCatalog({ review: { skills: ["alpha-skill", "git-commit"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:git-commit"]);
+
+				// The glob is stored as written and narrows its current matches.
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable skill git-*" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				expect((await readState()).overlay).toEqual({ disabledSkills: ["git-*"] });
+
+				// Mid-runtime the profile resolves a NEW skill matching the stored
+				// glob; reload re-expands the pattern and narrows it too.
+				await addGlobalSkill(fixture, "git-rebase");
+				await writeCatalog({ review: { skills: ["alpha-skill", "git-commit", "git-rebase"] } });
+
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				expect((await readState()).overlay).toEqual({ disabledSkills: ["git-*"] });
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"overlay forms execute normally in non-TUI (rpc) mode",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable skill beta-skill" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill"]);
+
+				// enable removes the stored entry by exact string match.
+				const enabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay enable skill beta-skill" },
+					60_000,
+				);
+				expect(enabled.success).toBe(true);
+				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
+				// The stored entry is gone: the overlay carries no disable entries
+				// (an emptied overlay may persist as {}).
+				const afterEnable = (await readState()).overlay as Record<string, unknown> | undefined;
+				expect(afterEnable === undefined || Object.keys(afterEnable).length === 0).toBe(true);
 			} finally {
 				await rpc.close();
 			}

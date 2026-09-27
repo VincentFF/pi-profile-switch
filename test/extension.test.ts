@@ -165,13 +165,14 @@ describe("pi-profile extension", () => {
 		expect(await runBeforeAgentStart(pi, "BASE")).not.toContain("→");
 	});
 
-	it("registers the /profile command with use and reload subcommands", async () => {
+	it("registers the /profile command naming the accepted subcommand set", async () => {
 		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 		const pi = fakePi();
 		piProfileExtension(pi as never);
 
 		const command = pi.commands.get("profile");
 		expect(command).toBeDefined();
+		expect(command?.description).toBe("pi-profile: /profile [use|reload|status|overlay]");
 		const ctx = fakeCtx();
 		await command?.handler("bogus" as never, ctx as never);
 		expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage"))).toBe(
@@ -179,20 +180,55 @@ describe("pi-profile extension", () => {
 		);
 	});
 
+	it("rejects removed subcommands as unknown, naming the accepted set", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		for (const args of ["create", "edit x", "delete x", "duplicate", "list", "reset", "customize disable skill x"]) {
+			const ctx = fakeCtx({ mode: "rpc" });
+			await pi.commands.get("profile")?.handler(args as never, ctx as never);
+			const rejection = ctx.notifications.find((entry) => entry.level === "error" && entry.message.includes("usage"));
+			expect(rejection?.message).toBeDefined();
+			expect(rejection?.message).toContain("use");
+			expect(rejection?.message).toContain("reload");
+			expect(rejection?.message).toContain("status");
+			expect(rejection?.message).toContain("overlay");
+		}
+	});
+
+	it("rejects use without a name with the use usage note", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx();
+		await pi.commands.get("profile")?.handler("use" as never, ctx as never);
+		expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage: /profile use <name>"))).toBe(
+			true,
+		);
+	});
+
+	it("dispatches overlay mutations and overlay clear through the overlay module", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+
+		// Resolution-time validation errors surface as notifications.
+		const disableCtx = fakeCtx();
+		await pi.commands.get("profile")?.handler("overlay disable skill ghost" as never, disableCtx as never);
+		expect(
+			disableCtx.notifications.some(
+				(entry) => entry.level === "error" && entry.message.includes('overlay disables unknown skill "ghost"'),
+			),
+		).toBe(true);
+
+		const clearCtx = fakeCtx();
+		await pi.commands.get("profile")?.handler("overlay clear" as never, clearCtx as never);
+		expect(clearCtx.notifications.some((entry) => entry.level === "info" && entry.message.includes("overlay cleared"))).toBe(
+			true,
+		);
+	});
+
 	describe("observability surface (ticket 07)", () => {
-		it("/profile list sends the trust-gated profile listing as a displayed message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeGlobalProfiles({ review: { label: "Code review" } });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-
-			await pi.commands.get("profile")?.handler("list" as never, fakeCtx() as never);
-
-			expect(pi.sentMessages).toHaveLength(1);
-			expect(pi.sentMessages[0]?.customType).toBe("pi-profile");
-			expect(String(pi.sentMessages[0]?.content)).toContain("review [global] — Code review");
-		});
-
 		it("/profile status sends the resolved plan report", async () => {
 			await writeLaunchPlan({
 				profile: "review",
@@ -223,6 +259,19 @@ describe("pi-profile extension", () => {
 			expect(String(pi.sentMessages[0]?.content)).toContain("default [builtin]");
 		});
 
+		it("bare /profile with a UI but outside TUI mode degrades to the list", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeGlobalProfiles({ review: { label: "Code review" } });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("" as never, fakeCtx({ hasUI: true, mode: "rpc" }) as never);
+
+			expect(pi.sentMessages).toHaveLength(1);
+			expect(pi.sentMessages[0]?.customType).toBe("pi-profile");
+			expect(String(pi.sentMessages[0]?.content)).toContain("review [global] — Code review");
+		});
+
 		it("bare /profile with UI offers every visible profile and cancels cleanly", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 			await writeGlobalProfiles({ review: {} });
@@ -237,94 +286,6 @@ describe("pi-profile extension", () => {
 			// Cancelled: no message, no error notification.
 			expect(pi.sentMessages).toHaveLength(0);
 			expect(ctx.notifications).toHaveLength(0);
-		});
-	});
-
-	describe("profile CRUD (ticket 09)", () => {
-		it("/profile create runs the wizard and writes the chosen scope", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({
-				hasUI: true,
-				selectAnswers: ["global"],
-				inputAnswers: ["review", "Code review", "", "review, debug-*", "", "", "", "Be terse.", ""],
-			});
-
-			await pi.commands.get("profile")?.handler("create" as never, ctx as never);
-
-			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
-			expect(reviewDef).toEqual({
-				label: "Code review",
-				skills: ["review", "debug-*"],
-				instructions: "Be terse.",
-			});
-			expect(ctx.notifications.some((entry) => entry.message.includes("created profile"))).toBe(true);
-		});
-
-		it("editing the ACTIVE profile saves and reloads; editing an inactive one does not", async () => {
-			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeGlobalProfiles({ review: { label: "old" }, other: {} });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-
-			// Active: answers keep everything except a new label.
-			const ctxActive = fakeCtx({ hasUI: true, inputAnswers: ["new label", "", "", "", "", "", "", ""] });
-			await pi.commands.get("profile")?.handler("edit review" as never, ctxActive as never);
-			expect(ctxActive.notifications.some((entry) => entry.message.includes("reloading"))).toBe(true);
-			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
-			expect(reviewDef).toEqual({ label: "new label" });
-
-			// Inactive: saved, runtime untouched (no reload notification).
-			const ctxInactive = fakeCtx({ hasUI: true, inputAnswers: ["", "desc", "", "", "", "", "", ""] });
-			await pi.commands.get("profile")?.handler("edit other" as never, ctxInactive as never);
-			expect(ctxInactive.notifications.some((entry) => entry.message.includes("inactive"))).toBe(true);
-			const otherDef = JSON.parse(await readFile(path.join(root, "profiles", "other.json"), "utf8"));
-			expect(otherDef).toEqual({ description: "desc" });
-		});
-
-		it("deleting the active profile requires a replacement, then switches", async () => {
-			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeGlobalProfiles({ review: {}, impl: {} });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["impl [global]"] });
-
-			await pi.commands.get("profile")?.handler("delete review" as never, ctx as never);
-
-			await expect(readFile(path.join(root, "profiles", "review.json"))).rejects.toThrow();
-			// Switched: the rewritten plan file names the replacement.
-			const planFile = JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8"));
-			expect(planFile.profile).toBe("impl");
-		});
-
-		it("/profile duplicate copies the full definition under a new name", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeGlobalProfiles({ review: { label: "Code review", skills: ["r*"], instructions: "Be terse." } });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["review [global] — Code review"], inputAnswers: ["review-strict"] });
-
-			await pi.commands.get("profile")?.handler("duplicate" as never, ctx as never);
-
-			const reviewStrictDef = JSON.parse(await readFile(path.join(root, "profiles", "review-strict.json"), "utf8"));
-			const reviewDef = JSON.parse(await readFile(path.join(root, "profiles", "review.json"), "utf8"));
-			expect(reviewStrictDef).toEqual(reviewDef);
-		});
-
-		it("create/edit/delete/duplicate are TUI-only, with a mode-aware message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			for (const args of ["create", "edit x", "delete x", "duplicate"]) {
-				const ctx = fakeCtx({ mode: "rpc" });
-				await pi.commands.get("profile")?.handler(args as never, ctx as never);
-				expect(
-					ctx.notifications.some(
-						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("rpc"),
-					),
-				).toBe(true);
-			}
 		});
 	});
 

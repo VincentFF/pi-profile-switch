@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { defaultPlan } from "../src/profile-resolver.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";
-import { customizeOverlay, parseCustomizeArgs, resetOverlay } from "../src/switching/customize.ts";
+import type { RuntimeOverlay } from "../src/runtime-state-store.ts";
+import { applyOverlayMutation, clearOverlay, parseOverlayArgs } from "../src/switching/overlay.ts";
 import type { SwitchDeps } from "../src/switching/switch-profile.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
@@ -35,6 +36,13 @@ const deps = (): SwitchDeps => ({
 	},
 });
 
+/** Narrows a parsed command to its mutation, failing the test on `clear`. */
+function mutate(args: string): (overlay: RuntimeOverlay) => RuntimeOverlay {
+	const command = parseOverlayArgs(args);
+	if (command.kind !== "mutate") throw new Error(`expected a mutate command, got ${command.kind}`);
+	return command.mutate;
+}
+
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	const dir = path.join(fixture.profileSwitchDir, "profiles");
 	const fs = await import("node:fs/promises");
@@ -58,28 +66,45 @@ async function readSettings(): Promise<Record<string, unknown>> {
 	return JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
 }
 
-describe("parseCustomizeArgs", () => {
+describe("parseOverlayArgs", () => {
 	it("parses disable/enable/tools mutations", () => {
-		expect(parseCustomizeArgs("disable skill noisy")({})).toEqual({ disabledSkills: ["noisy"] });
-		expect(parseCustomizeArgs("enable skill noisy")({ disabledSkills: ["noisy"] })).toEqual({});
-		expect(parseCustomizeArgs("tools read grep")({})).toEqual({ tools: ["read", "grep"] });
-		expect(parseCustomizeArgs("tools")({ tools: ["read"] })).toEqual({});
+		expect(mutate("disable skill noisy")({})).toEqual({ disabledSkills: ["noisy"] });
+		expect(mutate("enable skill noisy")({ disabledSkills: ["noisy"] })).toEqual({});
+		expect(mutate("tools read grep")({})).toEqual({ tools: ["read", "grep"] });
+		expect(mutate("tools")({ tools: ["read"] })).toEqual({});
+	});
+
+	it("parses clear as its own command kind", () => {
+		expect(parseOverlayArgs("clear")).toEqual({ kind: "clear" });
 	});
 
 	it("rejects malformed invocations", () => {
-		expect(() => parseCustomizeArgs("disable")).toThrow(/usage/);
-		expect(() => parseCustomizeArgs("frobnicate skill x")).toThrow(/usage/);
+		expect(() => parseOverlayArgs("disable")).toThrow(/usage/);
+		expect(() => parseOverlayArgs("frobnicate skill x")).toThrow(/usage/);
+		expect(() => parseOverlayArgs("clear extra")).toThrow(/usage/);
+	});
+
+	it("enable removes a stored entry by exact string match", () => {
+		expect(mutate("enable skill noisy")({ disabledSkills: ["git-*", "noisy"] })).toEqual({ disabledSkills: ["git-*"] });
+	});
+
+	it("enable fails listing current entries when no stored entry equals the name", () => {
+		expect(() => mutate("enable skill ghost")({ disabledSkills: ["git-*"] })).toThrow(/git-\*/);
+		// Exact string match: a literal name never removes a stored glob.
+		expect(() => mutate("enable skill git-commit")({ disabledSkills: ["git-*"] })).toThrow(/git-\*/);
+		// No stored entries at all.
+		expect(() => mutate("enable skill ghost")({})).toThrow(/current entries: \(none\)/);
 	});
 });
 
-describe("customizeOverlay / resetOverlay", () => {
+describe("applyOverlayMutation / clearOverlay", () => {
 	it("applies the overlay through re-resolution and persists it to state, never the catalog", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await addGlobalSkill(fixture, "beta-skill");
 		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
 		await activate("review");
 
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+		await applyOverlayMutation(deps(), mutate("disable skill beta-skill"));
 
 		const settings = await readSettings();
 		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);
@@ -89,13 +114,26 @@ describe("customizeOverlay / resetOverlay", () => {
 		expect(profile.skills).toEqual(["alpha-skill", "beta-skill"]);
 	});
 
+	it("rejects enabling without a matching stored entry, writing nothing", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ review: { skills: ["alpha-skill"] } });
+		await activate("review");
+		await applyOverlayMutation(deps(), mutate("disable skill alpha-skill"));
+		const before = await readSettings();
+
+		await expect(applyOverlayMutation(deps(), mutate("enable skill ghost"))).rejects.toThrow(/git-\*|alpha-skill/);
+
+		expect(await readSettings()).toEqual(before);
+		expect((await readState()).overlay).toEqual({ disabledSkills: ["alpha-skill"] });
+	});
+
 	it("rejects disabling a resource the profile does not resolve, writing nothing", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await writeCatalog({ review: { skills: ["alpha-skill"] } });
 		await activate("review");
 		const before = await readSettings();
 
-		await expect(customizeOverlay(deps(), parseCustomizeArgs("disable skill ghost"))).rejects.toThrow(
+		await expect(applyOverlayMutation(deps(), mutate("disable skill ghost"))).rejects.toThrow(
 			/overlay disables unknown skill "ghost"/,
 		);
 
@@ -104,15 +142,25 @@ describe("customizeOverlay / resetOverlay", () => {
 		expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
 	});
 
-	it("reset discards the overlay and reactivates the profile exactly as declared", async () => {
+	it("clear switches and reloads without the overlay before deleting it from state", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await addGlobalSkill(fixture, "beta-skill");
 		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
 		await activate("review");
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+		await applyOverlayMutation(deps(), mutate("disable skill beta-skill"));
 
-		await resetOverlay(deps());
+		// Ordering probe: the reload must run while the overlay is still
+		// stored — clear deletes it from state only after the switch.
+		const observed: unknown[] = [];
+		const clearDeps: SwitchDeps = {
+			...deps(),
+			reload: async () => {
+				observed.push((await readState()).overlay);
+			},
+		};
+		await clearOverlay(clearDeps);
 
+		expect(observed).toEqual([{ disabledSkills: ["beta-skill"] }]);
 		const settings = await readSettings();
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
@@ -126,7 +174,7 @@ describe("customizeOverlay / resetOverlay", () => {
 		await addGlobalSkill(fixture, "beta-skill");
 		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
 		await activate("review");
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+		await applyOverlayMutation(deps(), mutate("disable skill beta-skill"));
 
 		const { switchProfile } = await import("../src/switching/switch-profile.ts");
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
@@ -136,13 +184,47 @@ describe("customizeOverlay / resetOverlay", () => {
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 	});
 
+	it("stores a zero-match glob disable entry as written, succeeding with a warning", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ review: { skills: ["alpha-skill"] } });
+		await activate("review");
+
+		const result = await applyOverlayMutation(deps(), mutate("disable skill ghost-*"));
+
+		expect(
+			result.warnings.some(
+				(warning) => warning.includes('"overlay skill:ghost-*" matched nothing this resolution'),
+			),
+		).toBe(true);
+		// The entry is stored verbatim, exactly as written.
+		expect((await readState()).overlay).toEqual({ disabledSkills: ["ghost-*"] });
+		// Nothing matched, so the runtime is unchanged.
+		const settings = await readSettings();
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+	});
+
+	it("rejects disabling an MCP server on the default profile, writing nothing", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({});
+		// The launch profile is default (the beforeEach generated it).
+		const before = await readSettings();
+
+		await expect(applyOverlayMutation(deps(), mutate("disable mcp github"))).rejects.toThrow(
+			/no MCP allowlist to narrow/,
+		);
+
+		expect(await readSettings()).toEqual(before);
+		const { existsSync } = await import("node:fs");
+		expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+	});
+
 	it("narrows the default profile via a synthetic everything-minus-disabled selection", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await addGlobalSkill(fixture, "beta-skill");
 		await writeCatalog({});
 		// The launch profile is default (the beforeEach generated it).
 
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+		await applyOverlayMutation(deps(), mutate("disable skill beta-skill"));
 
 		const settings = await readSettings();
 		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);

@@ -162,8 +162,8 @@ export async function switchProfile(
 		throw new SwitchError("no active profile to reload");
 	}
 
-	// Overlay resolution: explicit `overlay` wins (customize), explicit
-	// `null` suppresses (reset/switch), and a plain `/profile reload`
+	// Overlay resolution: explicit `overlay` wins (overlay mutation),
+	// explicit `null` suppresses (clear/switch), and a plain `/profile reload`
 	// re-applies the stored overlay so runtime and state never diverge.
 	let overlay = options?.overlay;
 	if (overlay === undefined && options?.reloadCurrent === true && current.profile !== undefined) {

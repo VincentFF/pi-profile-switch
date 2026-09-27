@@ -1,5 +1,6 @@
 /**
- * Overlay customize/reset orchestration (ticket 06).
+ * Overlay command orchestration (ticket 06; module renamed with the
+ * `/profile overlay` subcommand).
  *
  * The overlay narrows the ACTIVE profile for this runtime only. It is
  * written to the scope state file (never a catalog) purely as the
@@ -8,12 +9,12 @@
  * ignores stored overlays, so an overlay never outlives its runtime.
  *
  * Ordering invariants:
- * - customize: re-resolve with the candidate overlay FIRST (validation:
- *   unknown references fail here, before anything
- *   is written), then switch+reload, then persist the overlay to state. A
- *   failed switch leaves the stored overlay untouched, consistent with the
- *   rolled-back runtime.
- * - reset: switch+reload WITHOUT the overlay first, then delete it from
+ * - disable|enable|tools: re-resolve with the candidate overlay FIRST
+ *   (validation: unknown references and enable misses fail here, before
+ *   anything is written), then switch+reload, then persist the overlay to
+ *   state. A failed switch leaves the stored overlay untouched, consistent
+ *   with the rolled-back runtime.
+ * - clear: switch+reload WITHOUT the overlay first, then delete it from
  *   state. If the switch rolls back, the stored overlay still matches the
  *   restored runtime.
  */
@@ -31,7 +32,7 @@ async function currentStateTarget(
 ): Promise<{ profile: string; store: RuntimeStateStore; state: RuntimeState }> {
 	const plan = await readLaunchPlanFile(deps.runtimeDir);
 	if (plan === undefined) {
-		throw new SwitchError("no active profile — nothing to customize");
+		throw new SwitchError("no active profile — nothing to overlay");
 	}
 	const stateDir = plan.source === "project" ? path.join(deps.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 	if (stateDir === undefined) {
@@ -42,7 +43,7 @@ async function currentStateTarget(
 }
 
 /** Applies a mutation to the active profile's overlay and re-activates. */
-export async function customizeOverlay(
+export async function applyOverlayMutation(
 	deps: SwitchDeps,
 	mutate: (overlay: RuntimeOverlay) => RuntimeOverlay,
 ): Promise<SwitchResult> {
@@ -59,7 +60,7 @@ export async function customizeOverlay(
 }
 
 /** Discards the overlay and reactivates the profile exactly as declared. */
-export async function resetOverlay(deps: SwitchDeps): Promise<SwitchResult> {
+export async function clearOverlay(deps: SwitchDeps): Promise<SwitchResult> {
 	const { profile, store } = await currentStateTarget(deps);
 
 	// overlay: null — explicit "none"; without it the reload path would
@@ -70,8 +71,14 @@ export async function resetOverlay(deps: SwitchDeps): Promise<SwitchResult> {
 	return result;
 }
 
-export const CUSTOMIZE_USAGE =
-	"/profile customize disable|enable skill|extension|mcp <name> · /profile customize tools [ref...]" as const;
+export const OVERLAY_USAGE =
+	"/profile overlay disable|enable skill|extension|mcp <name> · /profile overlay tools [ref...] · /profile overlay clear" as const;
+
+/** The parsed form of `/profile overlay` arguments: either a mutation to
+ *  validate and apply against the stored overlay, or `clear`. */
+export type OverlayCommand =
+	| { kind: "mutate"; mutate: (overlay: RuntimeOverlay) => RuntimeOverlay }
+	| { kind: "clear" };
 
 const DISABLED_FIELDS = {
 	skill: "disabledSkills",
@@ -79,38 +86,73 @@ const DISABLED_FIELDS = {
 	mcp: "disabledMcps",
 } as const;
 
-/** Parses `/profile customize` arguments into an overlay mutation.
+/** Parses `/profile overlay` arguments into an overlay command.
  *  Grammar:
- *    customize disable skill|extension|mcp <name>
- *    customize enable  skill|extension|mcp <name>   (un-disable)
- *    customize tools <ref>...                        (replace tool refs)
- *    customize tools                                  (clear the tools override)
+ *    overlay disable skill|extension|mcp <name>
+ *    overlay enable  skill|extension|mcp <name>   (remove a stored entry)
+ *    overlay tools <ref>...                        (replace tool refs)
+ *    overlay tools                                  (clear the tools override)
+ *    overlay clear                                  (discard the overlay)
+ *
+ *  `enable` removes a stored entry by exact string match — no hole-punching
+ *  through globs — and fails when nothing equals the given name, listing the
+ *  current entries of that kind.
  */
-export function parseCustomizeArgs(args: string): (overlay: RuntimeOverlay) => RuntimeOverlay {
+export function parseOverlayArgs(args: string): OverlayCommand {
 	const [action, kind, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+
+	if (action === "clear") {
+		if (rest.length > 0 || kind !== undefined) throw new SwitchError(`usage: ${OVERLAY_USAGE}`);
+		return { kind: "clear" };
+	}
 
 	if (action === "tools") {
 		const refs = [kind, ...rest].filter((entry): entry is string => entry !== undefined);
-		return (overlay) => {
-			const next = { ...overlay };
-			if (refs.length === 0) delete next.tools;
-			else next.tools = refs;
-			return next;
+		return {
+			kind: "mutate",
+			mutate: (overlay) => {
+				const next = { ...overlay };
+				if (refs.length === 0) delete next.tools;
+				else next.tools = refs;
+				return next;
+			},
 		};
 	}
 
 	const field = DISABLED_FIELDS[kind as keyof typeof DISABLED_FIELDS];
 	if ((action !== "disable" && action !== "enable") || field === undefined || rest.length !== 1) {
-		throw new SwitchError(`usage: ${CUSTOMIZE_USAGE}`);
+		throw new SwitchError(`usage: ${OVERLAY_USAGE}`);
 	}
 	const [name] = rest;
-	return (overlay) => {
-		const current = overlay[field] ?? [];
-		const nextList =
-			action === "disable" ? [...new Set([...current, name])] : current.filter((entry) => entry !== name);
-		const next = { ...overlay };
-		if (nextList.length === 0) delete next[field];
-		else next[field] = nextList;
-		return next;
+
+	if (action === "disable") {
+		return {
+			kind: "mutate",
+			mutate: (overlay) => {
+				const current = overlay[field] ?? [];
+				// `name` is always appended, so the list never empties here (the
+			// enable closure below owns the delete-when-empty branch).
+				return { ...overlay, [field]: [...new Set([...current, name])] };
+			},
+		};
+	}
+
+	return {
+		kind: "mutate",
+		mutate: (overlay) => {
+			const current = overlay[field] ?? [];
+			if (!current.includes(name)) {
+				throw new SwitchError(
+					`no stored ${kind} disable entry equals "${name}" — current entries: ${
+						current.length > 0 ? current.join(", ") : "(none)"
+					}`,
+				);
+			}
+			const nextList = current.filter((entry) => entry !== name);
+			const next = { ...overlay };
+			if (nextList.length === 0) delete next[field];
+			else next[field] = nextList;
+			return next;
+		},
 	};
 }
