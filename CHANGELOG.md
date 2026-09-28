@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.9.2...v0.10.0) (2026-09-28)
+
+
+### Features
+
+* simplify /profile command family ([#59](https://github.com/VincentFF/pi-profile-switch/issues/59)) ([f4510fe](https://github.com/VincentFF/pi-profile-switch/commit/f4510fe284243fbab500f39144b14ea092ca06c9))
+
+
+### Bug Fixes
+
+* update ([#61](https://github.com/VincentFF/pi-profile-switch/issues/61)) ([25d27fc](https://github.com/VincentFF/pi-profile-switch/commit/25d27fc28d26f83e7ce22ebbdf126df32a9d2a09))
+
 ## [0.9.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.9.1...v0.9.2) (2026-09-25)
 
 
