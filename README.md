@@ -97,14 +97,6 @@ How fields resolve:
 
 The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.
 
-### Migrating from earlier versions
-
-If you used an earlier version that stored all profiles in a single `profiles.json` (`schemaVersion: 1`), migrate manually by creating a file for each profile under the `profiles/` directory:
-
-1. Create directory `~/.pi-profile-switch/profiles/` (or `<project>/.pi/profiles/`).
-2. For each key `<name>` in your old `profiles.json`'s `profiles` object, save its value directly as `<name>.json`.
-3. Drop the outer `schemaVersion` and `profiles` envelope.
-
 ## Commands
 
 The `/profile` command family manages everything in-session:
@@ -118,27 +110,6 @@ The `/profile` command family manages everything in-session:
 | `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
 
 All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
-
-Removed subcommands and their replacements:
-
-| Removed | Replacement |
-| --- | --- |
-| `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | edit the catalog JSON files directly, or configure profiles conversationally with the [`profile-config`](skills/profile-config/SKILL.md) skill |
-| the `tools` replace-form of `/profile overlay` | `/profile overlay disable tool <name-or-glob>` (disable the complement, with globs) or declare the fixed set in the profile's `tools` field |
-
-## Startup notifications
-
-At launch, pi-profile-switch checks best-effort startup notices — never blocking startup, never changing exit codes:
-
-- **Upgrade reminder**: when npm's installable `latest` version is newer than your installed package, one reminder names both versions, shown once per target version. Upgrade with:
-
-  ```bash
-  npm install -g pi-profile-switch
-  ```
-
-- **Announcements**: maintainer-reviewed notices come from a single repository-hosted [`announcements.json`](announcements.json) feed (and are validated against its published schema). Only notices that apply to your installed version, have not expired, and have not been shown before are displayed — each with a concise action, no release notes. An announcement that calls for an upgrade replaces the ordinary reminder on that launch.
-
-Both checks run once per launch. Offline mode (`PI_OFFLINE`) skips network requests but can still show previously validated cached notices. Notices appear in the TUI or on stderr (never on stdout, never in the agent's prompts). Caches and display history live under `~/.pi-profile-switch/notifications/`, shared across profiles and projects. Nothing is ever installed or upgraded automatically.
 
 ## Docs
 
