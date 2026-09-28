@@ -55,6 +55,10 @@ export interface SwitchDeps {
 	realAgentDir: string;
 	/** The project working directory. */
 	cwd: string;
+	/** Pi's live tool registry (pi.getAllTools()): the base set overlay tool
+	 *  disable entries narrow when the profile declares no tools, and the
+	 *  in-session expansion universe for declared references. */
+	getAllTools(): Array<{ name: string }>;
 	/** Pi's native idle wait (ctx.waitForIdle): resolves when the current
 	 *  turn/compaction finishes. */
 	waitForIdle(): Promise<void>;
@@ -185,7 +189,7 @@ export async function switchProfile(
 	const resolved = await resolveInitialProfile(
 		target,
 		{ agentDir: deps.realAgentDir, cwd: deps.cwd },
-		{ overlay: overlay ?? undefined },
+		{ overlay: overlay ?? undefined, liveToolNames: deps.getAllTools().map((tool) => tool.name) },
 	);
 
 	const isSwitch = !options?.reloadCurrent && target !== current.profile;

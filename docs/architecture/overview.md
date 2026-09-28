@@ -37,7 +37,7 @@ A profile takes over exactly four resource categories (skills, extensions, MCP s
 | Project level (`.pi/skills`, `.pi/extensions`, ancestor `.agents/skills`) | Owned by Pi: the instance's `trust.json` link points at the real trust store, and Pi auto-discovers per stored decisions. A named profile's generated settings still set `defaultProjectTrust: "never"`, but that only suppresses the trust prompt (stored decisions take precedence over it). The narrowing contract is in `openspec/specs/resource-reference/spec.md`, "Narrowing boundary of project-level resources" | Not narrowed by profiles |
 | packages (user-configured packages) | The settings `packages` array is rewritten in object form with per-type allowlist globs | Whitelist |
 | packages (project) | Read natively by Pi from the project `.pi/settings.json` and installed under the project `.pi/npm`; generated settings do not merge project settings, so they never become an install side effect of the global npm root | Native |
-| tools | Settings `defaultTools` as the built-in tool boot baseline; after `session_start` and reload, the extension expands the tool references from `pi-profile.json` against Pi's live registry and calls `setActiveTools` | Whitelist |
+| tools | Settings `defaultTools` as the built-in tool boot baseline; after `session_start` and reload, the extension expands the tool references from `pi-profile.json` against Pi's live registry, subtracts the overlay's disabled tool entries, and calls `setActiveTools` | Whitelist |
 | MCP servers | The instance's `mcp.json` keeps only the allowed servers and explicitly marks unselected user-level shared servers as disabled; servers from project `.mcp.json` / `.pi/mcp.json` are not narrowed by profiles. When `mcps` is undeclared, the real `mcp.json` is symlinked | Whitelist (file filtering) |
 | prompts, themes (not taken over) | User arrays kept verbatim, re-including the corresponding directories of the real agentDir; the project-level portion is discovered natively by Pi | Pass-through |
 
@@ -75,7 +75,7 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | `workspace.ts` | `~/.pi-profile-switch` workspace path (overridable via `PI_PROFILE_SWITCH_DIR`) |
 | `json-file.ts` | Shared JSON reading for file-backed stores |
 | `settings-generator.ts` | `generateRuntimeDir(plan, options)` (launcher, creates the directory) and `writeRuntimeFiles(runtimeDir, plan, options)` (in-session, rewrites in place) → generated files + symlink set + `{ PI_CODING_AGENT_DIR }` |
-| `runtime-state-store.ts` | Reads and writes `pi-profile-state.json` (`activeProfile`, `overlay`) per source scope |
+| `runtime-state-store.ts` | Reads and writes `pi-profile-state.json` (`activeProfile`, `overlay`) per source scope; the overlay holds up to four disabled-entry lists (skills, extensions, MCP servers, tools) |
 
 ### In-session (inside the pi process)
 
@@ -84,7 +84,7 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | `extensions/pi-profile/index.ts` | Registers the `/profile` command family, the profile selector (degrading to the list without interactive UI), and the status view; loaded via `-e` |
 | `switching/switch-profile.ts` | `switchProfile(profile, deps, options)` → `SwitchResult`; orchestrates snapshot → rewrite → reload → rollback |
 | `switching/apply-plan.ts` | `readLaunchPlanFile(runtimeDir)` + `applyLaunchPlan(input)`; at `session_start` and after reload, applies the tools whitelist, persists runtime state, and emits the one-shot change summary |
-| `switching/overlay.ts` | `OVERLAY_USAGE` / `parseOverlayArgs` / `applyOverlayMutation` / `clearOverlay`; reads and writes the runtime overlay |
+| `switching/overlay.ts` | `OVERLAY_USAGE` / `parseOverlayArgs` / `applyOverlayMutation` / `clearOverlay`; reads and writes the runtime overlay (one uniform `disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` grammar) |
 | `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; profile entries for the selector and the degraded bare `/profile` list, with trust gating and the `shadowsGlobal` marker |
 | `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP tri-state, conflicts |
 | `switching/tool-references.ts` | `expandToolReferences(refs, liveToolNames)`; expands tool references against Pi's live registry |

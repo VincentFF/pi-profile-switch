@@ -67,6 +67,10 @@ export interface ActivationPlan {
 	extensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
 	/** Expanded tool allowlist; undefined when the profile declares no tools. */
 	tools?: string[];
+	/** Overlay tool disable entries (names or globs, verbatim); undefined
+	 *  when the overlay disables no tools. The session-start application
+	 *  subtracts their live matches from the base expansion. */
+	disabledTools?: string[];
 	/** The raw tool references (globs included) for extension-side expansion
 	 *  against Pi's live tool registry, which includes extension-provided
 	 *  tools the pre-spawn expansion cannot know. Set iff `tools` is set. */
@@ -114,6 +118,14 @@ export interface ResolveInput {
 	 * any resolved reference may be narrowed or disabled.
 	 */
 	overlay?: RuntimeOverlay;
+	/**
+	 * Pi's live tool names (`pi.getAllTools()`), supplied by the in-session
+	 * switch path. Required when the overlay disables tools on a profile
+	 * without declared `tools` — the live registry is then the base set the
+	 * entries disable from. The launcher never passes an overlay, so it never
+	 * needs this.
+	 */
+	liveToolNames?: string[];
 }
 
 function isGlob(reference: string): boolean {
@@ -233,7 +245,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	// re-expanded at every resolution; unmatched literals fail and identify
 	// the entry, zero-match globs join `unmatched` with an `overlay ` prefix.
 	// Overlays can disable any resolved extension.
-	let toolReferences = definition.tools;
+	const toolReferences = definition.tools;
 	if (overlay !== undefined) {
 		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
 			const disabled = expandDisableEntries(
@@ -272,9 +284,6 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				mcps = active.filter((name) => !disabled.has(name));
 			}
 		}
-		if (overlay.tools !== undefined) {
-			toolReferences = overlay.tools;
-		}
 	}
 
 	let tools: string[] | undefined;
@@ -282,6 +291,40 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		tools = expandReferences(toolReferences, BUILTIN_TOOL_NAMES, (name) => name, "tool", {
 			literalMustExist: false,
 		});
+	}
+
+	// Tool disable entries join the uniform grammar: the base set is the
+	// profile's resolved tool references when declared (expanded against the
+	// live registry, which the in-session switch path always supplies) and
+	// the live registry itself when the profile declares no tools. The
+	// plan carries the entries verbatim; session-start application subtracts
+	// their live matches from the base expansion at that moment.
+	let disabledTools: string[] | undefined;
+	if (overlay?.disabledTools !== undefined && overlay.disabledTools.length > 0) {
+		if (input.liveToolNames === undefined) {
+			throw new ActivationError(
+				`profile "${profile.name}": overlay disables tools but no live tool registry is available`,
+			);
+		}
+		const base =
+			toolReferences !== undefined
+				? expandReferences(toolReferences, input.liveToolNames, (name) => name, "tool", {
+						literalMustExist: false,
+					})
+				: input.liveToolNames;
+		const disabled = expandDisableEntries(
+			overlay.disabledTools,
+			base,
+			"tool",
+			profile.name,
+			(entry) => unmatched.push(`overlay tool:${entry}`),
+		);
+		disabledTools = [...overlay.disabledTools];
+		// The pre-computed boot baseline additionally subtracts the disabled
+		// matches (a no-op for tools only the live registry knows).
+		if (tools !== undefined) {
+			tools = tools.filter((name) => !disabled.has(name));
+		}
 	}
 
 	let model: ProfileModel | undefined;
@@ -310,6 +353,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		skills: selectedSkills,
 		extensions: planExtensions.map((entry) => ({ id: entry.id, entry: entry.entry })),
 		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
+		...(disabledTools !== undefined ? { disabledTools } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
 		...(mcps !== undefined ? { mcps } : {}),

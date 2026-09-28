@@ -145,7 +145,7 @@ export function formatStatusMarkdown(report: StatusReport): string {
 			...(report.overlay.disabledSkills ?? []).map((name) => `-skill:${name}`),
 			...(report.overlay.disabledExtensions ?? []).map((id) => `-extension:${id}`),
 			...(report.overlay.disabledMcps ?? []).map((name) => `-mcp:${name}`),
-			...(report.overlay.tools !== undefined ? [`tools=[${report.overlay.tools.join(", ")}]`] : []),
+			...(report.overlay.disabledTools ?? []).map((name) => `-tool:${name}`),
 		];
 		lines.push(`overlay: ${parts.length > 0 ? parts.join(" ") : "(empty)"}`);
 	}

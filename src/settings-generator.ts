@@ -401,6 +401,7 @@ export async function writeRuntimeFiles(
 				agentDir: options.agentDir,
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
+				...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
 				...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
 				// The resolved sets feed /profile status (absolute paths) and the
 				// glob-delta diff against the previous activation.

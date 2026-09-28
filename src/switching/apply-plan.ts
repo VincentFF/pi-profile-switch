@@ -15,6 +15,11 @@
  *      `defaultTools` provides only the boot baseline for built-ins.
  *      Literals that no tool provides are dropped with a warning — Pi
  *      silently ignores unknown names, so the warning is the only signal.
+ *      When the plan carries overlay disabled tool entries, the active set
+ *      is the base expansion — the profile references, or the whole live
+ *      registry when the profile declares none — minus the entries' live
+ *      matches, re-expanded at this moment so registry drift re-applies
+ *      correctly after reload.
  *   2. persistence: when the plan is marked `persistSelection` and this is a
  *      reload, save the selection (activeProfile = plan.profile) to the
  *      profile's scope state file. Launch-transient selections never write.
@@ -40,6 +45,9 @@ export interface LaunchPlanFile {
 	agentDir?: string;
 	tools?: string[];
 	toolReferences?: string[];
+	/** Overlay tool disable entries (names or globs, verbatim); subtracted
+	 *  from the base expansion at session start. */
+	disabledTools?: string[];
 	mcps?: string[];
 	switchedFrom?: string;
 	persistSelection?: boolean;
@@ -95,15 +103,35 @@ export async function applyLaunchPlan(input: {
 	const warnings: string[] = [];
 
 	// --- tools ---
-	if (plan.toolReferences !== undefined) {
+	if (plan.toolReferences !== undefined || plan.disabledTools !== undefined) {
 		const liveNames = surface.getAllTools().map((tool) => tool.name);
-		const { expanded, droppedLiterals } = expandToolReferences(plan.toolReferences, liveNames);
-		if (droppedLiterals.length > 0) {
-			warnings.push(
-				`profile "${plan.profile}": tools ${droppedLiterals.map((name) => JSON.stringify(name)).join(", ")} match nothing in Pi's live registry`,
-			);
+		let active: string[];
+		if (plan.toolReferences !== undefined) {
+			const { expanded, droppedLiterals } = expandToolReferences(plan.toolReferences, liveNames);
+			if (droppedLiterals.length > 0) {
+				warnings.push(
+					`profile "${plan.profile}": tools ${droppedLiterals.map((name) => JSON.stringify(name)).join(", ")} match nothing in Pi's live registry`,
+				);
+			}
+			active = expanded;
+		} else {
+			// No declared tools: the base is the whole live registry.
+			active = [...liveNames];
 		}
-		surface.setActiveTools(expanded);
+		if (plan.disabledTools !== undefined && plan.disabledTools.length > 0) {
+			const { expanded: disabled, droppedLiterals: vanishedEntries } = expandToolReferences(
+				plan.disabledTools,
+				liveNames,
+			);
+			if (vanishedEntries.length > 0) {
+				warnings.push(
+					`profile "${plan.profile}": overlay tool entries ${vanishedEntries.map((name) => JSON.stringify(name)).join(", ")} match nothing in Pi's live registry`,
+				);
+			}
+			const disabledSet = new Set(disabled);
+			active = active.filter((name) => !disabledSet.has(name));
+		}
+		surface.setActiveTools(active);
 	}
 
 	// --- persistence (post-reload only) ---

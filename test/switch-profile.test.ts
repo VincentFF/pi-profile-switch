@@ -29,6 +29,7 @@ const deps = (overrides?: Partial<Parameters<typeof switchProfile>[1]>) => ({
 	runtimeDir,
 	realAgentDir: fixture.agentDir,
 	cwd: fixture.cwd,
+	getAllTools: () => ["read", "bash", "grep"].map((name) => ({ name })),
 	waitForIdle: async () => {},
 	reload: async () => {},
 	// Tests simulate the reload having re-executed extensions (context stale).

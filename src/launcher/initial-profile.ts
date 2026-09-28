@@ -94,7 +94,7 @@ export async function readTrustInputs(context: LauncherContext): Promise<{
 export async function resolveInitialProfile(
 	name: string | undefined,
 	context: LauncherContext,
-	options?: { overlay?: RuntimeOverlay },
+	options?: { overlay?: RuntimeOverlay; liveToolNames?: string[] },
 ): Promise<InitialProfile> {
 	const { projectTrusted } = await readTrustInputs(context);
 	const projectDir = projectTrusted ? context.cwd : undefined;
@@ -133,7 +133,7 @@ export async function resolveInitialProfile(
 			((overlay.disabledSkills?.length ?? 0) > 0 ||
 				(overlay.disabledExtensions?.length ?? 0) > 0 ||
 				(overlay.disabledMcps?.length ?? 0) > 0 ||
-				overlay.tools !== undefined);
+				(overlay.disabledTools?.length ?? 0) > 0);
 		if (!narrowed) {
 			return { plan: defaultPlan(), projectTrusted, warnings };
 		}
@@ -153,6 +153,7 @@ export async function resolveInitialProfile(
 			skills: discovery.skills,
 			extensions: discovery.extensions,
 			overlay,
+			liveToolNames: options?.liveToolNames,
 		});
 		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
 		return { plan, discovery, projectDir, projectTrusted, warnings };
@@ -168,6 +169,7 @@ export async function resolveInitialProfile(
 			? await discoverAdapterServerNames(context.agentDir, projectDir)
 			: undefined,
 		overlay: options?.overlay,
+		liveToolNames: options?.liveToolNames,
 	});
 	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
 	if (plan.mcps !== undefined && !plan.extensions.some(isAdapterExtension)) {

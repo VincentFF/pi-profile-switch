@@ -55,6 +55,49 @@ describe("applyLaunchPlan", () => {
 		expect(surface.activeTools).toEqual(["read", "mcp__github__search"]);
 	});
 
+	it("subtracts the overlay's disabled tool entries from the base expansion at session start", async () => {
+		await writePlan({
+			profile: "review",
+			source: "global",
+			tools: ["read", "grep"],
+			toolReferences: ["read", "bash", "grep"],
+			disabledTools: ["bash"],
+		});
+		const surface = fakeSurface();
+
+		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "grep"]);
+	});
+
+	it("narrows the live registry at session start when the plan carries disabled tool entries without tool references", async () => {
+		await writePlan({ profile: "default", source: "builtin", disabledTools: ["grep"] });
+		const surface = fakeSurface();
+
+		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "bash"]);
+	});
+
+	it("keeps disabled tools disabled across reload: a glob entry re-expands against the live registry", async () => {
+		await writePlan({ profile: "default", source: "builtin", disabledTools: ["gr*"] });
+		const surface = fakeSurface({ liveTools: ["read", "bash", "grep", "graphene"] });
+
+		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "bash"]);
+	});
+
+	it("warns about a disabled tool entry the live registry no longer provides", async () => {
+		await writePlan({ profile: "default", source: "builtin", disabledTools: ["vanished"] });
+		const surface = fakeSurface();
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "bash", "grep"]);
+		expect(result.warnings.some((warning) => warning.includes("vanished"))).toBe(true);
+	});
+
 	it("warns about literal tools no live tool provides instead of dropping them silently", async () => {
 		await writePlan({ profile: "review", source: "global", tools: ["read"], toolReferences: ["read", "ghost-tool"] });
 		const surface = fakeSurface();
