@@ -138,7 +138,7 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 
 - **公告**：维护者审核过的通知来自仓库中唯一的 [`announcements.json`](announcements.json) 公告源（按已发布的格式校验）。只有适用于当前安装版本、未过期且未展示过的公告才会显示，每条都附带简洁的操作说明，不含 release notes。明确要求升级的公告会在当次启动替代普通升级提醒。
 
-两项检查每次启动只运行一次，在离线模式（`PI_OFFLINE`）下完全跳过，并在 TUI 或 stderr 中展示（绝不写入 stdout，也绝不进入 agent 的提示词）。缓存与展示历史保存在 `~/.pi-profile-switch/notifications/`，所有 profile 与项目共享。任何时候都不会自动安装或升级任何内容。
+两项检查每次启动只运行一次。离线模式（`PI_OFFLINE`）不会发起网络请求，但仍可显示先前校验通过的缓存通知。通知在 TUI 或 stderr 中展示（绝不写入 stdout，也绝不进入 agent 的提示词）。缓存与展示历史保存在 `~/.pi-profile-switch/notifications/`，所有 profile 与项目共享。任何时候都不会自动安装或升级任何内容。
 
 ## 文档
 

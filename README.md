@@ -138,7 +138,7 @@ At launch, pi-profile-switch checks best-effort startup notices — never blocki
 
 - **Announcements**: maintainer-reviewed notices come from a single repository-hosted [`announcements.json`](announcements.json) feed (and are validated against its published schema). Only notices that apply to your installed version, have not expired, and have not been shown before are displayed — each with a concise action, no release notes. An announcement that calls for an upgrade replaces the ordinary reminder on that launch.
 
-Both checks run once per launch, are skipped entirely in offline mode (`PI_OFFLINE`), and are presented in the TUI or on stderr (never on stdout, never in the agent's prompts). Caches and display history live under `~/.pi-profile-switch/notifications/`, shared across profiles and projects. Nothing is ever installed or upgraded automatically.
+Both checks run once per launch. Offline mode (`PI_OFFLINE`) skips network requests but can still show previously validated cached notices. Notices appear in the TUI or on stderr (never on stdout, never in the agent's prompts). Caches and display history live under `~/.pi-profile-switch/notifications/`, shared across profiles and projects. Nothing is ever installed or upgraded automatically.
 
 ## Docs
 
