@@ -367,6 +367,27 @@ describe("startup notifier: per-source cache, backoff, and claims", () => {
 		expect(cache.data?.announcements.map((entry) => entry.id)).toEqual([announcement.id]);
 	});
 
+	it("keeps a valid cached feed when a refreshed feed has an impossible version range", async () => {
+		await seedFeedCache([announcement], staleTimestamps());
+		const impossible = {
+			...announcement,
+			id: "impossible-range",
+			minInstalledVersion: "2.0.0",
+			maxInstalledVersionExclusive: "1.0.0",
+		};
+		const { surface } = await run({
+			routes: { [ANNOUNCEMENTS_URL]: feedBody([impossible]), [NPM_METADATA_URL]: new Error("network down") },
+		});
+		expect(surface.messages.filter((entry) => entry.level === "info").map((entry) => entry.message)).toEqual([
+			`${announcement.message} — ${announcement.action}`,
+		]);
+		expect(surface.messages.filter((entry) => entry.level === "warning")).toHaveLength(1);
+		const cache = JSON.parse(
+			await readFile(path.join(workspaceDir, "notifications", "announcements-feed.json"), "utf8"),
+		) as { data: { announcements: Array<{ id: string }> } };
+		expect(cache.data.announcements.map((entry) => entry.id)).toEqual([announcement.id]);
+	});
+
 	it("explicit offline mode makes no requests and still uses the cache", async () => {
 		await seedFeedCache([announcement]);
 		await seedNpmCache("1.1.0");
@@ -475,6 +496,21 @@ describe("startup notifier: invalid feeds", () => {
 		const { surface } = await run({ routes: { [ANNOUNCEMENTS_URL]: feedBody([bad]) } });
 		expect(surface.messages).toHaveLength(1);
 		expect(surface.messages[0]!.message).toMatch(/announcements/i);
+	});
+
+	it.each([
+		["equal", "1.0.0", "1.0.0"],
+		["reversed", "2.0.0", "1.0.0"],
+	])("rejects %s version bounds in the feed", async (_case, minInstalledVersion, maxInstalledVersionExclusive) => {
+		const bad: AnnouncementSpec = {
+			...announcement,
+			minInstalledVersion,
+			maxInstalledVersionExclusive,
+		};
+		const { surface } = await run({ routes: { [ANNOUNCEMENTS_URL]: feedBody([bad]) } });
+		expect(surface.messages).toHaveLength(1);
+		expect(surface.messages[0]!.level).toBe("warning");
+		expect(surface.messages[0]!.message).toMatch(/announcements.*minInstalledVersion.*maxInstalledVersionExclusive/i);
 	});
 
 	it("rejects control characters and oversized bodies in announcement text", async () => {

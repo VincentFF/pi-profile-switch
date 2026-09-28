@@ -213,6 +213,12 @@ function parseAnnouncement(raw: unknown): Announcement {
 		}
 		announcement[field] = bound;
 	}
+	if (announcement.minInstalledVersion !== undefined && announcement.maxInstalledVersionExclusive !== undefined) {
+		const order = compareVersions(announcement.minInstalledVersion, announcement.maxInstalledVersionExclusive);
+		if (order === undefined || order >= 0) {
+			throw new InvalidContentError("minInstalledVersion must be less than maxInstalledVersionExclusive");
+		}
+	}
 	return announcement;
 }
 
