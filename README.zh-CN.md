@@ -97,14 +97,6 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 
 [`examples/`](examples/) 中的两个文件与上面一一对应：`ask.json` 是播种的初始 profile，`example.json` 是全字段演示。
 
-### 从旧版本迁移
-
-如果你之前使用了把全部 profile 存在单个 `profiles.json`（含 `schemaVersion: 1`）的旧版本，请手动把每个 profile 拆分到 `profiles/` 目录：
-
-1. 创建 `~/.pi-profile-switch/profiles/`（或 `<项目>/.pi/profiles/`）目录。
-2. 将旧 `profiles.json` 中 `profiles` 下的每个 `<name>` 键值提取为独立的 `<name>.json` 文件。
-3. 去除外层的 `schemaVersion` 与 `profiles` 信封，文件顶层即为裸 profile 定义。
-
 ## 命令
 
 `/profile` 命令族完成所有会话内操作：
@@ -118,13 +110,6 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 | `/profile overlay clear` | 丢弃 overlay，完全按定义重新激活 profile |
 
 所有命令在非交互模式（`--mode rpc|print|json`）下同样生效；裸 `/profile` 在无交互界面时降级为 profile 列表。overlay 是会话级收窄：绝不写入 catalog 文件，也不会跨重启保留。tool 与其他资源类别使用相同的 disable/enable 模型：tool `disable` 条目收窄 profile 解析出的工具引用；profile 未声明 `tools` 时，则收窄运行时的全部可用工具集。
-
-已移除子命令及其替代：
-
-| 移除 | 替代 |
-| --- | --- |
-| `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | 直接编辑 catalog JSON 文件，或通过 [`profile-config`](skills/profile-config/SKILL.md) skill 对话式配置 |
-| `/profile overlay` 的 `tools` 替换式 | `/profile overlay disable tool <name-or-glob>`（用 glob 禁用其余工具），或在 profile 的 `tools` 字段中声明固定集合 |
 
 ## 文档
 

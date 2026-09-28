@@ -97,14 +97,6 @@ How fields resolve:
 
 The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.
 
-### Migrating from earlier versions
-
-If you used an earlier version that stored all profiles in a single `profiles.json` (`schemaVersion: 1`), migrate manually by creating a file for each profile under the `profiles/` directory:
-
-1. Create directory `~/.pi-profile-switch/profiles/` (or `<project>/.pi/profiles/`).
-2. For each key `<name>` in your old `profiles.json`'s `profiles` object, save its value directly as `<name>.json`.
-3. Drop the outer `schemaVersion` and `profiles` envelope.
-
 ## Commands
 
 The `/profile` command family manages everything in-session:
@@ -118,13 +110,6 @@ The `/profile` command family manages everything in-session:
 | `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
 
 All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
-
-Removed subcommands and their replacements:
-
-| Removed | Replacement |
-| --- | --- |
-| `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | edit the catalog JSON files directly, or configure profiles conversationally with the [`profile-config`](skills/profile-config/SKILL.md) skill |
-| the `tools` replace-form of `/profile overlay` | `/profile overlay disable tool <name-or-glob>` (disable the complement, with globs) or declare the fixed set in the profile's `tools` field |
 
 ## Docs
 

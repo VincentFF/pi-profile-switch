@@ -55,13 +55,14 @@ Rationale: Pi itself is minimal, and the profile layer should not become a new l
 - Let project-level definitions override global definitions, and automatically return to the global definitions after leaving the project.
 - Leave Pi behavior that no profile has declared control over untouched.
 - Be useful immediately after install — capability isolation without writing any configuration first.
+- Send a startup notification, best-effort, when the installed package is behind npm's installable `latest` version or when a maintainer-reviewed announcement applies — with a concise action and no routine release details (see [Architecture](architecture/overview.md) for ownership and boundaries).
 
 ## Non-goals
 
 - **No profile inheritance or composition.** No `extends`, no deep merge, no array appending; a same-named profile is a complete replacement. Once users depend on inheritance there is no going back, and only self-contained definitions can be understood without resolving a parent chain.
 - **No resource copies.** A profile references skills, extensions, MCP servers, and tools by name and never stores copies. Copying would fork implementations into N variants and violates the premise that users directly own their resources.
 - **No extension dependency graph.** No dependency declarations, no dependency closure, no always-on extension concept. Pi itself has none of these; introducing them at the profile layer would turn the switcher into half a package manager.
-- **Not a package manager.** Does not install, upgrade, or uninstall extensions; only discovers what is already installed and filters from it.
+- **Not a package manager.** Does not install, upgrade, or uninstall extensions; only discovers what is already installed and filters from it. Startup upgrade reminders and announcements likewise never install or upgrade anything: they only name the global-install command for the user to run.
 - **No MCP connection parameters or credentials.** Server addresses, start commands, OAuth, and tokens all stay in `pi-mcp-adapter`'s configuration; a profile only declares which servers are enabled.
 - **No narrowing of project-level resources.** A profile's selection applies only to user-level resources (the real agentDir and `~/.agents/skills`). The visibility of project-level skills, extensions, prompts, themes, settings, and MCP servers is decided by Pi's project-trust determination; no profile may hide any of them. Rationale: Pi's project-level switch is all-or-nothing, and the scope in which "selected means effective" must stay within what a profile is entitled to dispose of; forced narrowing would additionally block project content that is not part of the isolation surface and would break in-session switching (see the filtering model in [Architecture](architecture/overview.md)).
 - **No changes to Pi defaults.** Settings, discovery, and session behavior that no profile has declared control over work according to Pi's native rules.

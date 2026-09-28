@@ -9,6 +9,7 @@
  */
 
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -30,6 +31,55 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
+});
+
+describe("startup notifications in non-interactive modes", () => {
+	const ownVersion = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")).version as string;
+	const newerTarget = "99.0.0";
+
+	async function seedLatestCache(): Promise<void> {
+		const dir = path.join(fixture.profileSwitchDir, "notifications");
+		await mkdir(dir, { recursive: true });
+		const fresh = Date.now();
+		await writeFile(
+			path.join(dir, "npm-latest.json"),
+			JSON.stringify({ schemaVersion: 1, data: { latest: newerTarget }, lastSuccess: fresh, lastAttempt: fresh }),
+		);
+		await writeFile(path.join(dir, "displayed.json"), JSON.stringify({ schemaVersion: 1, keys: [] }));
+	}
+
+	it("print mode writes the reminder to stderr only, leaving stdout native", async () => {
+		await seedLatestCache();
+		const result = await runLauncher(fixture, ["review", "--", "--mode", "print"]);
+		expect(result.code).toBe(0);
+		expect(result.stderr).toContain(ownVersion);
+		expect(result.stderr).toContain(newerTarget);
+		expect(result.stderr).toContain("npm install -g pi-profile-switch");
+		expect(result.stdout).not.toContain(newerTarget);
+	}, 60_000);
+
+	it("json mode keeps stdout parseable while the notice goes to stderr", async () => {
+		await seedLatestCache();
+		const result = await runLauncher(fixture, ["review", "--", "--mode", "json"]);
+		expect(result.code).toBe(0);
+		expect(result.stderr).toContain(newerTarget);
+		for (const line of result.stdout.trim().split("\n")) {
+			expect(() => JSON.parse(line)).not.toThrow();
+		}
+		expect(result.stdout).not.toContain(newerTarget);
+	}, 60_000);
+
+	it("shows the reminder only once across named and default profile launches", async () => {
+		await seedLatestCache();
+		const first = await runLauncher(fixture, ["review", "--", "--mode", "print"]);
+		expect(first.code).toBe(0);
+		expect(first.stderr).toContain(newerTarget);
+		// Second launch (default profile, same global workspace): the target
+		// was already shown — no second reminder, in any profile.
+		const second = await runLauncher(fixture, ["--", "--mode", "print"]);
+		expect(second.code).toBe(0);
+		expect(second.stderr).not.toContain(newerTarget);
+	}, 60_000);
 });
 
 describe("non-interactive modes", () => {
