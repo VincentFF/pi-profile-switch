@@ -14,7 +14,7 @@ See [proposal.md](proposal.md). `openspec status` establishes artifact existence
 **Non-Goals:**
 
 - No new product requirement or capability domain, and no change to generated OpenSpec skills or prompts.
-- No edit to the user-wide team-workflow skill as part of this repo-local change. Its complementary update is tracked as a separate delivery step after this change is accepted.
+- No edit to the user-wide team-workflow skill as part of this repo-local change. Its complementary update is delivered separately in its own repository.
 
 ## Decisions
 
@@ -32,11 +32,11 @@ See [proposal.md](proposal.md). `openspec status` establishes artifact existence
 
 ### 3. Respect the repo-local boundary
 
-The shared team-workflow skill owns general delegation triggers, valid red/green evidence, reviewer disposition, and final-tree gate sequencing. These changes must be made separately in `/Users/v1fanchao/.agents/skills/team-workflow/SKILL.md`; no repo-local task or commit includes that path. This change documents only the project-specific readiness and `/opsx-verify` requirements.
+The shared team-workflow skill owns general delegation triggers, valid red/green evidence, reviewer disposition, and final-tree gate sequencing. Those changes belong to `/Users/v1fanchao/.agents/skills/team-workflow/SKILL.md` in its own repository; no repo-local task or commit includes that path. This change documents only the project-specific readiness and `/opsx-verify` requirements.
 
 **Rejected:** listing an out-of-root edit as an implementation task in a repo-local OpenSpec change, or copying the full team-workflow protocol into `AGENTS.md`.
 
 ## Risks / Trade-offs
 
 - [Plan-readiness checks are judgment-based] → Use a concrete contradictory-task example during verification; do not claim CLI validation enforces the judgment.
-- [The shared skill still has broader entry and evidence rules until its separate update] → Keep the existing project hot-path rule and identify the shared-skill work explicitly at handoff; do not claim this change alone has optimized the entire workflow.
+- [The shared skill and project rule can change on different schedules] → Keep the project hot-path rule independent and review both delivery paths before claiming the combined workflow is updated.

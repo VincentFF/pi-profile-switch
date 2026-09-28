@@ -45,6 +45,7 @@ rules:
     - 'Documentation-sync tasks must name concrete file paths; never write "update related docs".'
     - 'Every implementation task must carry a "Verification:" clause identifying the covered specs delta scenarios and the test command; a task without acceptance criteria is unacceptable.'
     - 'The check named in a "Verification:" clause must have a failure path. "Existing tests pass" is allowed only when existing tests genuinely cover the changed behavior; otherwise write a mechanical check (diff filtering, grep, content comparison) or add a test.'
+    - 'Before declaring tasks ready, reconcile required outputs, spec scenarios, design decisions, documentation obligations, and each Verification command. A command that rejects required content (for example, a whole-document search that also matches a required migration row) must be scoped or revised; do not satisfy it by deleting required content.'
     - 'A task expected to modify existing test assertions must list the test file paths in its description.'
     - 'When a task artifact contains factual statements (enum values, path lists, identifier sets, version numbers), the "Verification:" clause must also provide a "fact → authoritative source" checklist (concrete paths of source files or external docs); when a class of facts has no authoritative source to list, the artifact MUST use a "defer to X" reference-style statement instead of copying the set.'
 
