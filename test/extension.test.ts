@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -122,9 +123,18 @@ async function writeGlobalProfiles(profiles: Record<string, unknown>): Promise<v
 	}
 }
 
-async function fireSessionStart(pi: FakePi, reason = "startup"): Promise<void> {
+async function fireSessionStart(pi: FakePi, reason = "startup", ctx?: ReturnType<typeof fakeCtx>): Promise<void> {
 	const handler = pi.handlers.get("session_start")?.[0];
-	await handler?.({ reason } as never, fakeCtx() as never);
+	await handler?.({ reason } as never, (ctx ?? fakeCtx()) as never);
+}
+
+/** Lets the un-awaited startup-notifier job (fs-bound, no network with a
+ *  fresh seeded cache) settle before asserting on recorded notices. */
+async function waitForNotices(ctx: ReturnType<typeof fakeCtx>): Promise<void> {
+	const deadline = Date.now() + 2000;
+	while (ctx.notifications.length === 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
 }
 
 async function runBeforeAgentStart(pi: FakePi, systemPrompt: string): Promise<string | undefined> {
@@ -134,6 +144,169 @@ async function runBeforeAgentStart(pi: FakePi, systemPrompt: string): Promise<st
 		| undefined;
 	return result?.systemPrompt;
 }
+
+describe("startup notifications (add-startup-notifications)", () => {
+	const ownVersion = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")).version as string;
+	const newerTarget = "99.0.0";
+	let savedOffline: string | undefined;
+
+	beforeEach(() => {
+		savedOffline = process.env.PI_OFFLINE;
+		process.env.PI_OFFLINE = "1"; // never touch the network in unit tests
+	});
+
+	afterEach(() => {
+		if (savedOffline === undefined) delete process.env.PI_OFFLINE;
+		else process.env.PI_OFFLINE = savedOffline;
+	});
+
+	interface AnnouncementSeed {
+		id: string;
+		message: string;
+		action: string;
+		expiresAt: string;
+		requiresUpgrade?: boolean;
+	}
+
+	async function seedNotificationCache(seed: {
+		latest?: string;
+		announcements?: AnnouncementSeed[];
+		displayed?: string[];
+	}): Promise<void> {
+		const dir = path.join(root, "notifications");
+		await mkdir(dir, { recursive: true });
+		const fresh = Date.now();
+		if (seed.latest !== undefined) {
+			await writeFile(
+				path.join(dir, "npm-latest.json"),
+				JSON.stringify({ schemaVersion: 1, data: { latest: seed.latest }, lastSuccess: fresh, lastAttempt: fresh }),
+			);
+		}
+		if (seed.announcements !== undefined) {
+			await writeFile(
+				path.join(dir, "announcements-feed.json"),
+				JSON.stringify({
+					schemaVersion: 1,
+					data: { announcements: seed.announcements.map((entry) => ({ requiresUpgrade: false, ...entry })) },
+					lastSuccess: fresh,
+				lastAttempt: fresh,
+				}),
+			);
+		}
+		await writeFile(
+			path.join(dir, "displayed.json"),
+			JSON.stringify({ schemaVersion: 1, keys: seed.displayed ?? [] }),
+		);
+	}
+
+	const upgradeAnnouncement: AnnouncementSeed = {
+		id: "upgrade-required",
+		message: "Urgent: please upgrade pi-profile-switch.",
+		action: "Run npm install -g pi-profile-switch.",
+		expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+		requiresUpgrade: true,
+	};
+
+	it("displays an eligible cached notice through the TUI on initial session start", async () => {
+		await writeLaunchPlan({ profile: "review", source: "global" });
+		await seedNotificationCache({ latest: newerTarget });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+		await fireSessionStart(pi, "startup", ctx);
+		await waitForNotices(ctx);
+
+		expect(ctx.notifications).toHaveLength(1);
+		expect(ctx.notifications[0]!.message).toContain(ownVersion);
+		expect(ctx.notifications[0]!.message).toContain(newerTarget);
+		expect(ctx.notifications[0]!.message).toContain("npm install -g pi-profile-switch");
+		expect(ctx.notifications[0]!.level).toBe("info");
+	});
+
+	it("an upgrade-required announcement suppresses the routine reminder without marking its target shown", async () => {
+		await writeLaunchPlan({ profile: "review", source: "global" });
+		await seedNotificationCache({ latest: newerTarget, announcements: [upgradeAnnouncement] });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+		await fireSessionStart(pi, "startup", ctx);
+		await waitForNotices(ctx);
+
+		const text = ctx.notifications.map((entry) => entry.message).join("\n");
+		expect(text).toContain(upgradeAnnouncement.message);
+		expect(text).not.toContain(`${ownVersion} → ${newerTarget}`);
+		// The suppressed reminder target is NOT recorded as shown…
+		const history = JSON.parse(await readFile(path.join(root, "notifications", "displayed.json"), "utf8")) as {
+			keys: string[];
+		};
+		expect(history.keys).toContain(`announcement:${upgradeAnnouncement.id}`);
+		expect(history.keys).not.toContain(`upgrade:${newerTarget}`);
+	});
+
+	it("writes notices to stderr outside TUI modes", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin" });
+		await seedNotificationCache({ latest: newerTarget });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: false, mode: "print" });
+		const written: string[] = [];
+		const realWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = ((chunk: unknown) => {
+			written.push(String(chunk));
+			return true;
+		}) as typeof process.stderr.write;
+		try {
+			await fireSessionStart(pi, "startup", ctx);
+			const deadline = Date.now() + 2000;
+			while (!written.some((chunk) => chunk.includes(newerTarget)) && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		} finally {
+			process.stderr.write = realWrite;
+		}
+
+		expect(written.join("")).toContain(ownVersion);
+		expect(written.join("")).toContain(newerTarget);
+		// stdout and the UI notification channel stay untouched.
+		expect(ctx.notifications).toEqual([]);
+	});
+
+	it("runs the notice check exactly once per process: reload/new/resume/fork do not rerun it", async () => {
+		await writeLaunchPlan({ profile: "review", source: "global" });
+		await seedNotificationCache({ latest: newerTarget });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+		await fireSessionStart(pi, "startup", ctx);
+		await waitForNotices(ctx);
+		expect(ctx.notifications).toHaveLength(1);
+
+		for (const reason of ["reload", "new", "resume", "fork"]) {
+			await fireSessionStart(pi, reason, ctx);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(ctx.notifications).toHaveLength(1);
+	});
+
+	it("keeps announcement text out of the agent prompt", async () => {
+		await writeLaunchPlan({ profile: "review", source: "global" });
+		await seedNotificationCache({ announcements: [upgradeAnnouncement] });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+		await fireSessionStart(pi, "startup", ctx);
+		await waitForNotices(ctx);
+		expect(ctx.notifications).toHaveLength(1);
+
+		const prompt = await runBeforeAgentStart(pi, "BASE PROMPT");
+		expect(prompt).toBe("BASE PROMPT");
+		expect(prompt).not.toContain(upgradeAnnouncement.message);
+	});
+});
 
 describe("pi-profile extension", () => {
 	it("sets the footer status badge on session start and profile switch", async () => {

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -323,6 +323,51 @@ describe("launcher integration: starter assets ensure", () => {
 				await rpc.close();
 				await rpc.waitForExit();
 			}
+		},
+	);
+});
+describe("launcher integration: startup notifications", () => {
+	it(
+		"rpc mode writes the startup notice to stderr only and marks it shown for later launches",
+		{ timeout: 45_000 },
+		async () => {
+			const ownVersion = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")).version as string;
+			const newerTarget = "99.0.0";
+			const dir = path.join(fixture.profileSwitchDir, "notifications");
+			await mkdir(dir, { recursive: true });
+			const fresh = Date.now();
+			await writeFile(
+				path.join(dir, "npm-latest.json"),
+				JSON.stringify({ schemaVersion: 1, data: { latest: newerTarget }, lastSuccess: fresh, lastAttempt: fresh }),
+			);
+			await writeFile(path.join(dir, "displayed.json"), JSON.stringify({ schemaVersion: 1, keys: [] }));
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				await rpc.commandNames();
+				// The notice arrives asynchronously after session_start; poll stderr.
+				const deadline = Date.now() + 10_000;
+				while (!rpc.stderr.join("").includes(newerTarget) && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				}
+				const stderr = rpc.stderr.join("");
+				expect(stderr).toContain(ownVersion);
+				expect(stderr).toContain(newerTarget);
+				// Structured stdout stays native: every line the driver parsed is
+				// a valid JSON-RPC message and carries no notice text.
+				expect(rpc.messages.length).toBeGreaterThan(0);
+				expect(JSON.stringify(rpc.messages)).not.toContain(newerTarget);
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+
+			// The displayed target is recorded in the shared global history.
+			const history = JSON.parse(await readFile(path.join(dir, "displayed.json"), "utf8")) as { keys: string[] };
+			expect(history.keys).toContain(`upgrade:${newerTarget}`);
 		},
 	);
 });

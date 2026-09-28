@@ -126,6 +126,20 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 | `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | 直接编辑 catalog JSON 文件，或通过 [`profile-config`](skills/profile-config/SKILL.md) skill 对话式配置 |
 | `/profile overlay` 的 `tools` 替换式 | `/profile overlay disable tool <name-or-glob>`（用 glob 禁用其余工具），或在 profile 的 `tools` 字段中声明固定集合 |
 
+## 启动通知
+
+启动时，pi-profile-switch 会尽力检查启动通知——绝不阻塞启动，也绝不改变退出码：
+
+- **升级提醒**：当 npm 上的 `latest` 版本比已安装版本新时，会显示一条包含两个版本号的提醒；每个目标版本只提醒一次。升级命令：
+
+  ```bash
+  npm install -g pi-profile-switch
+  ```
+
+- **公告**：维护者审核过的通知来自仓库中唯一的 [`announcements.json`](announcements.json) 公告源（按已发布的格式校验）。只有适用于当前安装版本、未过期且未展示过的公告才会显示，每条都附带简洁的操作说明，不含 release notes。明确要求升级的公告会在当次启动替代普通升级提醒。
+
+两项检查每次启动只运行一次，在离线模式（`PI_OFFLINE`）下完全跳过，并在 TUI 或 stderr 中展示（绝不写入 stdout，也绝不进入 agent 的提示词）。缓存与展示历史保存在 `~/.pi-profile-switch/notifications/`，所有 profile 与项目共享。任何时候都不会自动安装或升级任何内容。
+
 ## 文档
 
 - [架构设计](docs/architecture/overview.md) · [ADR](docs/adr/) · [术语表](CONTEXT.md)

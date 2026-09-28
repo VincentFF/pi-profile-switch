@@ -88,6 +88,13 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; profile entries for the selector and the degraded bare `/profile` list, with trust gating and the `shadowsGlobal` marker |
 | `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP tri-state, conflicts |
 | `switching/tool-references.ts` | `expandToolReferences(refs, liveToolNames)`; expands tool references against Pi's live registry |
+| `startup-notifier.ts` | `runStartupNotifications(options)`; best-effort startup version/announcement notices, driven once per process by the extension on the initial `session_start`. Presenter-only: remote text never enters the agent's prompts or any execution path |
+
+### Startup notifications (inside the pi process)
+
+The startup notifier is owned by the pi-profile extension and independent of profiles, project trust, and Pi settings. On the initial `session_start` only (never on reload/new/resume/fork), the extension reads the running package version from its own installed `package.json`, builds a notice surface (`ctx.ui.notify` in the TUI, stderr in every other mode — never stdout), and starts `runStartupNotifications` without awaiting it. The notifier evaluates previously validated cached information first, then refreshes each remote source at most daily (with a short failure backoff) using bounded, cancellable requests; explicit `PI_OFFLINE` skips requests entirely.
+
+All notification state lives under `<PI_PROFILE_SWITCH_DIR>/notifications/` — never in the instance directory, the project `.pi`, or the profile runtime state — so history and caches are shared across profiles and projects and survive instance sweeps. Per-source validated responses (`npm-latest.json`, `announcements-feed.json`), the displayed-history record (`displayed.json`), and transient display claims (`claims/`) are versioned private formats, replaced wholesale when corrupt. The announcement feed address and format are a long-lived external commitment: see ADR-0014.
 
 ## Activation flow
 

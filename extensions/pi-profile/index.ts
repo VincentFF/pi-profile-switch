@@ -1,16 +1,20 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import { isRecord } from "../../src/json-file.ts";
 import { readTrustInputs } from "../../src/launcher/initial-profile.ts";
 import { discoverAdapterServerNames } from "../../src/mcp-config.ts";
 import { RuntimeStateStore } from "../../src/runtime-state-store.ts";
+import { runStartupNotifications, type NoticeSurface } from "../../src/startup-notifier.ts";
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
 import { OVERLAY_USAGE, applyOverlayMutation, clearOverlay, parseOverlayArgs } from "../../src/switching/overlay.ts";
 import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
-import { getGlobalStateDir } from "../../src/workspace.ts";
+import { getGlobalStateDir, getProfileSwitchDir } from "../../src/workspace.ts";
 
 /**
  * pi-profile extension entry.
@@ -38,6 +42,59 @@ import { getGlobalStateDir } from "../../src/workspace.ts";
  * exclusively through `session_start` — nothing stale survives.
  */
 
+/** The bundled package's own metadata: the notifier compares the RUNNING
+ *  package version (never Pi's version or a repository checkout). */
+const OWN_PACKAGE_JSON = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+
+async function readOwnVersion(): Promise<string | undefined> {
+	try {
+		const raw: unknown = JSON.parse(await readFile(OWN_PACKAGE_JSON, "utf8"));
+		if (isRecord(raw) && typeof raw.version === "string") return raw.version;
+	} catch {
+		// Unresolvable package metadata: startup notices are skipped quietly.
+	}
+	return undefined;
+}
+
+/** Notice presentation surface: the TUI notification channel when available,
+ *  stderr in every other mode (never stdout, never the agent's prompts). */
+function createNoticeSurface(ctx: unknown): NoticeSurface {
+	const context = ctx as {
+		hasUI?: boolean;
+		mode?: string;
+		ui?: { notify?: (message: string, level: "info" | "warning" | "error") => void };
+	};
+	if (context.hasUI === true && context.mode === "tui" && typeof context.ui?.notify === "function") {
+		return { display: (message, level) => context.ui!.notify!(message, level) };
+	}
+	return {
+		display: (message) => {
+			process.stderr.write(`${message}\n`);
+		},
+	};
+}
+
+/** Startup notices run once per Pi process on the initial session_start,
+ *  without awaiting remote IO, in an isolated failure domain: a notifier
+ *  problem can never block profile activation, change Pi's exit code, or
+ *  reach the activation/switch error path. Pi re-executes this module on
+ *  reload, and reload/new/resume/fork never pass reason "startup", so no
+ *  second check is possible within one process. */
+async function startStartupNotices(surface: NoticeSurface): Promise<void> {
+	try {
+		const version = await readOwnVersion();
+		if (version === undefined) return;
+		await runStartupNotifications({
+			installedVersion: version,
+			workspaceDir: getProfileSwitchDir(),
+			offline: process.env.PI_OFFLINE === "1",
+			surface,
+		});
+	} catch {
+		// Best-effort by contract: swallow everything the notifier missed.
+	}
+}
+
 function setProfileStatus(ui: unknown, profile: string | undefined): void {
 	if (profile && typeof (ui as { setStatus?: (k: string, v: string) => void })?.setStatus === "function") {
 		(ui as { setStatus: (k: string, v: string) => void }).setStatus("profile", `profile: ${profile}`);
@@ -51,6 +108,10 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	let pendingSummary: string | undefined;
 
 	pi.on("session_start", async (event, ctx) => {
+		// Capture the notice surface synchronously: pi may replace the session
+		// right after this handler (one-shot modes), after which a captured
+		// ctx throws on access. The surface freezes the channel now.
+		const noticeSurface = createNoticeSurface(ctx);
 		const plan = await readLaunchPlanFile(runtimeDir);
 		setProfileStatus(ctx.ui, plan?.profile);
 		const result = await applyLaunchPlan({
@@ -64,6 +125,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			},
 		});
 		pendingSummary = result.summary;
+		if (event.reason === "startup") {
+			void startStartupNotices(noticeSurface);
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
