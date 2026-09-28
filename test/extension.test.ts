@@ -228,6 +228,28 @@ describe("pi-profile extension", () => {
 		);
 	});
 
+	it("dispatches the overlay tool form in non-TUI (rpc) mode: disable then enable", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const stateFile = path.join(root, "pi-profile-state.json");
+
+		const disableCtx = fakeCtx({ mode: "rpc" });
+		await pi.commands.get("profile")?.handler("overlay disable tool read" as never, disableCtx as never);
+		expect(
+			disableCtx.notifications.some((entry) => entry.level === "info" && entry.message.includes("overlay updated")),
+		).toBe(true);
+		expect(JSON.parse(await readFile(stateFile, "utf8")).overlay).toEqual({ disabledTools: ["read"] });
+
+		const enableCtx = fakeCtx({ mode: "rpc" });
+		await pi.commands.get("profile")?.handler("overlay enable tool read" as never, enableCtx as never);
+		expect(
+			enableCtx.notifications.some((entry) => entry.level === "info" && entry.message.includes("overlay updated")),
+		).toBe(true);
+		const overlay = JSON.parse(await readFile(stateFile, "utf8")).overlay as Record<string, unknown> | undefined;
+		expect(overlay === undefined || Object.keys(overlay).length === 0).toBe(true);
+	});
+
 	describe("observability surface (ticket 07)", () => {
 		it("/profile status sends the resolved plan report", async () => {
 			await writeLaunchPlan({

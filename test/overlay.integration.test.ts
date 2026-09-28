@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
@@ -191,6 +191,53 @@ describe("launcher integration: runtime overlay", () => {
 				expect(reloaded.success).toBe(true);
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill"]);
 				expect((await readState()).overlay).toEqual({ disabledSkills: ["git-*"] });
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"overlay disable tool narrows the active tool set and enable restores it",
+		{ timeout: 90_000 },
+		async () => {
+			await writeCatalog({ review: { tools: ["read", "bash"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				// The launcher creates the instance dir as pi starts — resolve it
+				// after the first round trip, not at spawn time.
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				const settings = async () => JSON.parse(await readFile(path.join(instance, "settings.json"), "utf8"));
+				const plan = async () => JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8"));
+
+				expect((await settings()).defaultTools).toEqual(["read", "bash"]);
+
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable tool bash" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+				expect((await readState()).overlay).toEqual({ disabledTools: ["bash"] });
+				// The active tool set narrows: the boot baseline loses bash and the
+				// plan carries the entry verbatim (declared refs stay untouched).
+				expect((await settings()).defaultTools).toEqual(["read"]);
+				expect((await plan()).disabledTools).toEqual(["bash"]);
+				expect((await plan()).toolReferences).toEqual(["read", "bash"]);
+
+				const enabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay enable tool bash" },
+					60_000,
+				);
+				expect(enabled.success).toBe(true);
+				const afterEnable = (await readState()).overlay as Record<string, unknown> | undefined;
+				expect(afterEnable === undefined || Object.keys(afterEnable).length === 0).toBe(true);
+				expect((await settings()).defaultTools).toEqual(["read", "bash"]);
+				expect((await plan()).disabledTools).toBeUndefined();
 			} finally {
 				await rpc.close();
 			}

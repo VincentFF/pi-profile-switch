@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +7,7 @@ import { defaultPlan } from "../src/profile-resolver.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";
 import type { RuntimeOverlay } from "../src/runtime-state-store.ts";
 import { applyOverlayMutation, clearOverlay, parseOverlayArgs } from "../src/switching/overlay.ts";
-import type { SwitchDeps } from "../src/switching/switch-profile.ts";
+import { SwitchError, type SwitchDeps } from "../src/switching/switch-profile.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -29,6 +30,7 @@ const deps = (): SwitchDeps => ({
 	runtimeDir,
 	realAgentDir: fixture.agentDir,
 	cwd: fixture.cwd,
+	getAllTools: () => ["read", "bash", "grep"].map((name) => ({ name })),
 	waitForIdle: async () => {},
 	reload: async () => {},
 	assertStale: () => {
@@ -67,11 +69,33 @@ async function readSettings(): Promise<Record<string, unknown>> {
 }
 
 describe("parseOverlayArgs", () => {
-	it("parses disable/enable/tools mutations", () => {
+	it("parses disable/enable mutations for every resource kind", () => {
 		expect(mutate("disable skill noisy")({})).toEqual({ disabledSkills: ["noisy"] });
 		expect(mutate("enable skill noisy")({ disabledSkills: ["noisy"] })).toEqual({});
-		expect(mutate("tools read grep")({})).toEqual({ tools: ["read", "grep"] });
-		expect(mutate("tools")({ tools: ["read"] })).toEqual({});
+		expect(mutate("disable tool read")({})).toEqual({ disabledTools: ["read"] });
+		expect(mutate("enable tool read")({ disabledTools: ["read", "grep"] })).toEqual({ disabledTools: ["grep"] });
+		expect(mutate("disable tool git-*")({ disabledTools: ["read"] })).toEqual({ disabledTools: ["read", "git-*"] });
+	});
+
+	it("rejects the removed tools replace-form with the usage note, writing nothing", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ review: { skills: ["alpha-skill"] } });
+		await activate("review");
+		const before = await readSettings();
+
+		let caught: unknown;
+		try {
+			parseOverlayArgs("tools read grep");
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(SwitchError);
+		expect((caught as Error).message).toContain("usage");
+		expect((caught as Error).message).toContain("skill|extension|mcp|tool");
+		expect((caught as Error).message).not.toContain("[ref...]");
+
+		expect(await readSettings()).toEqual(before);
+		expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
 	});
 
 	it("parses clear as its own command kind", () => {
@@ -94,6 +118,14 @@ describe("parseOverlayArgs", () => {
 		expect(() => mutate("enable skill git-commit")({ disabledSkills: ["git-*"] })).toThrow(/git-\*/);
 		// No stored entries at all.
 		expect(() => mutate("enable skill ghost")({})).toThrow(/current entries: \(none\)/);
+	});
+
+	it("enable fails listing current tool entries when no stored entry equals the name", () => {
+		expect(() => mutate("enable tool ghost")({ disabledTools: ["git-*"] })).toThrow(/git-\*/);
+		// Exact string match: a literal name never removes a stored glob.
+		expect(() => mutate("enable tool git-commit")({ disabledTools: ["git-*"] })).toThrow(/git-\*/);
+		// No stored entries at all.
+		expect(() => mutate("enable tool ghost")({})).toThrow(/current entries: \(none\)/);
 	});
 });
 

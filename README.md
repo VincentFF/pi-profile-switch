@@ -114,20 +114,17 @@ The `/profile` command family manages everything in-session:
 | `/profile` | Interactive profile picker; without interactive UI it prints the profile list instead |
 | `/profile use <name>` / `/profile reload` | Switch / reload without restarting (rollback on failure) |
 | `/profile status` | Active profile details: resolved resources and paths, stored overlay, MCP server tri-state |
-| `/profile overlay disable\|enable skill\|extension\|mcp <name-or-glob>` | Narrow / un-narrow the active profile for this session only; `disable` entries accept names or globs |
-| `/profile overlay tools [ref...]` | Replace the tool reference set for this session only (`tools` alone clears it) |
+| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Narrow / un-narrow the active profile for this session only; `disable` entries accept names or globs |
 | `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
 
-All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart.
+All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
 
 Removed subcommands and their replacements:
 
 | Removed | Replacement |
 | --- | --- |
-| `/profile list` | bare `/profile` (degrades to the profile list without interactive UI) |
 | `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | edit the catalog JSON files directly, or configure profiles conversationally with the [`profile-config`](skills/profile-config/SKILL.md) skill |
-| `/profile customize` | `/profile overlay` |
-| `/profile reset` | `/profile overlay clear` |
+| the `tools` replace-form of `/profile overlay` | `/profile overlay disable tool <name-or-glob>` (disable the complement, with globs) or declare the fixed set in the profile's `tools` field |
 
 ## Docs
 

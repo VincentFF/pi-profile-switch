@@ -115,7 +115,7 @@ describe("formatStatusMarkdown", () => {
 	it("renders all sections readably", () => {
 		const report = buildStatusReport({
 			plan: basePlan,
-			overlay: { tools: ["read"] },
+			overlay: { disabledSkills: ["noisy"], disabledTools: ["bash", "mcp-*"] },
 			tools: [],
 			discoveredMcpServers: ["github", "linear"],
 			commands: [],
@@ -123,7 +123,7 @@ describe("formatStatusMarkdown", () => {
 
 		const markdown = formatStatusMarkdown(report);
 		expect(markdown).toContain("profile: review (global)");
-		expect(markdown).toContain("overlay: tools=[read]");
+		expect(markdown).toContain("overlay: -skill:noisy -tool:bash -tool:mcp-*");
 		expect(markdown).toContain("code-review → /agent/skills/code-review/SKILL.md");
 		expect(markdown).toContain("mcp: enabled=[github] disabled=[linear]");
 	});

@@ -32,14 +32,13 @@ export interface RuntimeOverlay {
 	disabledSkills?: string[];
 	disabledExtensions?: string[];
 	disabledMcps?: string[];
-	/** Replaces the profile's tool references when set. */
-	tools?: string[];
+	disabledTools?: string[];
 }
 
 function parseOverlay(value: unknown): RuntimeOverlay | undefined {
 	if (!isRecord(value)) return undefined;
 	const overlay: RuntimeOverlay = {};
-	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcps", "tools"] as const) {
+	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcps", "disabledTools"] as const) {
 		const list = value[key];
 		if (Array.isArray(list) && list.every((entry) => typeof entry === "string")) {
 			overlay[key] = list;

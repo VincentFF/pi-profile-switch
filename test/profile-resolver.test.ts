@@ -271,18 +271,100 @@ describe("overlay application (ticket 06)", () => {
 		).rejects.toThrow(/overlay disables unknown extension "ghost-ext"/);
 	});
 
-	it("narrows mcp servers and replaces tool references", async () => {
+	it("narrows mcp servers and tools by disabled entries", async () => {
 		const plan = await resolveProfile({
 			profile: profile("review", { mcps: ["github", "linear"], tools: ["read", "bash"] }),
 			skills: [],
 			extensions: await extensionsWith(),
 			discoveredMcpServers: ["github", "linear"],
-			overlay: { disabledMcps: ["linear"], tools: ["read"] },
+			liveToolNames: ["read", "bash", "grep"],
+			overlay: { disabledMcps: ["linear"], disabledTools: ["bash"] },
 		});
 
 		expect(plan.mcps).toEqual(["github"]);
 		expect(plan.tools).toEqual(["read"]);
-		expect(plan.toolReferences).toEqual(["read"]);
+		expect(plan.toolReferences).toEqual(["read", "bash"]);
+		expect(plan.disabledTools).toEqual(["bash"]);
+	});
+
+	it("a tool disable removes a matching tool from the live-registry base on a profile without declared tools", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"] }),
+			skills: [skill("code-review")],
+			extensions: await extensionsWith(),
+			liveToolNames: ["read", "bash", "grep"],
+			overlay: { disabledTools: ["bash"] },
+		});
+
+		// No declared tools: the plan keeps no tools field; the entries are
+		// carried verbatim for session-start application.
+		expect(plan.tools).toBeUndefined();
+		expect(plan.toolReferences).toBeUndefined();
+		expect(plan.disabledTools).toEqual(["bash"]);
+	});
+
+	it("rejects disabling a tool the profile does not resolve", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { skills: ["code-review"], tools: ["read", "bash"] }),
+				skills: [skill("code-review")],
+				extensions: await extensionsWith(),
+				liveToolNames: ["read", "bash"],
+				overlay: { disabledTools: ["ghost-tool"] },
+			}),
+		).rejects.toThrow(/overlay disables unknown tool "ghost-tool"/);
+	});
+
+	it("lands a zero-match tool glob disable in unmatched with an overlay prefix instead of failing", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"], tools: ["read", "bash"] }),
+			skills: [skill("code-review")],
+			extensions: await extensionsWith(),
+			liveToolNames: ["read", "bash"],
+			overlay: { disabledTools: ["ghost-*"] },
+		});
+
+		expect(plan.tools).toEqual(["read", "bash"]);
+		expect(plan.disabledTools).toEqual(["ghost-*"]);
+		expect(plan.unmatched).toEqual(["overlay tool:ghost-*"]);
+	});
+
+	it("narrows tools by a glob disable entry against the declared references", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { tools: ["read", "grep", "find"] }),
+			skills: [],
+			extensions: await extensionsWith(),
+			liveToolNames: ["read", "grep", "find", "ls"],
+			overlay: { disabledTools: ["gr*"] },
+		});
+
+		expect(plan.tools).toEqual(["read", "find"]);
+		expect(plan.toolReferences).toEqual(["read", "grep", "find"]);
+		expect(plan.disabledTools).toEqual(["gr*"]);
+	});
+
+	it("fails a tool disable when no live tool registry is available", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { skills: ["code-review"] }),
+				skills: [skill("code-review")],
+				extensions: await extensionsWith(),
+				overlay: { disabledTools: ["bash"] },
+			}),
+		).rejects.toThrow(/overlay disables tools but no live tool registry is available/);
+	});
+
+	it("an undeclared profile with an overlay that disables nothing yields no tools field", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"] }),
+			skills: [skill("code-review")],
+			extensions: await extensionsWith(),
+			liveToolNames: ["read", "bash"],
+			overlay: { disabledSkills: ["code-review"] },
+		});
+
+		expect(plan.tools).toBeUndefined();
+		expect(plan.disabledTools).toBeUndefined();
 	});
 
 	it("narrows resolved skills by a glob disable entry", async () => {

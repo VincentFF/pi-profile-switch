@@ -74,10 +74,21 @@ describe("RuntimeStateStore (global scope)", () => {
 		const store = new RuntimeStateStore(fixture.agentDir);
 		await store.write({
 			activeProfile: "review",
+			overlay: { disabledSkills: ["noisy-skill"], disabledTools: ["bash"] },
+		});
+
+		expect((await store.read()).overlay).toEqual({ disabledSkills: ["noisy-skill"], disabledTools: ["bash"] });
+	});
+
+	it("ignores a stale `tools` key in the stored overlay instead of failing the parse", async () => {
+		await writeState({
+			activeProfile: "review",
 			overlay: { disabledSkills: ["noisy-skill"], tools: ["read"] },
 		});
 
-		expect((await store.read()).overlay).toEqual({ disabledSkills: ["noisy-skill"], tools: ["read"] });
+		const store = new RuntimeStateStore(fixture.agentDir);
+
+		expect((await store.read()).overlay).toEqual({ disabledSkills: ["noisy-skill"] });
 	});
 
 	it("update merges patches and deletes undefined fields without clobbering others", async () => {

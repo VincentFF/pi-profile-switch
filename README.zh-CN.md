@@ -107,17 +107,24 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 
 ## 命令
 
-在 TUI 中，`/profile` 命令族完成所有会话内操作：
+`/profile` 命令族完成所有会话内操作：
 
 | 命令 | 作用 |
 | --- | --- |
-| `/profile` | 交互式选择 profile |
-| `/profile list` / `/profile status` | 列出 profile / 查看活动 profile 详情 |
+| `/profile` | 交互式选择 profile；无交互界面时打印 profile 列表 |
 | `/profile use <name>` / `/profile reload` | 会话内切换 / 重载（失败自动回滚） |
-| `/profile create\|edit\|delete\|duplicate` | 向导式 profile 增删改（仅 TUI） |
-| `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
+| `/profile status` | 查看活动 profile 详情：解析后的资源与路径、已存 overlay、MCP server 三态 |
+| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | 仅本次会话收窄 / 恢复活动 profile；`disable` 接受名称或 glob |
+| `/profile overlay clear` | 丢弃 overlay，完全按定义重新激活 profile |
 
-非交互模式（`--mode rpc|print|json`）下命令同样生效；CRUD 向导仅 TUI 可用。
+所有命令在非交互模式（`--mode rpc|print|json`）下同样生效；裸 `/profile` 在无交互界面时降级为 profile 列表。overlay 是会话级收窄：绝不写入 catalog 文件，也不会跨重启保留。tool 与其他资源类别使用相同的 disable/enable 模型：tool `disable` 条目收窄 profile 解析出的工具引用；profile 未声明 `tools` 时，则收窄运行时的全部可用工具集。
+
+已移除子命令及其替代：
+
+| 移除 | 替代 |
+| --- | --- |
+| `/profile create` / `/profile edit` / `/profile delete` / `/profile duplicate` | 直接编辑 catalog JSON 文件，或通过 [`profile-config`](skills/profile-config/SKILL.md) skill 对话式配置 |
+| `/profile overlay` 的 `tools` 替换式 | `/profile overlay disable tool <name-or-glob>`（用 glob 禁用其余工具），或在 profile 的 `tools` 字段中声明固定集合 |
 
 ## 文档
 

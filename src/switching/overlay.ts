@@ -9,7 +9,7 @@
  * ignores stored overlays, so an overlay never outlives its runtime.
  *
  * Ordering invariants:
- * - disable|enable|tools: re-resolve with the candidate overlay FIRST
+ * - disable|enable: re-resolve with the candidate overlay FIRST
  *   (validation: unknown references and enable misses fail here, before
  *   anything is written), then switch+reload, then persist the overlay to
  *   state. A failed switch leaves the stored overlay untouched, consistent
@@ -72,7 +72,7 @@ export async function clearOverlay(deps: SwitchDeps): Promise<SwitchResult> {
 }
 
 export const OVERLAY_USAGE =
-	"/profile overlay disable|enable skill|extension|mcp <name> · /profile overlay tools [ref...] · /profile overlay clear" as const;
+	"/profile overlay disable|enable skill|extension|mcp|tool <name-or-glob> · /profile overlay clear" as const;
 
 /** The parsed form of `/profile overlay` arguments: either a mutation to
  *  validate and apply against the stored overlay, or `clear`. */
@@ -84,15 +84,18 @@ const DISABLED_FIELDS = {
 	skill: "disabledSkills",
 	extension: "disabledExtensions",
 	mcp: "disabledMcps",
+	tool: "disabledTools",
 } as const;
 
 /** Parses `/profile overlay` arguments into an overlay command.
  *  Grammar:
- *    overlay disable skill|extension|mcp <name>
- *    overlay enable  skill|extension|mcp <name>   (remove a stored entry)
- *    overlay tools <ref>...                        (replace tool refs)
- *    overlay tools                                  (clear the tools override)
- *    overlay clear                                  (discard the overlay)
+ *    overlay disable skill|extension|mcp|tool <name-or-glob>
+ *    overlay enable  skill|extension|mcp|tool <name-or-glob>   (remove a stored entry)
+ *    overlay clear                                              (discard the overlay)
+ *
+ *  One uniform grammar for all four resource kinds (the tools-only
+ *  replace-form is gone — tools are disabled like the other kinds). The
+ *  removed `tools` action falls through to the usage error above.
  *
  *  `enable` removes a stored entry by exact string match — no hole-punching
  *  through globs — and fails when nothing equals the given name, listing the
@@ -104,19 +107,6 @@ export function parseOverlayArgs(args: string): OverlayCommand {
 	if (action === "clear") {
 		if (rest.length > 0 || kind !== undefined) throw new SwitchError(`usage: ${OVERLAY_USAGE}`);
 		return { kind: "clear" };
-	}
-
-	if (action === "tools") {
-		const refs = [kind, ...rest].filter((entry): entry is string => entry !== undefined);
-		return {
-			kind: "mutate",
-			mutate: (overlay) => {
-				const next = { ...overlay };
-				if (refs.length === 0) delete next.tools;
-				else next.tools = refs;
-				return next;
-			},
-		};
 	}
 
 	const field = DISABLED_FIELDS[kind as keyof typeof DISABLED_FIELDS];

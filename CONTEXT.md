@@ -8,7 +8,7 @@
 | **default profile** | The built-in profile: not deletable, absent from catalog files; loads every resource Pi can discover. | built-in |
 | **Catalog** | The `profiles/` directory holding profile definitions: one global, one per project, one `<name>.json` file per profile. | — |
 | **Source scope** | Where a profile comes from: `builtin`, `global`, or `project`. Determines which scope its runtime state and edits are written to. | — |
-| **RuntimeOverlay** | A temporary narrowing of the active profile: disables resolved skills, extensions, or MCP servers, or replaces the tool reference set. Usually just "overlay". | session profile, temporary profile |
+| **RuntimeOverlay** | A temporary narrowing of the active profile: disables resolved skills, extensions, MCP servers, or tools. Usually just "overlay". | session profile, temporary profile |
 | **Runtime state** | The persisted active-profile selection and overlay. | — |
 | **Resource** | Anything a profile can reference: a skill, extension, MCP server, or tool. | — |
 | **Project trust** | Pi's trust decision about a project directory; determines whether the project-level catalog and project resources participate in resolution. | — |

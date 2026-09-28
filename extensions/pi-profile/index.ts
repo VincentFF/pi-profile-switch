@@ -112,6 +112,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					runtimeDir,
 					realAgentDir: plan.agentDir,
 					cwd: ctx.cwd,
+					getAllTools: () => pi.getAllTools(),
 					waitForIdle: () => ctx.waitForIdle(),
 					reload: () => ctx.reload(),
 					// A real reload invalidates this context (Pi re-executes
