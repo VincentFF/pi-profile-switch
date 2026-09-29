@@ -8,7 +8,7 @@ Every session start (launch, reload, new, resume, fork) SHALL apply the plan in 
 
 When the plan carries disabled tool entries from the overlay, the active tool set SHALL subtract their matches at that moment. The base for overlay resolution SHALL remain the profile's resolved Pi tool references when `tools` is declared, or the runtime's available tool set when it is not; per-server MCP tool filtering SHALL be governed by `mcp_tools` and server selection.
 
-Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. Original names in `mcp_tools` SHALL remain restrictive without a missing-name diagnostic, as specified in "Per-server MCP tool reference resolution" in the resource-reference specification.
+Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. Literal adapter selectors in `mcp_tools` SHALL retain the adapter's restrictive matching without a missing-name diagnostic, as specified in "Per-server MCP tool reference resolution" in the resource-reference specification.
 
 When the plan marks the selection for persistence and this session start was triggered by a reload, the active profile SHALL be written to the state file of that profile's source scope.
 
@@ -18,6 +18,11 @@ The change summary produced by a switch SHALL be injected into the next agent tu
 
 - **WHEN** the new extension instance executes session start after reload
 - **THEN** the active non-MCP tool set is reset to the original references expanded against the live registry, while available MCP-owned tools remain independent of those references
+
+#### Scenario: Loose adapter file does not own sibling extension tools
+
+- **WHEN** the selected MCP adapter is a loose extension file beside an unrelated extension that registers a tool, and the profile declares `tools: []`
+- **THEN** the unrelated tool is not active after session start or reload, while adapter-owned tools permitted by MCP policy remain available
 
 #### Scenario: Disabled tools stay disabled across reload
 
@@ -48,7 +53,7 @@ The change summary produced by a switch SHALL be injected into the next agent tu
 
 ### Requirement: MCP tool policy observability and switch rollback
 
-`/profile status` SHALL show which enabled servers have unrestricted, explicitly restricted, or no MCP tools, including the declared names for explicitly restricted servers; it SHALL NOT report tool-name validity or missing-name candidates. When `mcps` is undeclared, a server marked disabled by the effective adapter configuration SHALL appear as discovered but not enabled, rather than enabled. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
+`/profile status` SHALL show which enabled servers have unrestricted, explicitly restricted, or no MCP tools, including the declared selectors for explicitly restricted servers; it SHALL NOT report selector validity or missing-name candidates. When `mcps` is undeclared, a server marked disabled by the effective adapter configuration SHALL appear as discovered but not enabled, rather than enabled. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
 
 #### Scenario: Status distinguishes absent and empty lists
 

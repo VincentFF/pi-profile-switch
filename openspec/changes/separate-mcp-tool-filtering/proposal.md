@@ -6,9 +6,9 @@
 
 ## What Changes
 
-- Add optional `mcp_tools` to profile definitions: server names map to lists of original MCP tool names. An omitted server allows all its tools; a nonempty list allows only those tools; an empty list allows none without disabling the server. `{}` behaves like omission.
+- Add optional `mcp_tools` to profile definitions: server names map to lists of literal adapter tool selectors. The adapter matches original and prefixed tool names; this profile field does not accept globs. An omitted server allows all its tools; a nonempty list allows only tools matched by its selectors; an empty list allows none without disabling the server. `{}` behaves like omission.
 - **BREAKING:** `tools` will select only non-MCP Pi tools, including for existing profiles. Former MCP entries in `tools` cease to govern MCP access and receive migration guidance. `mcps` continues to select servers; the new field narrows tools within those servers.
-- Validate explicit server references before activation. Treat original MCP tool names as restrictive selectors without runtime name checks or missing-name notices; an unavailable name cannot widen access. A server restriction applies across direct tools and indirect MCP call paths, not just model-facing tool names.
+- Validate explicit server references before activation, including keys that resemble inherited object properties. Treat MCP tool selectors as restrictive adapter inputs without runtime name checks or missing-name notices; an unmatched selector cannot widen access. When an existing adapter allowlist cannot be combined safely, fail before writing runtime files rather than broaden access. A server restriction applies across direct tools and indirect MCP call paths, not just model-facing tool names.
 - Keep the project-level resource boundary and the adapter's existing restrictions intact. No profile owns MCP connection parameters, credentials, or server implementations.
 
 Discovery and defaults cannot express a different tool list for the same server in two profiles: discovery yields the server's actual catalog, and a single default can only allow everything or nothing. A per-profile field is necessary for that choice.
@@ -22,9 +22,9 @@ None.
 ### Modified Capabilities
 
 - `profile-catalog`: accept and validate the per-server `mcp_tools` field.
-- `resource-reference`: separate Pi tool selection from MCP tool selection, resolve server references, and keep unverified tool names restrictive without name diagnostics.
+- `resource-reference`: separate Pi tool selection from MCP tool selection, resolve server references, and apply the adapter's literal selector matching without name diagnostics or permission widening.
 - `launcher`: materialize per-server tool restrictions in the instance without changing adapter-owned source configuration.
-- `in-session-switch`: reapply tool policies on reload, preserve rollback and overlay behavior, and report effective adapter-disabled servers accurately in status.
+- `in-session-switch`: reapply tool policies on reload without treating unrelated sibling extensions as MCP-owned, preserve rollback and overlay behavior, and report effective adapter-disabled servers accurately in status.
 
 ## Impact
 
