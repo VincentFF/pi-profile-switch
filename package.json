@@ -36,6 +36,7 @@
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^24.0.0",
     "ajv": "^8.20.0",
+    "pi-mcp-adapter": "^2.38.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   },

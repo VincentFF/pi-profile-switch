@@ -198,6 +198,113 @@ describe("launcher integration: runtime overlay", () => {
 	);
 
 	it(
+		"nested loose adapter entry does not own sibling tools and overlays still reapply",
+		{ timeout: 120_000 },
+		async () => {
+			const extensionsDir = path.join(fixture.agentDir, "extensions");
+			const adapterDir = path.join(extensionsDir, "pi-mcp-adapter");
+			await mkdir(adapterDir, { recursive: true });
+			await writeFile(
+				path.join(adapterDir, "index.ts"),
+				`export default function (pi: any) {
+					pi.registerTool({
+						name: "mcp_allowed",
+						label: "Allowed MCP tool",
+						description: "Fixture adapter tool",
+						parameters: { type: "object", properties: {} },
+						execute: async () => ({ content: [{ type: "text", text: "allowed" }] }),
+					});
+				}
+				`,
+			);
+			await writeFile(
+				path.join(adapterDir, "linter.ts"),
+				`export default function (pi: any) {
+					pi.registerTool({
+						name: "lint_check",
+						label: "Lint check",
+						description: "Run fixture lint",
+						parameters: { type: "object", properties: {} },
+						execute: async () => ({ content: [{ type: "text", text: "lint" }] }),
+					});
+				}
+				`,
+			);
+			const activeToolsPath = path.join(fixture.root, "active-tools.json");
+			await writeFile(
+				path.join(extensionsDir, "active-tool-probe.ts"),
+				`import { writeFile } from "node:fs/promises";
+					export default function (pi: any) {
+						pi.on("session_start", async () => {
+							await writeFile(${JSON.stringify(activeToolsPath)}, JSON.stringify(pi.getActiveTools()));
+						});
+					}
+				`,
+			);
+			const linterEntry = path.join(adapterDir, "linter.ts");
+			await writeCatalog({
+				empty: { extensions: ["pi-mcp-adapter", linterEntry, "active-tool-probe"], tools: [] },
+				lint: { extensions: ["pi-mcp-adapter", linterEntry, "active-tool-probe"], tools: ["lint_check"] },
+			});
+
+			const readActiveTools = async (): Promise<string[]> => {
+				for (let attempt = 0; attempt < 40; attempt++) {
+					try {
+						return JSON.parse(await readFile(activeToolsPath, "utf8"));
+					} catch {
+						await new Promise((resolve) => setTimeout(resolve, 25));
+					}
+				}
+				throw new Error("timed out waiting for active-tool probe");
+			};
+			const clearActiveTools = async () => rm(activeToolsPath, { force: true });
+
+			const rpc = new RpcDriver("node", [BIN, "empty", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				await rpc.send({ type: "get_state" }).catch((error: unknown) => {
+					throw new Error(`${error instanceof Error ? error.message : String(error)}\n${rpc.stderr.join("")}`);
+				});
+				const initialTools = await readActiveTools();
+				expect(initialTools).toContain("mcp_allowed");
+				expect(initialTools).not.toContain("lint_check");
+
+				await clearActiveTools();
+				const switched = await rpc.send({ type: "prompt", message: "/profile use lint" }, 60_000);
+				expect(switched.success).toBe(true);
+				const selectedTools = await readActiveTools();
+				expect(selectedTools).toContain("mcp_allowed");
+				expect(selectedTools).toContain("lint_check");
+
+				await clearActiveTools();
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable tool lint_check" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+				expect(await readActiveTools()).not.toContain("lint_check");
+
+				await clearActiveTools();
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+				expect(await readActiveTools()).not.toContain("lint_check");
+
+				await clearActiveTools();
+				const enabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay enable tool lint_check" },
+					60_000,
+				);
+				expect(enabled.success).toBe(true);
+				expect(await readActiveTools()).toContain("lint_check");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
 		"overlay disable tool narrows the active tool set and enable restores it",
 		{ timeout: 90_000 },
 		async () => {

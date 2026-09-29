@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
@@ -184,6 +184,125 @@ describe("launcher integration: in-session switching", () => {
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
 				const { existsSync } = await import("node:fs");
 				expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"profile switch changes per-server MCP tool policy (Task 3.3)",
+		{ timeout: 60_000 },
+		async () => {
+			const extDir = path.join(fixture.agentDir, "extensions");
+			await mkdir(extDir, { recursive: true });
+			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
+
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
+			);
+			await writeCatalog({
+				broad: { extensions: ["pi-mcp-adapter"] },
+				narrow: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+			});
+
+			const rpc = new RpcDriver("node", [BIN, "broad", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.includeTools).toBeUndefined();
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use narrow" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+
+				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"empty MCP list survives reload (Task 3.3)",
+		{ timeout: 60_000 },
+		async () => {
+			const extDir = path.join(fixture.agentDir, "extensions");
+			await mkdir(extDir, { recursive: true });
+			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
+
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
+			);
+			await writeCatalog({
+				denied: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+			});
+
+			const rpc = new RpcDriver("node", [BIN, "denied", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+
+				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"failed switch restores previous MCP tool policy (Task 3.3)",
+		{ timeout: 60_000 },
+		async () => {
+			const extDir = path.join(fixture.agentDir, "extensions");
+			await mkdir(extDir, { recursive: true });
+			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
+
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
+			);
+			await writeCatalog({
+				initial: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+				failing: { extensions: ["pi-mcp-adapter"], mcp_tools: { unknown_srv: ["search"] } },
+			});
+
+			const rpc = new RpcDriver("node", [BIN, "initial", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+
+				const failed = await rpc.send({ type: "prompt", message: "/profile use failing" }, 60_000);
+				expect(failed.success).toBe(true); // handled by command handler
+
+				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
 			} finally {
 				await rpc.close();
 			}

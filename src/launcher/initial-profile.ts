@@ -14,8 +14,7 @@
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
-import { discoverAdapterServerNames } from "../mcp-config.ts";
-import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-config.ts";
+import { isAdapterExtension, loadMergedMcpServers, MissingMcpAdapterError } from "../mcp-config.ts";
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
 import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
@@ -159,24 +158,38 @@ export async function resolveInitialProfile(
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
+	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;
+	const hasMcpTools = mcpToolsDef !== undefined && Object.keys(mcpToolsDef).length > 0;
+	const needsMcp = Boolean(
+		profile.definition.mcps?.length ||
+		hasMcpTools ||
+		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
+	);
+	const mcpDiscovery = needsMcp
+		? await loadMergedMcpServers(context.agentDir, projectDir)
+		: undefined;
+
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 	const plan = await resolveProfile({
 		profile,
 		skills: discovery.skills,
 		extensions: discovery.extensions,
 		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
-		discoveredMcpServers: profile.definition.mcps?.length
-			? await discoverAdapterServerNames(context.agentDir, projectDir)
-			: undefined,
+		discoveredMcpServers: mcpDiscovery ? Object.keys(mcpDiscovery.servers).sort() : undefined,
+		mcpDiscovery,
 		overlay: options?.overlay,
 		liveToolNames: options?.liveToolNames,
 	});
 	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
 	if (plan.mcps !== undefined && !plan.extensions.some(isAdapterExtension)) {
-		// Fail before spawn: without the adapter in the active extension set
-		// nobody applies the allowlist, and the declared servers would either
-		// silently do nothing or leak through unfiltered.
-		throw new MissingMcpAdapterError(plan.profile);
+		throw new MissingMcpAdapterError(plan.profile, "mcps");
+	}
+	if (
+		plan.mcpTools !== undefined &&
+		Object.keys(plan.mcpTools).length > 0 &&
+		!plan.extensions.some(isAdapterExtension)
+	) {
+		throw new MissingMcpAdapterError(plan.profile, "mcp_tools");
 	}
 	return { plan, discovery, projectDir, projectTrusted, warnings };
 }

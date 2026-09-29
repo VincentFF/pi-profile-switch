@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { isRecord } from "../../src/json-file.ts";
 import { readTrustInputs } from "../../src/launcher/initial-profile.ts";
-import { discoverAdapterServerNames } from "../../src/mcp-config.ts";
+import { loadMergedMcpServers } from "../../src/mcp-config.ts";
 import { RuntimeStateStore } from "../../src/runtime-state-store.ts";
 import { runStartupNotifications, type NoticeSurface } from "../../src/startup-notifier.ts";
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
@@ -221,13 +221,19 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					const { projectTrusted } = await readTrustInputs({ agentDir: plan.agentDir, cwd: ctx.cwd });
 					const stateDir = plan.source === "project" ? path.join(ctx.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 					const state = await new RuntimeStateStore(stateDir).read();
+					const mcpDiscovery = await loadMergedMcpServers(
+						plan.agentDir,
+						projectTrusted ? ctx.cwd : undefined,
+					);
+					const discoveredMcpServers = Object.keys(mcpDiscovery.servers).sort();
+					const disabledMcpServers = discoveredMcpServers.filter(
+						(server) => mcpDiscovery.servers[server]?.disabled === true,
+					);
 					const report = buildStatusReport({
 						plan,
 						overlay: state.overlay,
-						discoveredMcpServers: await discoverAdapterServerNames(
-							plan.agentDir,
-							projectTrusted ? ctx.cwd : undefined,
-						),
+						discoveredMcpServers,
+						disabledMcpServers,
 						commands: pi.getCommands(),
 						tools: pi.getAllTools(),
 					});

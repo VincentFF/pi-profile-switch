@@ -8,13 +8,12 @@
  * surface so unit tests never need a real Pi.
  *
  * Steps:
- *   1. tools: re-expand the profile's raw tool references against Pi's LIVE
- *      tool registry (including extension- and MCP-provided tools) and
- *      call setActiveTools. This is the CURRENT strict-allowlist enforcement
- *      ensuring non-builtin tools obey profile restrictions; settings
- *      `defaultTools` provides only the boot baseline for built-ins.
- *      Literals that no tool provides are dropped with a warning — Pi
- *      silently ignores unknown names, so the warning is the only signal.
+ *   1. tools: re-expand the profile's raw references against Pi's LIVE
+ *      non-MCP tool registry and call setActiveTools while retaining
+ *      adapter-owned registrations. Settings `defaultTools` provides only
+ *      the boot baseline for built-ins. Literals that no Pi tool provides
+ *      are dropped with a warning — Pi silently ignores unknown names, so
+ *      the warning is the only signal.
  *      When the plan carries overlay disabled tool entries, the active set
  *      is the base expansion — the profile references, or the whole live
  *      registry when the profile declares none — minus the entries' live
@@ -31,7 +30,7 @@
  * established.
  */
 
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
@@ -49,12 +48,13 @@ export interface LaunchPlanFile {
 	 *  from the base expansion at session start. */
 	disabledTools?: string[];
 	mcps?: string[];
+	mcpTools?: Record<string, string[]>;
 	switchedFrom?: string;
 	persistSelection?: boolean;
 	clearOverlay?: boolean;
 	resolved?: {
 		skills: Array<{ name: string; filePath: string }>;
-		extensions: Array<{ id: string; entry: string }>;
+		extensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
 	};
 	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
@@ -68,7 +68,10 @@ export interface LaunchPlanFile {
 
 /** The narrow slice of ExtensionAPI/Context the application needs. */
 export interface PlanApplicationSurface {
-	getAllTools(): Array<{ name: string }>;
+	getAllTools(): Array<{
+		name: string;
+		sourceInfo?: { path?: string; source?: string };
+	}>;
 	setActiveTools(names: string[]): void;
 	notify?(message: string, level: "info" | "warning" | "error"): void;
 }
@@ -87,6 +90,70 @@ export async function readLaunchPlanFile(runtimeDir: string): Promise<LaunchPlan
 	return result.value as unknown as LaunchPlanFile;
 }
 
+interface AdapterAttribution {
+	/** Exact adapter entry paths (loose adapter files). */
+	exactEntries: string[];
+	/** Verified pi-mcp-adapter npm package roots. */
+	packageRoots: string[];
+}
+
+async function resolveAdapterPackageRoot(entryPath: string): Promise<string | undefined> {
+	let current = path.resolve(entryPath);
+	while (true) {
+		const parent = path.dirname(current);
+		if (parent === current) return undefined;
+		current = parent;
+		try {
+			const manifest: unknown = JSON.parse(await readFile(path.join(current, "package.json"), "utf8"));
+			if (isRecord(manifest) && manifest.name === "pi-mcp-adapter") {
+				return current;
+			}
+		} catch {
+			// Continue walking toward the filesystem root.
+		}
+	}
+}
+
+async function getAdapterAttribution(plan: LaunchPlanFile): Promise<AdapterAttribution> {
+	const exactEntries: string[] = [];
+	const packageRoots: string[] = [];
+	for (const ext of plan.resolved?.extensions ?? []) {
+		if (ext.origin === "package") {
+			const packageName = ext.id.split(":", 1)[0]!;
+			if (packageName === "pi-mcp-adapter") {
+				const root = await resolveAdapterPackageRoot(ext.entry);
+				if (root !== undefined) {
+					packageRoots.push(root);
+				}
+			}
+		} else if (ext.id === "pi-mcp-adapter") {
+			// Loose adapter files (and plan entries without an origin marker)
+			// own only their exact entry; siblings such as
+			// "pi-mcp-adapter/linter" do not become adapter-owned.
+			exactEntries.push(ext.entry);
+		}
+	}
+	return { exactEntries, packageRoots };
+}
+
+export function isMcpOwnedTool(
+	tool: { name: string; sourceInfo?: { path?: string; source?: string } },
+	attribution?: AdapterAttribution,
+): boolean {
+	const info = tool.sourceInfo;
+	if (!info) return false;
+	if (info.source === "pi-mcp-adapter" || info.source === "mcp") return true;
+	if (typeof info.path !== "string" || attribution === undefined) return false;
+	if (attribution.exactEntries.includes(info.path)) return true;
+	for (const root of attribution.packageRoots) {
+		const rel = path.relative(root, info.path);
+		if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** Applies the plan carried by the runtime dir's pi-profile.json. */
 export async function applyLaunchPlan(input: {
 	runtimeDir: string;
@@ -103,25 +170,53 @@ export async function applyLaunchPlan(input: {
 	const warnings: string[] = [];
 
 	// --- tools ---
-	if (plan.toolReferences !== undefined || plan.disabledTools !== undefined) {
-		const liveNames = surface.getAllTools().map((tool) => tool.name);
+	const hasOverlayDisables = plan.disabledTools !== undefined && plan.disabledTools.length > 0;
+	if (plan.toolReferences !== undefined || hasOverlayDisables) {
+		const allTools = surface.getAllTools();
+		const attribution = await getAdapterAttribution(plan);
+		const mcpToolNames: string[] = [];
+		const nonMcpToolNames: string[] = [];
+
+		for (const tool of allTools) {
+			if (isMcpOwnedTool(tool, attribution)) {
+				mcpToolNames.push(tool.name);
+			} else {
+				nonMcpToolNames.push(tool.name);
+			}
+		}
+
 		let active: string[];
 		if (plan.toolReferences !== undefined) {
-			const { expanded, droppedLiterals } = expandToolReferences(plan.toolReferences, liveNames);
+			const { expanded, droppedLiterals, legacyMcpReferences } = expandToolReferences(
+				plan.toolReferences,
+				nonMcpToolNames,
+				mcpToolNames,
+			);
 			if (droppedLiterals.length > 0) {
 				warnings.push(
 					`profile "${plan.profile}": tools ${droppedLiterals.map((name) => JSON.stringify(name)).join(", ")} match nothing in Pi's live registry`,
 				);
 			}
-			active = expanded;
+			if (legacyMcpReferences.length > 0) {
+				for (const ref of legacyMcpReferences) {
+					warnings.push(
+						`profile "${plan.profile}": tool reference ${JSON.stringify(ref)} matched only MCP tools; migrate MCP tool configuration to "mcp_tools"`,
+					);
+				}
+			}
+			// Retain MCP-owned tools in the live registry alongside selected Pi tools
+			active = [...expanded, ...mcpToolNames];
 		} else {
 			// No declared tools: the base is the whole live registry.
-			active = [...liveNames];
+			active = allTools.map((tool) => tool.name);
 		}
-		if (plan.disabledTools !== undefined && plan.disabledTools.length > 0) {
+
+		if (hasOverlayDisables) {
+			const allLiveNames = allTools.map((tool) => tool.name);
 			const { expanded: disabled, droppedLiterals: vanishedEntries } = expandToolReferences(
-				plan.disabledTools,
-				liveNames,
+				plan.disabledTools!,
+				allLiveNames,
+				mcpToolNames,
 			);
 			if (vanishedEntries.length > 0) {
 				warnings.push(

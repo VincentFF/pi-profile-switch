@@ -26,6 +26,12 @@ export interface StatusConflict {
 	winnerPath: string;
 }
 
+export interface McpServerToolStatus {
+	server: string;
+	policy: "unrestricted" | "restricted" | "none";
+	tools?: string[];
+}
+
 export interface StatusReport {
 	profile: string;
 	source: string;
@@ -34,6 +40,7 @@ export interface StatusReport {
 	extensions: Array<{ id: string; entry: string; origin?: string }>;
 	tools?: string[];
 	mcp: { enabled: string[]; disabled: string[]; missing: string[] };
+	mcpTools?: McpServerToolStatus[];
 	/** Glob delta versus the previous activation (prefixed names). */
 	delta?: { added: string[]; removed: string[] };
 	/** Glob references that matched nothing at resolution (ADR-0009). */
@@ -48,7 +55,7 @@ interface RegisteredCommand {
 
 interface RegisteredTool {
 	name: string;
-	sourceInfo?: { path: string; source: string };
+	sourceInfo?: { path?: string; source?: string };
 }
 
 function currentNames(plan: LaunchPlanFile): string[] {
@@ -65,18 +72,49 @@ export function buildStatusReport(input: {
 	plan: LaunchPlanFile;
 	overlay?: RuntimeOverlay;
 	discoveredMcpServers: string[];
+	disabledMcpServers: string[];
 	commands: RegisteredCommand[];
 	tools: RegisteredTool[];
 }): StatusReport {
 	const { plan } = input;
 
-	const enabled = plan.mcps ?? [];
 	const discovered = new Set(input.discoveredMcpServers);
-	const mcp = {
-		enabled,
-		disabled: input.discoveredMcpServers.filter((name) => !enabled.includes(name)),
-		missing: enabled.filter((name) => !discovered.has(name)),
-	};
+	let enabled: string[];
+	let disabled: string[];
+	let missing: string[];
+
+	if (plan.mcps === undefined) {
+		const adapterDisabled = new Set(input.disabledMcpServers);
+		enabled = input.discoveredMcpServers.filter((name) => !adapterDisabled.has(name));
+		disabled = input.discoveredMcpServers.filter((name) => adapterDisabled.has(name));
+		missing = [];
+	} else {
+		enabled = plan.mcps;
+		disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name));
+		missing = enabled.filter((name) => !discovered.has(name));
+	}
+
+	const mcp = { enabled, disabled, missing };
+
+	let mcpTools: McpServerToolStatus[] | undefined;
+	const policyMap = plan.mcpTools;
+	if (policyMap !== undefined || enabled.length > 0) {
+		mcpTools = [];
+		const allServers = Array.from(new Set([...enabled, ...Object.keys(policyMap ?? {})]));
+		for (const server of allServers) {
+			const hasPolicy = policyMap !== undefined && Object.prototype.hasOwnProperty.call(policyMap, server);
+			if (!hasPolicy) {
+				mcpTools.push({ server, policy: "unrestricted" });
+			} else {
+				const declaredTools = policyMap![server] ?? [];
+				if (declaredTools.length === 0) {
+					mcpTools.push({ server, policy: "none", tools: [] });
+				} else {
+					mcpTools.push({ server, policy: "restricted", tools: declaredTools });
+				}
+			}
+		}
+	}
 
 	let delta: StatusReport["delta"];
 	if (plan.previousResolved !== undefined) {
@@ -117,9 +155,15 @@ export function buildStatusReport(input: {
 		const winner = input.tools.find((entry) => entry.name === toolName);
 		const info = winner?.sourceInfo;
 		if (info === undefined) continue; // unknown names are dropped by pi.setActiveTools
-		const expected = info.source === "builtin" || extensionDirs.some((dir) => info.path.startsWith(dir));
+		const expected =
+			info.source === "builtin" ||
+			(typeof info.path === "string" && extensionDirs.some((dir) => info.path!.startsWith(dir)));
 		if (!expected) {
-			conflicts.push({ name: `tool:${toolName}`, expectedPath: "builtin or selected extension", winnerPath: info.path });
+			conflicts.push({
+				name: `tool:${toolName}`,
+				expectedPath: "builtin or selected extension",
+				winnerPath: info.path ?? "unknown",
+			});
 		}
 	}
 
@@ -131,6 +175,7 @@ export function buildStatusReport(input: {
 		extensions: plan.resolved?.extensions ?? [],
 		...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 		mcp,
+		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(delta !== undefined ? { delta } : {}),
 		...(plan.unmatched !== undefined && plan.unmatched.length > 0 ? { unmatched: plan.unmatched } : {}),
 		conflicts,
@@ -168,6 +213,18 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	lines.push(
 		`mcp: enabled=[${report.mcp.enabled.join(", ")}] disabled=[${report.mcp.disabled.join(", ")}] missing=[${report.mcp.missing.join(", ")}]`,
 	);
+	if (report.mcpTools !== undefined && report.mcpTools.length > 0) {
+		lines.push("mcp tools:");
+		for (const item of report.mcpTools) {
+			if (item.policy === "unrestricted") {
+				lines.push(`  ${item.server}: unrestricted`);
+			} else if (item.policy === "none") {
+				lines.push(`  ${item.server}: no enabled MCP tools`);
+			} else {
+				lines.push(`  ${item.server}: [${(item.tools ?? []).join(", ")}]`);
+			}
+		}
+	}
 	if (report.delta !== undefined) {
 		lines.push(`delta: +[${report.delta.added.join(", ")}] -[${report.delta.removed.join(", ")}]`);
 	}

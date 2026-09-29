@@ -38,7 +38,21 @@
       "items": {
         "type": "string"
       },
-      "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
+      "description": "Names or globs for non-MCP Pi built-ins and non-MCP extension tools; MCP tools are selected separately with mcp_tools."
+    },
+    "mcp_tools": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[^[*?\\]{}]+$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[^[*?\\]{}]+$"
+        }
+      },
+      "description": "Per-server tool lists mapping literal MCP server names to arrays of literal pi-mcp-adapter tool selectors. Original and prefixed names can select the same tool; globs are not allowed. An omitted server allows all its tools; an empty list denies all its tools."
     },
     "defaultProvider": {
       "type": "string",

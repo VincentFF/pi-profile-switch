@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a named set of resources you define: skills, extensions, MCP servers, tools (including tools exposed by MCP servers and extensions), model defaults, and extra system-prompt instructions. Switch profiles inside a running Pi session — no restart.
+Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a named set of resources you define: skills, extensions, MCP servers, tools, per-server MCP tool selections (`mcp_tools`), model defaults, and extra system-prompt instructions. Switch profiles inside a running Pi session — no restart.
 
 ## Install
 
@@ -51,7 +51,7 @@ pi-profile-switch seeds the global `profiles/` directory with a starter **`ask`*
 }
 ```
 
-One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools plus both servers' MCP tools by glob; and pins the model and standing instructions:
+One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools; restricts GitHub MCP tools while denying Linear tools; and pins the model and standing instructions:
 
 ```json
 {
@@ -76,11 +76,15 @@ One profile can use every field at once. This example `impl` profile (`impl.json
     "ls",
     "bash",
     "edit",
-    "write",
-    "mcp__*",
-    "github_*",
-    "linear_*"
+    "write"
   ],
+  "mcp_tools": {
+    "github": [
+      "search",
+      "get_issue"
+    ],
+    "linear": []
+  },
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5",
   "defaultThinkingLevel": "high",
@@ -91,7 +95,10 @@ One profile can use every field at once. This example `impl` profile (`impl.json
 How fields resolve:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
-- `tools` expands against Pi's live tool registry — built-ins, extension-provided tools, and tools exposed by MCP servers. MCP tools are registered as `mcp__<server>` (proxy) and `<server>_<tool>` (direct tools, the adapter's default `toolPrefix`), so globs like `mcp__*` and `github_*` cover them.
+- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-provided tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`.
+- `mcp_tools` defines per-server MCP tool filtering: keys are literal configured server names and values are literal pi-mcp-adapter selectors (original or prefixed names; either form can select the same tool). Globs are not accepted. An omitted server keeps native access to all its tools; a nonempty array allows only matched tools; an empty array (`[]`) denies all tools for that server while leaving it enabled. Unmatched selectors remain restrictive and are not diagnosed, so confirm selectors with the adapter/server before writing them.
+- A nonempty `mcp_tools` requires `pi-mcp-adapter` even when `mcps` is omitted. Existing adapter `includeTools` filters are combined only when the profile uses identical selectors or the existing filter is `"*"`; otherwise activation fails before writing runtime files. Existing `excludeTools` restrictions continue to apply.
+- **Migration note:** Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
 - `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
 - Any field you omit keeps plain Pi behavior.
 

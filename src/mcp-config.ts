@@ -43,7 +43,14 @@ export interface MergedMcpResult {
 	/** Servers defined in a trusted project's own config (`.mcp.json`,
 	 *  `.pi/mcp.json`). They are not the profile's to narrow. */
 	projectServers: Set<string>;
+	/** Winning origin of each discovered server: "project" if defined or
+	 *  shadowed by project-level configuration, "user" otherwise. */
+	serverOwners: Record<string, "user" | "project">;
 	baseConfig?: Record<string, unknown>;
+}
+
+function setOwnRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
+	Object.defineProperty(record, key, { value, enumerable: true, configurable: true, writable: true });
 }
 
 export interface McpConfigSource {
@@ -93,6 +100,7 @@ export async function loadMergedMcpServers(
 	const servers: Record<string, Record<string, unknown>> = {};
 	const sharedServers = new Set<string>();
 	const projectServers = new Set<string>();
+	const serverOwners: Record<string, "user" | "project"> = {};
 	let baseConfig: Record<string, unknown> | undefined;
 
 	for (const source of sources) {
@@ -116,21 +124,22 @@ export async function loadMergedMcpServers(
 			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
 		}
 		for (const [name, def] of Object.entries(result.value.mcpServers)) {
+			// The real adapter copies server entries into an ordinary {} and
+			// cannot represent "__proto__" as a discoverable server name; align
+			// discovery so inherited prototype keys are never treated as servers.
+			if (name === "__proto__") continue;
 			if (source.isShared) {
 				sharedServers.add(name);
 			}
-			if (source.isProject === true) {
-				projectServers.add(name);
-			}
-			if (isRecord(def)) {
-				servers[name] = { ...(servers[name] ?? {}), ...def };
-			} else {
-				servers[name] = { ...(servers[name] ?? {}) };
-			}
+			if (source.isProject === true) projectServers.add(name);
+			setOwnRecordValue(serverOwners, name, source.isProject === true ? "project" : "user");
+			const previous = Object.hasOwn(servers, name) ? servers[name] : undefined;
+			const merged = isRecord(def) ? { ...(previous ?? {}), ...def } : { ...(previous ?? {}) };
+			setOwnRecordValue(servers, name, merged);
 		}
 	}
 
-	return { servers, sharedServers, projectServers, baseConfig };
+	return { servers, sharedServers, projectServers, serverOwners, baseConfig };
 }
 
 /** Server names the adapter would discover: standard global MCP configs,
@@ -146,10 +155,13 @@ export async function discoverAdapterServerNames(
 }
 
 export class MissingMcpAdapterError extends Error {
-	constructor(profile: string) {
+	constructor(profile: string, reason: "mcps" | "mcp_tools" = "mcps") {
 		super(
-			`profile "${profile}" declares MCP servers but pi-mcp-adapter is not active. ` +
-				`Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcps" declaration.`,
+			reason === "mcp_tools"
+				? `profile "${profile}" declares MCP tools but pi-mcp-adapter is not active. ` +
+				  `Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcp_tools" declaration.`
+				: `profile "${profile}" declares MCP servers but pi-mcp-adapter is not active. ` +
+				  `Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcps" declaration.`,
 		);
 		this.name = "MissingMcpAdapterError";
 	}

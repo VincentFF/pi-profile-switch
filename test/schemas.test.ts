@@ -47,6 +47,45 @@ describe("shipped JSON schemas", () => {
 		expect(validate({ defaultProvider: 123 })).toBe(false);
 	});
 
+	it("documents tools as non-MCP built-in and extension tools", async () => {
+		const schema = await loadSchema("profiles.schema.json");
+		const description = schema.properties.tools.description as string;
+
+		expect(description).toContain("non-MCP Pi built-ins");
+		expect(description).toContain("non-MCP extension tools");
+		expect(description).toContain("mcp_tools");
+	});
+
+	it("the profiles schema accepts valid mcp_tools declarations", async () => {
+		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
+
+		expect(validate({})).toBe(true);
+		expect(validate({ mcp_tools: {} })).toBe(true);
+		expect(validate({ mcp_tools: { github: [] } })).toBe(true);
+		expect(validate({ mcp_tools: { github: ["search", "github_search", "create_issue"], linear: [] } })).toBe(true);
+	});
+
+	it("the profiles schema accepts adapter selectors and prototype-looking server names as JSON data", async () => {
+		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
+		const profile = JSON.parse('{"mcp_tools":{"toString":["search"],"__proto__":["fixture_search"]}}');
+
+		expect(validate(profile), JSON.stringify(validate.errors)).toBe(true);
+	});
+
+	it("the profiles schema rejects invalid mcp_tools shapes and glob patterns", async () => {
+		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
+
+		expect(validate({ mcp_tools: "github" })).toBe(false);
+		expect(validate({ mcp_tools: ["github"] })).toBe(false);
+		expect(validate({ mcp_tools: { github: "search" } })).toBe(false);
+		expect(validate({ mcp_tools: { github: [123] } })).toBe(false);
+		expect(validate({ mcp_tools: { github: ["*"] } })).toBe(false);
+		expect(validate({ mcp_tools: { github: ["search*"] } })).toBe(false);
+		expect(validate({ mcp_tools: { github: ["search?"] } })).toBe(false);
+		expect(validate({ mcp_tools: { github: ["search[0]"] } })).toBe(false);
+		expect(validate({ mcp_tools: { "git*": ["search"] } })).toBe(false);
+	});
+
 	it("schema-valid catalogs load through the runtime parsers", async () => {
 		const fixture = await createPiFixture();
 		try {

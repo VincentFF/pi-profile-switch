@@ -45,7 +45,7 @@ import { mkdir, mkdtemp, lstat, readdir, readFile, readlink, rm, stat, symlink, 
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { ActivationPlan } from "./profile-resolver.ts";
+import { buildInstanceMcpConfig, type ActivationPlan } from "./profile-resolver.ts";
 import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
 import { loadMergedMcpServers } from "./mcp-config.ts";
@@ -403,6 +403,7 @@ export async function writeRuntimeFiles(
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
 				...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
 				...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
+				...(plan.mcpTools !== undefined ? { mcpTools: plan.mcpTools } : {}),
 				// The resolved sets feed /profile status (absolute paths) and the
 				// glob-delta diff against the previous activation.
 				resolved: {
@@ -429,49 +430,36 @@ export async function writeRuntimeFiles(
 		await symlink(path.join(options.agentDir, "trust.json"), trustLink);
 	}
 
-	// MCP Servers generation (Ticket 04)
+	// MCP Servers generation (Ticket 04 & Separate MCP tool filtering)
 	const mcpTarget = path.join(options.agentDir, "mcp.json");
 	const mcpInstancePath = path.join(runtimeDir, "mcp.json");
-	if (plan.mcps === undefined) {
+	if (plan.instanceMcpConfig !== undefined) {
+		try { await rm(mcpInstancePath); } catch {}
+		await writeFile(mcpInstancePath, JSON.stringify(plan.instanceMcpConfig, null, 2));
+	} else if (
+		plan.mcps === undefined &&
+		(plan.mcpTools === undefined || Object.keys(plan.mcpTools).length === 0)
+	) {
 		// No restrictions, symlink
 		if (await exists(mcpTarget)) {
 			try { await rm(mcpInstancePath); } catch {}
 			await symlink(mcpTarget, mcpInstancePath);
 		}
 	} else {
-		// Filter MCP servers
+		// Filter MCP servers (fallback when instanceMcpConfig is not pre-populated)
 		try { await rm(mcpInstancePath); } catch {}
-		const { servers, sharedServers, projectServers, baseConfig } = await loadMergedMcpServers(
+		const discovery = await loadMergedMcpServers(
 			options.agentDir,
 			options.projectDir,
 			options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
 		);
-
-		const allowedSet = new Set(plan.mcps);
-		const filteredServers: Record<string, unknown> = {};
-
-		for (const serverName of plan.mcps) {
-			if (servers[serverName] !== undefined) {
-				const def = { ...servers[serverName] };
-				delete def.disabled;
-				filteredServers[serverName] = def;
-			}
-		}
-
-		for (const sharedName of sharedServers) {
-			if (!allowedSet.has(sharedName)) {
-				// Project-level servers are not the profile's to narrow (the same
-				// boundary as project skills and extensions).
-				if (projectServers.has(sharedName)) continue;
-				filteredServers[sharedName] = { disabled: true };
-			}
-		}
-
-		const outputConfig: Record<string, unknown> = isRecord(baseConfig)
-			? { ...baseConfig, mcpServers: filteredServers }
-			: { mcpServers: filteredServers };
-
-		await writeFile(mcpInstancePath, JSON.stringify(outputConfig, null, 2));
+		const instanceMcpConfig = buildInstanceMcpConfig(
+			plan.profile,
+			discovery,
+			plan.mcps,
+			plan.mcpTools,
+		);
+		await writeFile(mcpInstancePath, JSON.stringify(instanceMcpConfig, null, 2));
 	}
 
 	// Instructions generation (Ticket 04)

@@ -44,6 +44,8 @@ export interface ProfileDefinition {
 	extensions?: string[];
 	mcps?: string[];
 	tools?: string[];
+	/** Literal adapter selectors (original or prefixed names); globs are rejected. */
+	mcp_tools?: Record<string, string[]>;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: string;
@@ -89,6 +91,49 @@ function readOptionalString(value: unknown, field: string, profileName: string, 
 	return value;
 }
 
+function isGlobPattern(value: string): boolean {
+	return (
+		value.includes("*") ||
+		value.includes("?") ||
+		value.includes("[") ||
+		value.includes("]") ||
+		value.includes("{") ||
+		value.includes("}")
+	);
+}
+
+function readMcpTools(
+	value: unknown,
+	profileName: string,
+	filePath?: string,
+): Record<string, string[]> | undefined {
+	if (value === undefined) return undefined;
+	const prefix = filePath ? `${filePath}: ` : "";
+	if (!isRecord(value)) {
+		throw new CatalogError(`${prefix}profile "${profileName}": "mcp_tools" must be an object of string arrays`);
+	}
+	const entries: Array<[string, string[]]> = [];
+	for (const [server, tools] of Object.entries(value)) {
+		if (isGlobPattern(server)) {
+			throw new CatalogError(
+				`${prefix}profile "${profileName}": "mcp_tools" server "${server}" is a glob pattern; literal MCP server names are required`,
+			);
+		}
+		if (!Array.isArray(tools) || tools.some((entry) => typeof entry !== "string")) {
+			throw new CatalogError(`${prefix}profile "${profileName}": "mcp_tools" must be an object of string arrays`);
+		}
+		for (const tool of tools) {
+			if (isGlobPattern(tool)) {
+				throw new CatalogError(
+					`${prefix}profile "${profileName}": "mcp_tools" entry "${tool}" in server "${server}" is a glob pattern; literal adapter tool selectors are required`,
+				);
+			}
+		}
+		entries.push([server, [...tools]]);
+	}
+	return Object.fromEntries(entries);
+}
+
 /** Parses one raw profile definition; the single read-time validator so
  *  catalog files and any external writer stay loadable. */
 export function parseProfileDefinition(name: string, raw: unknown, filePath?: string): ProfileDefinition {
@@ -105,6 +150,8 @@ export function parseProfileDefinition(name: string, raw: unknown, filePath?: st
 		const entries = readStringArray(raw[field], field, name, filePath);
 		if (entries !== undefined) definition[field] = entries;
 	}
+	const mcpTools = readMcpTools(raw.mcp_tools, name, filePath);
+	if (mcpTools !== undefined) definition.mcp_tools = mcpTools;
 	const defaultProvider = readOptionalString(raw.defaultProvider, "defaultProvider", name, filePath);
 	if (defaultProvider !== undefined) definition.defaultProvider = defaultProvider;
 	const defaultModel = readOptionalString(raw.defaultModel, "defaultModel", name, filePath);

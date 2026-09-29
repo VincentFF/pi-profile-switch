@@ -8,7 +8,7 @@ import {
 	launcherEnv,
 	runLauncher,
 } from "./helpers/launcher-runner.ts";
-import { createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
+import { createPiFixture, launchInstanceDirs, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
@@ -130,6 +130,117 @@ describe("launcher integration: mcp coordination", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: globalConfig,
+			});
+		},
+	);
+
+	it(
+		"a profile declaring mcp_tools fails before spawn when the adapter is absent",
+		{ timeout: 30_000 },
+		async () => {
+			await writeMcpConfig({ github: { url: "https://x" } });
+			await writeCatalog({ review: { mcp_tools: { github: ["search"] } } });
+
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
+			expect(failure.code).toBe(2);
+			expect(failure.stderr).toContain("pi-mcp-adapter is not active");
+		},
+	);
+
+	it(
+		"an mcp_tools reference with unknown server fails before spawn",
+		{ timeout: 30_000 },
+		async () => {
+			await installFakeAdapter();
+			await writeMcpConfig({ github: {} });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { typo_server: ["search"] } } });
+
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
+			expect(failure.code).toBe(2);
+			expect(failure.stderr).toContain('unknown MCP server "typo_server"');
+		},
+	);
+
+	it(
+		"fails before creating runtime files when an existing selector collides by hyphen/underscore alias",
+		{ timeout: 30_000 },
+		async () => {
+			await installFakeAdapter();
+			const originalMcpJson = '{"mcpServers":{"github":{"url":"https://x","includeTools":["foo-bar"]}}}';
+			await writeFile(path.join(fixture.agentDir, "mcp.json"), originalMcpJson);
+			await writeCatalog({
+				review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["foo_bar"] } },
+			});
+
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
+
+			expect(failure.code).toBe(2);
+			expect(failure.stderr).toContain('unsafe MCP tool filter intersection for server "github"');
+			expect(failure.stderr).toContain('"foo_bar"');
+			expect(await launchInstanceDirs(fixture)).toEqual([]);
+			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcpJson);
+		},
+	);
+
+	it(
+		"materializes tool restriction without a server whitelist and keeps original files byte-identical",
+		{ timeout: 45_000 },
+		async () => {
+			await installFakeAdapter();
+			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
+			await writeMcpConfig(globalConfig);
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: {
+					github: { url: "https://x", includeTools: ["search"] },
+					linear: { command: "mcp-linear" },
+				},
+			});
+
+			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8"))).toEqual({
+				mcpServers: globalConfig,
+			});
+		},
+	);
+
+	it(
+		"empty mcp_tools list denies all tools with adapter excludeTools wildcard",
+		{ timeout: 45_000 },
+		async () => {
+			await installFakeAdapter();
+			const globalConfig = { github: { url: "https://x" } };
+			await writeMcpConfig(globalConfig);
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: {
+					github: { url: "https://x", excludeTools: ["*"] },
+				},
 			});
 		},
 	);

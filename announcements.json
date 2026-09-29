@@ -1,4 +1,11 @@
 {
   "schemaVersion": 1,
-  "announcements": []
+  "announcements": [
+    {
+      "id": "pi-mcp-adapter-v3-compatibility",
+      "message": "pi-mcp-adapter v3.0.0 introduces breaking changes as Pi prepares native MCP support. pi-profile-switch currently supports pi-mcp-adapter only through v2.38.0. We will decide whether to continue supporting pi-mcp-adapter after Pi's native MCP support ships.",
+      "action": "Keep pi-mcp-adapter at v2.38.0; do not upgrade to v3.0.0 yet.",
+      "expiresAt": "2026-12-31"
+    }
+  ]
 }

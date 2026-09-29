@@ -3,24 +3,30 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
 import piProfileExtension from "../extensions/pi-profile/index.ts";
 
 let root: string;
 let savedAgentDir: string | undefined;
 let savedSwitchDir: string | undefined;
+let savedHome: string | undefined;
 
 beforeEach(async () => {
 	root = await mkdtemp(path.join(tmpdir(), "pi-profile-ext-"));
 	savedAgentDir = process.env.PI_CODING_AGENT_DIR;
 	savedSwitchDir = process.env.PI_PROFILE_SWITCH_DIR;
+	savedHome = process.env.HOME;
 	process.env.PI_CODING_AGENT_DIR = root;
 	process.env.PI_PROFILE_SWITCH_DIR = root;
+	process.env.HOME = root;
 });
 
 afterEach(async () => {
-	process.env.PI_CODING_AGENT_DIR = savedAgentDir;
-	process.env.PI_PROFILE_SWITCH_DIR = savedSwitchDir;
+	if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+	if (savedSwitchDir === undefined) delete process.env.PI_PROFILE_SWITCH_DIR;
+	else process.env.PI_PROFILE_SWITCH_DIR = savedSwitchDir;
+	if (savedHome === undefined) delete process.env.HOME;
+	else process.env.HOME = savedHome;
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -29,7 +35,7 @@ interface FakePi {
 	commands: Map<string, { description: string; handler: (...args: never[]) => unknown }>;
 	events: { on(event: string, handler: unknown): void; emit(event: string, data: unknown): void };
 	activeTools: string[];
-	sentMessages: Array<{ customType: string; content: unknown; display?: boolean }>;
+	sentMessages: Array<{ customType: string; content: unknown; display?: boolean; details?: unknown }>;
 	on(event: string, handler: (...args: never[]) => unknown): void;
 	registerCommand(name: string, def: { description: string; handler: (...args: never[]) => unknown }): void;
 	getAllTools(): Array<{ name: string }>;
@@ -500,5 +506,120 @@ describe("pi-profile extension", () => {
 		expect(
 			ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage: /profile")),
 		).toBe(true);
+	});
+
+	describe("separate MCP tool filtering in extension (Tasks 3.1 & 3.2)", () => {
+		it("session_start retains live MCP tools when tools narrows Pi tools", async () => {
+			await writeLaunchPlan({
+				profile: "narrow",
+				source: "global",
+				agentDir: root,
+				tools: ["read"],
+				toolReferences: ["read"],
+				resolved: {
+					skills: [],
+					extensions: [{ id: "pi-mcp-adapter", entry: "/ext/pi-mcp-adapter/index.ts" }],
+				},
+			});
+			const pi = fakePi();
+			pi.getAllTools = () => [
+				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "bash", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "mcp", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "fixture_tool", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
+			];
+			piProfileExtension(pi as never);
+
+			await fireSessionStart(pi);
+
+			// read is retained; bash is excluded; MCP tools (mcp, fixture_tool) are preserved
+			expect(pi.activeTools).toContain("read");
+			expect(pi.activeTools).not.toContain("bash");
+			expect(pi.activeTools).toContain("mcp");
+			expect(pi.activeTools).toContain("fixture_tool");
+		});
+
+		it("session_start does not retain a tool from beside a loose adapter file", async () => {
+			await writeLaunchPlan({
+				profile: "no-pi-tools",
+				source: "global",
+				agentDir: root,
+				tools: [],
+				toolReferences: [],
+				resolved: {
+					skills: [],
+					extensions: [
+						{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter.ts" },
+						{ id: "linter", entry: "/agent/extensions/linter.ts" },
+					],
+				},
+			});
+			const pi = fakePi();
+			pi.getAllTools = () => [
+				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter.ts", source: "extension" } },
+				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
+			];
+			piProfileExtension(pi as never);
+
+			const ctx = fakeCtx();
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(pi.activeTools).toEqual(["mcp"]);
+			expect(ctx.notifications.some((entry) => /lint_check.*mcp_tools/.test(entry.message))).toBe(false);
+		});
+
+		it("session_start warns about legacy MCP references in tools", async () => {
+			await writeLaunchPlan({
+				profile: "legacy",
+				source: "global",
+				agentDir: root,
+				tools: ["read", "mcp__*"],
+				toolReferences: ["read", "mcp__*"],
+				resolved: {
+					skills: [],
+					extensions: [{ id: "pi-mcp-adapter", entry: "/ext/pi-mcp-adapter/index.ts" }],
+				},
+			});
+			const pi = fakePi();
+			pi.getAllTools = () => [
+				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "mcp__query", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
+			];
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(
+				ctx.notifications.some(
+					(n) => n.level === "warning" && n.message.includes('tool reference "mcp__*" matched only MCP tools') && n.message.includes("mcp_tools"),
+				),
+			).toBe(true);
+		});
+
+		it("keeps configured MCP names restrictive without warning or validation status", async () => {
+			await writeFile(
+				path.join(root, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: {}, linear: { disabled: true } } }),
+			);
+			await writeLaunchPlan({
+				profile: "restricted",
+				source: "global",
+				agentDir: root,
+				mcpTools: { github: ["serach"] },
+			});
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+
+			await fireSessionStart(pi, "startup", ctx);
+			expect(ctx.notifications.some((entry) => /MCP server.*tool.*not found/i.test(entry.message))).toBe(false);
+
+			await pi.commands.get("profile")?.handler("status" as never, fakeCtx() as never);
+			const report = (pi.sentMessages.at(-1)?.details as { report: any }).report;
+			expect(report.mcp).toEqual({ enabled: ["github"], disabled: ["linear"], missing: [] });
+			expect(report.mcpTools).toEqual([{ server: "github", policy: "restricted", tools: ["serach"] }]);
+			expect(JSON.stringify(report)).not.toMatch(/validation|missing.*candidates|did you mean/i);
+		});
 	});
 });

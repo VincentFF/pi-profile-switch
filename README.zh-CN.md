@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-[Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 是你自定义的命名能力组合：skills、extensions、MCP server、tools（包括 MCP server 和 extension 提供的工具）、默认模型，以及追加到系统提示词的 instructions。在同一个运行中的 Pi 会话里切换这些组合，无需重启。
+[Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 是你自定义的命名能力组合：skills、extensions、MCP server、tools、按 server 细化的 MCP 工具控制（`mcp_tools`）、默认模型，以及追加到系统提示词的 instructions。在同一个运行中的 Pi 会话里切换这些组合，无需重启。
 
 ## 安装
 
@@ -51,7 +51,7 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 }
 ```
 
-一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例（`impl.json`）加载 TDD skill、mcp-scripting skill（pi-mcp-adapter 自带）和你的内部 skills；接入两个 MCP server；tool 白名单用 glob 覆盖内建工具和这两个 server 的 MCP 工具；并钉住模型与常驻 instructions：
+一个 profile 可以同时使用全部字段。下面这个 `impl` profile 示例（`impl.json`）加载 TDD skill、mcp-scripting skill（pi-mcp-adapter 自带）和你的内部 skills；接入两个 MCP server；允许内建工具并按 server 细化 MCP 工具；同时钉住模型与常驻 instructions：
 
 ```json
 {
@@ -76,11 +76,15 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
     "ls",
     "bash",
     "edit",
-    "write",
-    "mcp__*",
-    "github_*",
-    "linear_*"
+    "write"
   ],
+  "mcp_tools": {
+    "github": [
+      "search",
+      "get_issue"
+    ],
+    "linear": []
+  },
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5",
   "defaultThinkingLevel": "high",
@@ -91,7 +95,10 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 字段解析规则：
 
 - `skills`、`extensions`、`mcps`、`tools` 接受名称或 glob（如 `"internal-*"`），引用你已安装或已配置的资源——profile 从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。
-- `tools` 针对 Pi 的实时工具注册表展开——内建工具、extension 提供的工具，以及 MCP server 暴露的工具。MCP 工具注册为 `mcp__<server>`（代理）和 `<server>_<tool>`（直接工具，adapter 默认 `toolPrefix`），因此 `mcp__*`、`github_*` 这类 glob 可以覆盖它们。
+- `tools` 仅针对 Pi 的非 MCP 工具展开（内建工具与 extension 提供的工具，根据注册归属 `sourceInfo` 判定）。可用的 MCP 工具独立于 `tools` 保持可用。
+- `mcp_tools` 按 server 细化 MCP 工具策略：键为字面 MCP server 名称，值为 pi-mcp-adapter 的字面 selector（原始名或带前缀名；两种写法都可能选中同一个工具）。此字段不接受 glob。省略的 server 保留其全部原生工具访问；非空数组仅允许匹配到的工具；空数组（`[]`）禁用该 server 的全部工具，同时保持 server 处于启用状态。未匹配的 selector 仍保持限制且不会收到诊断，因此编写前请通过 adapter/server 确认可用写法。
+- 非空的 `mcp_tools` 即使在省略 `mcps` 时也需要 `pi-mcp-adapter`。只有当 profile selector 与已有的 `includeTools` 字面值完全相同，或已有列表是 `"*"` 时才能安全组合；否则会在写入 runtime 文件前报错。已有的 `excludeTools` 限制仍然生效。
+- **迁移提示**：旧 profile 中写入 `tools` 的 MCP 工具名称或 glob（如 `mcp__*`、`<server>_*`）不再控制 MCP 访问；如有需要请迁移至 `mcp_tools`。
 - `mcps` 引用 pi-mcp-adapter 配置中的 server；连接细节留在 adapter 自己的配置里。
 - 未写的字段保持原生 Pi 行为。
 

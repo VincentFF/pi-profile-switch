@@ -430,6 +430,90 @@ describe("generateRuntimeDir (project scope belongs to Pi)", () => {
 		// narrow project-level servers.
 		expect(mcpInstance.mcpServers["proj-p"]).toBeUndefined();
 	});
+
+	it("links mcp.json directly as a symlink when neither mcps nor mcp_tools is declared", async () => {
+		await mkdir(path.join(fixture.agentDir), { recursive: true });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: { url: "http://gh" } } }));
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+		const mcpInstancePath = path.join(result.runtimeDir, "mcp.json");
+		const stat = await lstat(mcpInstancePath);
+		expect(stat.isSymbolicLink()).toBe(true);
+	});
+
+	it("materializes prevalidated instanceMcpConfig and carries mcpTools in pi-profile.json without credentials", async () => {
+		await mkdir(path.join(fixture.agentDir), { recursive: true });
+		const originalMcpContent = JSON.stringify({
+			mcpServers: {
+				github: { url: "http://gh", headers: { Authorization: "Bearer secret-token" } },
+			},
+		});
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), originalMcpContent);
+
+		const prevalidatedConfig = {
+			mcpServers: {
+				github: {
+					url: "http://gh",
+					headers: { Authorization: "Bearer secret-token" },
+					includeTools: ["search"],
+				},
+			},
+		};
+
+		const plan = selectionPlan({
+			mcpTools: { github: ["search"] },
+			instanceMcpConfig: prevalidatedConfig,
+		});
+
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		// 1. instance mcp.json matches prevalidatedConfig
+		const instanceMcp = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp).toEqual(prevalidatedConfig);
+
+		// 2. pi-profile.json carries mcpTools policy only, NOT instanceMcpConfig or credentials
+		const launchPlan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(launchPlan.mcpTools).toEqual({ github: ["search"] });
+		expect(launchPlan.instanceMcpConfig).toBeUndefined();
+		expect(JSON.stringify(launchPlan)).not.toContain("secret-token");
+
+		// 3. original mcp.json is byte-identical
+		const currentMcpContent = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+		expect(currentMcpContent).toBe(originalMcpContent);
+	});
+
+	it("materializes tool restriction without a server whitelist and represents empty list as deny-all", async () => {
+		await mkdir(path.join(fixture.agentDir), { recursive: true });
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					github: { url: "http://gh", includeTools: ["search", "delete"] },
+					linear: { command: "linear" },
+				},
+			}),
+		);
+
+		const plan = selectionPlan({
+			mcpTools: { github: ["search"], linear: [] },
+		});
+
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const instanceMcp = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+		expect(instanceMcp.mcpServers.linear.excludeTools).toEqual(["*"]);
+		expect(instanceMcp.mcpServers.linear.includeTools).toBeUndefined();
+	});
 });
 
 describe("generateRuntimeDir (default profile, unchanged)", () => {
