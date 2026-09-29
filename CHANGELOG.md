@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.11.0...v0.12.0) (2026-09-29)
+
+
+### Features
+
+* separate mcp tool ([#65](https://github.com/VincentFF/pi-profile-switch/issues/65)) ([cef4b9f](https://github.com/VincentFF/pi-profile-switch/commit/cef4b9f94656397085e1fab94b9d47d2ebf8b7bc))
+
 ## [0.11.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.10.0...v0.11.0) (2026-09-28)
 
 
