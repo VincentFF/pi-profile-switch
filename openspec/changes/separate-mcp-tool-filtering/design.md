@@ -4,11 +4,11 @@
 
 See [proposal.md](proposal.md). Today `resolveProfile` expands `tools` against built-ins; `applyLaunchPlan` expands the same list against every live Pi tool; `writeRuntimeFiles` generates `mcp.json` only when `mcps` is resolved. The adapter owns MCP tool discovery, gateway routing and server-side `includeTools`/`excludeTools`. Pi exposes the winning tool registration's `sourceInfo.path` through `getAllTools()`. A tool's Pi name cannot reliably identify its MCP origin because adapter prefixes are configurable and gateways can call tools not registered as direct Pi tools.
 
-The server configuration is layered; project-level servers are outside profile narrowing. No adapter package is a required runtime dependency. An adapter metadata cache can be absent or stale before the server connects.
+The server configuration is layered; project-level servers are outside profile narrowing. No adapter package is a required runtime dependency. The adapter does not expose a verifiable live tool-name catalog through every supported extension entry; the profile policy can still be enforced without one.
 
 ## Goals / Non-Goals
 
-**Goals:** Keep Pi-tool and per-server MCP-tool selection independent across launch and in-session reload. Enforce MCP restrictions before the first agent turn and through gateway, namespace and script execution. Preserve existing adapter restrictions and report invalid explicit references when they can be verified.
+**Goals:** Keep Pi-tool and per-server MCP-tool selection independent across launch and in-session reload. Enforce MCP restrictions before the first agent turn and through gateway, namespace and script execution. Preserve existing adapter restrictions, validate server keys before activation, and report missing Pi tool literals after session start.
 
 **Non-Goals:** Filter project-only servers; change connection/authentication settings; add MCP transport handling; enumerate every server's tools at launcher startup; add persistent overlay fields.
 
@@ -16,7 +16,7 @@ The server configuration is layered; project-level servers are outside profile n
 
 ### 1. Catalog shape and migration
 
-Use `mcp_tools: Record<string, string[]>` in profile JSON. Keys are literal configured server names; values are literal original tool names. Empty object/omitted field is a no-op, omitted server key means native adapter access, and empty array denies its tools. No glob support for this field in the first change: exact names keep typo detection and prefix-independent identity unambiguous. `tools` becomes non-MCP-only for all profiles, without a legacy mode. README and the distributed skill will explain how to move old MCP names out of `tools`.
+Use `mcp_tools: Record<string, string[]>` in profile JSON. Keys are literal configured server names; values are literal original tool names. Empty object/omitted field is a no-op, omitted server key means native adapter access, and empty array denies its tools. No glob support for this field in the first change: exact names express a predictable adapter allowlist independent of model-facing prefixes. Tool names are not checked against a live catalog; a misspelled name stays restrictive without a warning. `tools` becomes non-MCP-only for all profiles, without a legacy mode. README and the distributed skill will explain how to move old MCP names out of `tools`.
 
 ADR required: per-server-mcp-tool-selection
 
@@ -36,11 +36,13 @@ On `session_start`, classify each live Pi tool by the winner's `sourceInfo` and 
 
 Rejected: identifying MCP ownership by `mcp__*` or `<server>_*`: prefix overrides, no-prefix direct tools and collisions make that unsafe.
 
-### 4. Validate names without inventing an MCP connection layer
+### 4. Validate server keys; do not verify MCP tool names
 
 Before spawn/switch, resolve each `mcp_tools` server key against the enabled user-level server names. Require the adapter only for nonempty `mcp_tools`; report disabled, unknown or project-only keys as `ActivationError` with candidates. Do not connect to servers as part of profile resolution.
 
-A tool name is not proven missing by a cold or stale cache. Once the adapter reports a live, non-stale catalog, compare original names against the adapter's freshly recorded raw tool metadata. The status view must derive enabled servers from discovery when `mcps` is absent, instead of treating the absence of an explicit server whitelist as zero enabled servers. Surface a missing name with server and candidate original names through notifications and `/profile status`; leave the restriction in place. If a live catalog cannot be verified, status reports validation pending rather than claiming names exist or lifting the restriction. Add focused tests against the adapter's metadata and status contract; do not make the adapter a runtime import. A tool-list refresh reruns the comparison. This is post-activation diagnostic, not a rollback-triggering activation failure: pre-activation connection would violate read-only resolution and cannot be guaranteed.
+Pass literal original tool names through to the adapter's restrictive policy without comparing them against a live catalog. A name absent from the server's tools neither grants access to another tool nor produces a missing-name notification, validation state, or candidate list. Keep Pi tool-literal and legacy MCP-reference diagnostics distinct from these unchecked `mcp_tools` names. This removes the optional adapter metadata-cache import and its dependence on cache freshness or extension packaging; enforcement continues through the instance configuration.
+
+For `/profile status`, derive the effective disabled state alongside discovered server names from the same trusted adapter configuration discovery used for resolution. Without an explicit `mcps` selection, list a server marked `disabled: true` as discovered but not enabled. Report each enabled server's declared tool policy without claiming the original tool names exist. Keep the existing tri-state for an explicit `mcps` selection and for unresolved server references.
 
 ### Export surface
 
@@ -50,9 +52,8 @@ A tool name is not proven missing by a cold or stale cache. Once the adapter rep
 | `src/mcp-config.ts` | Extend `MergedMcpResult` with `serverOwners: Record<string, "user" \| "project">`; keep `loadMergedMcpServers(agentDir: string, projectDir?: string, options?: McpDiscoveryOptions): Promise<MergedMcpResult>` | Winning origin for preflight; retain `McpConfigError` for malformed config |
 | `src/profile-resolver.ts` | `ActivationPlan.mcpTools?: Record<string, string[]>` and `ActivationPlan.instanceMcpConfig?: Record<string, unknown>` (memory only); `ResolveInput.mcpDiscovery?: MergedMcpResult`; `resolveProfile(input: ResolveInput): Promise<ActivationPlan>` | `ActivationError` for unknown, disabled, project-owned servers, unsafe filter intersections or missing adapter |
 | `src/settings-generator.ts` | `writeRuntimeFiles(runtimeDir: string, plan: ActivationPlan, options: RuntimeFileOptions): Promise<void>` | Consumes prevalidated `instanceMcpConfig` without serializing credentials to `pi-profile.json`; IO errors use existing rollback; never writes source adapter config |
-| `src/switching/apply-plan.ts` | `LaunchPlanFile.mcpTools?: Record<string, string[]>`; `PlanApplicationSurface.getAllTools(): Array<{name: string; sourceInfo?: {path: string; source: string}}>`; `applyLaunchPlan(input): Promise<ApplyResult>` | Tool migration and missing-name diagnostics in `warnings` |
-| `src/switching/status.ts` | Extend `StatusReport` / `buildStatusReport(input)` with per-server policy and validation state | Structured report, not an activation failure |
-| `src/switching/mcp-tool-diagnostics.ts` (new) | `diagnoseMcpToolNames(policy: Record<string, string[]>, liveCatalog: Record<string, string[]>): Array<{server: string; missing: string; candidates: string[]}>` | Pure comparisons; caller only passes verified live catalogs |
+| `src/switching/apply-plan.ts` | `LaunchPlanFile.mcpTools?: Record<string, string[]>`; `PlanApplicationSurface.getAllTools(): Array<{name: string; sourceInfo?: {path: string; source: string}}>`; `applyLaunchPlan(input): Promise<ApplyResult>` | Pi tool-literal and legacy MCP-reference diagnostics in `warnings`; no `mcp_tools` name checks |
+| `src/switching/status.ts` | `StatusReport.mcpTools?: McpServerToolStatus[]` with `McpServerToolStatus = {server: string; policy: "unrestricted" \| "restricted" \| "none"; tools?: string[]}`; `buildStatusReport(input: {plan: LaunchPlanFile; overlay?: RuntimeOverlay; discoveredMcpServers: string[]; disabledMcpServers: string[]; commands: RegisteredCommand[]; tools: RegisteredTool[]}): StatusReport` | Caller supplies disabled names from the same trusted server discovery as the discovered names; policy-only status and accurate MCP tri-state, without name-validation fields |
 
 Keep the plan file's new policy data with the existing managed snapshot; switching writes and restores it through the existing rollback path. No new state file.
 
@@ -61,7 +62,7 @@ Keep the plan file's new policy data with the existing managed snapshot; switchi
 - [Adapter filtering semantics change] -> Use a development-only adapter dependency for real-adapter fixture tests of nonempty allowlists, empty deny-all, gateway/script attempts and metadata refresh; fail closed on a filter intersection that cannot be proved. Runtime remains adapter-optional.
 - [Original server definitions mix project and user layers] -> Validate ownership after precedence is applied and test a project-only and same-name project override; do not silently narrow project content.
 - [Adapter-owned Pi tools appear after `session_start`] -> The adapter's server-side filter is the enforcement layer; test direct-tool hot registration and preserve gateway availability without allowing excluded calls.
-- [No authoritative tool catalog at launch] -> Defer name-miss diagnostics until a verified live catalog; expose validation pending in status and never interpret absence as permission.
+- [Unrecognized original MCP tool name] -> Keep the adapter allowlist restrictive without an unsolicited tool-name warning; document that users are responsible for the exact name. Avoid treating an absent catalog as permission or building a runtime adapter dependency for diagnostics.
 - [Legacy `tools` globs change meaning] -> Announce the breaking change with a before/after example, update the shipped example and profile-config skill, and show migration diagnostics on reload.
 
 ## Migration Plan

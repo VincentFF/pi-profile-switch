@@ -8,7 +8,7 @@ Every session start (launch, reload, new, resume, fork) SHALL apply the plan in 
 
 When the plan carries disabled tool entries from the overlay, the active tool set SHALL subtract their matches at that moment. The base for overlay resolution SHALL remain the profile's resolved Pi tool references when `tools` is declared, or the runtime's available tool set when it is not; per-server MCP tool filtering SHALL be governed by `mcp_tools` and server selection.
 
-Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. MCP tool-name diagnostics SHALL follow "Per-server MCP tool reference resolution" in the resource-reference specification.
+Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. Original names in `mcp_tools` SHALL remain restrictive without a missing-name diagnostic, as specified in "Per-server MCP tool reference resolution" in the resource-reference specification.
 
 When the plan marks the selection for persistence and this session start was triggered by a reload, the active profile SHALL be written to the state file of that profile's source scope.
 
@@ -48,12 +48,17 @@ The change summary produced by a switch SHALL be injected into the next agent tu
 
 ### Requirement: MCP tool policy observability and switch rollback
 
-`/profile status` SHALL show which servers have unrestricted, explicitly restricted, or no MCP tools, and SHALL report unresolved configured tool names only after authoritative server discovery. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
+`/profile status` SHALL show which enabled servers have unrestricted, explicitly restricted, or no MCP tools, including the declared names for explicitly restricted servers; it SHALL NOT report tool-name validity or missing-name candidates. When `mcps` is undeclared, a server marked disabled by the effective adapter configuration SHALL appear as discovered but not enabled, rather than enabled. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
 
 #### Scenario: Status distinguishes absent and empty lists
 
 - **WHEN** an active profile omits `github` from `mcp_tools` and explicitly sets `linear` to `[]`
 - **THEN** `/profile status` reports `github` as unrestricted and `linear` as having no enabled MCP tools
+
+#### Scenario: Status respects adapter-disabled servers without an MCP whitelist
+
+- **WHEN** `mcps` is undeclared and the effective adapter configuration marks `linear` disabled while `github` is enabled
+- **THEN** `/profile status` reports `github` as enabled and `linear` as discovered but not enabled, without listing `linear` as an unrestricted enabled server
 
 #### Scenario: Failed switch restores previous tool policy
 
