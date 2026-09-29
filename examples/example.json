@@ -20,11 +20,15 @@
     "ls",
     "bash",
     "edit",
-    "write",
-    "mcp__*",
-    "github_*",
-    "linear_*"
+    "write"
   ],
+  "mcp_tools": {
+    "github": [
+      "github_search",
+      "get_issue"
+    ],
+    "linear": []
+  },
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5",
   "defaultThinkingLevel": "high",

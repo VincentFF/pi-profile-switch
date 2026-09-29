@@ -284,4 +284,74 @@ describe("switchProfile", () => {
 			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
 		]);
 	});
+
+	it("profile switch changes per-server MCP tool policy (Task 3.3)", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
+		);
+		await writeCatalog({
+			broad: { extensions: ["pi-mcp-adapter"] },
+			narrow: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+		});
+
+		await switchProfile("broad", deps());
+		let instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github.includeTools).toBeUndefined();
+
+		await switchProfile("narrow", deps());
+		const plan = await readPlanFile();
+		expect(plan.profile).toBe("narrow");
+		expect(plan.mcpTools).toEqual({ github: ["search"] });
+
+		instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+	});
+
+	it("empty MCP tool list survives reload (Task 3.3)", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
+		);
+		await writeCatalog({
+			denied: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+		});
+
+		await switchProfile("denied", deps());
+		let instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+	});
+
+	it("failed switch restores previous MCP tool policy (Task 3.3)", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
+		);
+		await writeCatalog({
+			initial: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+			failing: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+		});
+
+		await switchProfile("initial", deps());
+		const initialMcp = await readFile(path.join(runtimeDir, "mcp.json"), "utf8");
+		const initialPlan = await readPlanFile();
+
+		let reloads = 0;
+		const reload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("reload failed");
+		};
+
+		await expect(switchProfile("failing", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
+
+		expect(await readFile(path.join(runtimeDir, "mcp.json"), "utf8")).toBe(initialMcp);
+		expect(await readPlanFile()).toEqual(initialPlan);
+	});
 });

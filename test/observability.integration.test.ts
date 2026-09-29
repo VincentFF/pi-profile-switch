@@ -36,9 +36,12 @@ beforeEach(async () => {
 	const projectProfilesDir = path.join(fixture.cwd, ".pi", "profiles");
 	await mkdir(projectProfilesDir, { recursive: true });
 	await writeFile(path.join(projectProfilesDir, "shared.json"), JSON.stringify({ label: "project shared" }));
-	// A global MCP server exists but no profile selects it: status must show
-	// it as discovered-but-disabled.
-	await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
+	// An enabled server and an adapter-disabled server are both discovered; without
+	// an explicit mcps whitelist, status must not present the disabled server as enabled.
+	await writeFile(
+		path.join(fixture.agentDir, "mcp.json"),
+		JSON.stringify({ mcpServers: { github: {}, linear: { disabled: true } } }),
+	);
 });
 
 afterEach(async () => {
@@ -96,10 +99,13 @@ describe("observability surface against a real spawned pi", () => {
 		await start();
 
 		await command("profile status");
-		await messageContaining("profile: review (global)");
+		await messageContaining("mcp: enabled=[github]");
 		let seen = driver.messages.map((message) => JSON.stringify(message)).join("\n");
 		expect(seen).toContain(`review → ${path.join(fixture.agentDir, "skills", "review", "SKILL.md")}`);
-		expect(seen).toContain("disabled=[github]");
+		expect(seen).toContain("enabled=[github]");
+		expect(seen).toContain("disabled=[linear]");
+		expect(seen).toContain("github: unrestricted");
+		expect(seen).not.toContain("linear: unrestricted");
 
 		// RPC-consumable structured form (ticket 11): the custom message
 		// carries the report object in details.

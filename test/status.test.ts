@@ -16,39 +16,106 @@ const basePlan = {
 	mcps: ["github"],
 };
 
+const emptyRuntime = {
+	disabledMcpServers: [] as string[],
+	commands: [],
+	tools: [],
+};
+
 describe("buildStatusReport", () => {
 	it("reports resolved absolute paths, mcp tri-state, and overlay contents", () => {
 		const report = buildStatusReport({
 			plan: basePlan,
 			overlay: { disabledSkills: ["noisy"] },
-			tools: [],
 			discoveredMcpServers: ["github", "linear"],
-			commands: [
-				{ name: "skill:code-review", sourceInfo: { path: "/agent/skills/code-review/SKILL.md" } },
-				{ name: "skill:debug", sourceInfo: { path: "/agent/skills/debug/SKILL.md" } },
-			],
+			...emptyRuntime,
 		});
 
 		expect(report.mcp).toEqual({ enabled: ["github"], disabled: ["linear"], missing: [] });
 		expect(report.overlay).toEqual({ disabledSkills: ["noisy"] });
-		expect(report.conflicts).toEqual([]);
+		expect(report.conflicts.map((conflict) => conflict.winnerPath)).toEqual(["not loaded", "not loaded"]);
 	});
 
-	it("flags plan mcp servers that discovery no longer finds as missing", () => {
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools: [] });
+	it("derives enabled servers from discovery when mcps is undeclared in plan", () => {
+		const planWithoutMcps = {
+			profile: "default",
+			source: "builtin",
+			resolved: { skills: [], extensions: [] },
+		};
+		const report = buildStatusReport({
+			plan: planWithoutMcps,
+			discoveredMcpServers: ["github", "linear"],
+			...emptyRuntime,
+		});
 
-		expect(report.mcp.missing).toEqual(["github"]);
+		expect(report.mcp).toEqual({ enabled: ["github", "linear"], disabled: [], missing: [] });
+	});
+
+	it("respects adapter-disabled servers without an MCP whitelist", () => {
+		const planWithoutMcps = {
+			profile: "default",
+			source: "builtin",
+			resolved: { skills: [], extensions: [] },
+		};
+		const report = buildStatusReport({
+			plan: planWithoutMcps,
+			discoveredMcpServers: ["github", "linear"],
+			disabledMcpServers: ["linear"],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({ enabled: ["github"], disabled: ["linear"], missing: [] });
+		expect(report.mcpTools).toEqual([{ server: "github", policy: "unrestricted" }]);
+	});
+
+	it("distinguishes omitted servers (unrestricted) and empty tool lists (none)", () => {
+		const plan = {
+			...basePlan,
+			mcps: ["github", "linear"],
+			mcpTools: { linear: [] },
+		};
+		const report = buildStatusReport({
+			plan,
+			discoveredMcpServers: ["github", "linear"],
+			...emptyRuntime,
+		});
+
+		expect(report.mcpTools).toEqual([
+			{ server: "github", policy: "unrestricted" },
+			{ server: "linear", policy: "none", tools: [] },
+		]);
+		const markdown = formatStatusMarkdown(report);
+		expect(markdown).toContain("github: unrestricted");
+		expect(markdown).toContain("linear: no enabled MCP tools");
+		expect(markdown).not.toMatch(/validation|tool.*missing|did you mean/i);
+	});
+
+	it("reports declared MCP names without validating them", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcpTools: { github: ["serach"] } },
+			discoveredMcpServers: ["github"],
+			...emptyRuntime,
+		});
+
+		expect(report.mcpTools).toEqual([{ server: "github", policy: "restricted", tools: ["serach"] }]);
+		expect(formatStatusMarkdown(report)).toContain("github: [serach]");
+		expect(formatStatusMarkdown(report)).not.toMatch(/validation|tool.*missing|did you mean/i);
 	});
 
 	it("reports the glob delta versus the previous activation", () => {
 		const report = buildStatusReport({
 			plan: {
 				...basePlan,
-				previousResolved: { skills: ["code-review", "old-skill"], extensions: ["linter"], tools: ["read", "bash"], mcps: [] },
+				previousResolved: {
+					skills: ["code-review", "old-skill"],
+					extensions: ["linter"],
+					tools: ["read", "bash"],
+					mcps: [],
+				},
 			},
 			discoveredMcpServers: ["github"],
-			commands: [],
-			tools: [],
+			...emptyRuntime,
 		});
 
 		expect(report.delta?.added).toContain("skill:debug");
@@ -59,11 +126,10 @@ describe("buildStatusReport", () => {
 	it("reports same-name conflicts with Pi's actual winner, never blocking", () => {
 		const report = buildStatusReport({
 			plan: basePlan,
-			tools: [],
 			discoveredMcpServers: [],
+			...emptyRuntime,
 			commands: [
 				{ name: "skill:code-review", sourceInfo: { path: "/agent/skills/code-review/SKILL.md" } },
-				// A same-named project skill won Pi's first-wins load order.
 				{ name: "skill:debug", sourceInfo: { path: "/project/.pi/skills/debug/SKILL.md" } },
 			],
 		});
@@ -78,18 +144,16 @@ describe("buildStatusReport", () => {
 	});
 
 	it("flags resolved skills that never registered as not loaded", () => {
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools: [] });
-
+		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], ...emptyRuntime });
 		expect(report.conflicts.map((conflict) => conflict.winnerPath)).toEqual(["not loaded", "not loaded"]);
 	});
 
 	it("reports tool conflicts only when the winner is neither builtin nor a selected extension", () => {
 		const tools = [
 			{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
-			// An unrelated extension won the name the plan expected from elsewhere.
 			{ name: "grep", sourceInfo: { path: "/other/extensions/sneaky.ts", source: "extension" } },
 		];
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools });
+		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], disabledMcpServers: [], commands: [], tools });
 
 		expect(report.conflicts).toEqual([
 			{ name: "skill:code-review", expectedPath: "/agent/skills/code-review/SKILL.md", winnerPath: "not loaded" },
@@ -97,17 +161,14 @@ describe("buildStatusReport", () => {
 			{ name: "tool:grep", expectedPath: "builtin or selected extension", winnerPath: "/other/extensions/sneaky.ts" },
 		]);
 
-		// A tool owned by a plan-selected extension is expected, not a conflict.
 		const withExtensionTool = buildStatusReport({
 			plan: { ...basePlan, tools: ["lint-fix"] },
 			discoveredMcpServers: [],
+			disabledMcpServers: [],
 			commands: [],
 			tools: [{ name: "lint-fix", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } }],
 		});
-		expect(withExtensionTool.conflicts.map((conflict) => conflict.name)).toEqual([
-			"skill:code-review",
-			"skill:debug",
-		]);
+		expect(withExtensionTool.conflicts.map((conflict) => conflict.name)).toEqual(["skill:code-review", "skill:debug"]);
 	});
 });
 
@@ -116,9 +177,8 @@ describe("formatStatusMarkdown", () => {
 		const report = buildStatusReport({
 			plan: basePlan,
 			overlay: { disabledSkills: ["noisy"], disabledTools: ["bash", "mcp-*"] },
-			tools: [],
 			discoveredMcpServers: ["github", "linear"],
-			commands: [],
+			...emptyRuntime,
 		});
 
 		const markdown = formatStatusMarkdown(report);

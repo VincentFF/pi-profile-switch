@@ -122,16 +122,38 @@ describe("discoverAdapterServerNames", () => {
 		expect(result.baseConfig?.settings).toEqual({ custom: true });
 	});
 
-	it("marks servers defined by the trusted project as project servers", async () => {
-		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { "agent-a": {} } }));
+	it("matches adapter server discovery for own toString and unrepresentable __proto__ keys", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			'{"mcpServers":{"toString":{"url":"https://x"},"__proto__":{"url":"https://proto"}}}',
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir);
+
+		expect(Object.keys(result.servers)).toEqual(["toString"]);
+		expect(Object.hasOwn(result.servers, "toString")).toBe(true);
+		expect(result.servers.toString).toEqual({ url: "https://x" });
+		expect(result.serverOwners.toString).toBe("user");
+		expect(Object.hasOwn(result.servers, "__proto__")).toBe(false);
+		expect(Object.hasOwn(result.serverOwners, "__proto__")).toBe(false);
+	});
+
+	it("marks servers defined by the trusted project as project servers and records serverOwners", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { "agent-a": {}, "shadowed-b": { url: "http://user" } } }));
 		await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { "proj-shared": {} } }));
 		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
-		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { "proj-owned": {} } }));
+		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { "proj-owned": {}, "shadowed-b": { url: "http://proj" } } }));
 
 		const result = await loadMergedMcpServers(fixture.agentDir, fixture.cwd);
 
-		expect([...result.projectServers].sort()).toEqual(["proj-owned", "proj-shared"]);
+		expect([...result.projectServers].sort()).toEqual(["proj-owned", "proj-shared", "shadowed-b"]);
 		expect(result.projectServers.has("agent-a")).toBe(false);
+		expect(result.serverOwners).toEqual({
+			"agent-a": "user",
+			"shadowed-b": "project",
+			"proj-shared": "project",
+			"proj-owned": "project",
+		});
 	});
 
 	it("fails loudly on a malformed config instead of reading it as empty", async () => {

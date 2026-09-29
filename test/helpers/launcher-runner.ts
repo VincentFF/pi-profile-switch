@@ -10,12 +10,14 @@ export const LAUNCHER_BIN = path.resolve("bin/pi-profile.ts");
  *  inside the fixture (the launcher resolves the real agent dir through pi's
  *  own override), and offline mode keeps model calls from leaking. */
 export function launcherEnv(fixture: PiFixture): NodeJS.ProcessEnv {
-	return {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: fixture.root,
 		PI_CODING_AGENT_DIR: fixture.agentDir,
 		PI_OFFLINE: "1",
 	};
+	delete env.MCP_DIRECT_TOOLS;
+	return env;
 }
 
 export interface LauncherRun {

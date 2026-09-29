@@ -159,6 +159,91 @@ describe("ProfileCatalog (global catalog)", () => {
 		expect(resolved?.definition.defaultModel).toBeUndefined();
 		expect(resolved?.definition.defaultThinkingLevel).toBeUndefined();
 		expect(resolved?.definition.instructions).toBeUndefined();
+		expect(resolved?.definition.mcp_tools).toBeUndefined();
+	});
+
+	describe("mcp_tools parsing and validation", () => {
+		it("retains an empty per-server list distinct from an absent field or absent server", async () => {
+			await writeGlobalProfile("restricted", { mcp_tools: { github: [] } });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir);
+			const resolved = catalog.resolve("restricted");
+
+			expect(resolved?.definition.mcp_tools).toEqual({ github: [] });
+		});
+
+		it("distinguishes omitted, empty object, and populated per-server lists", async () => {
+			await writeGlobalProfile("omitted", { label: "Omitted" });
+			await writeGlobalProfile("empty-obj", { mcp_tools: {} });
+			await writeGlobalProfile("populated", { mcp_tools: { github: ["search", "github_search", "create_issue"], linear: [] } });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir);
+
+			expect(catalog.resolve("omitted")?.definition.mcp_tools).toBeUndefined();
+			expect(catalog.resolve("empty-obj")?.definition.mcp_tools).toEqual({});
+			expect(catalog.resolve("populated")?.definition.mcp_tools).toEqual({
+				github: ["search", "github_search", "create_issue"],
+				linear: [],
+			});
+		});
+
+		it("retains JSON server keys that shadow object prototype properties as own data", async () => {
+			await writeGlobalProfile(
+				"special-server-keys",
+				'{"mcp_tools":{"toString":["search"],"__proto__":["delete"]}}',
+			);
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir);
+			const mcpTools = catalog.resolve("special-server-keys")?.definition.mcp_tools;
+
+			expect(mcpTools).toBeDefined();
+			expect(Object.keys(mcpTools!).sort()).toEqual(["__proto__", "toString"]);
+			expect(Object.hasOwn(mcpTools!, "toString")).toBe(true);
+			expect(Object.hasOwn(mcpTools!, "__proto__")).toBe(true);
+			expect(mcpTools?.toString).toEqual(["search"]);
+			expect(mcpTools?.["__proto__"]).toEqual(["delete"]);
+		});
+
+		it("fails loudly when mcp_tools is not an object with path, name, and field", async () => {
+			const filePath = await writeGlobalProfile("bad-type", { mcp_tools: "github" });
+
+			const errorPromise = ProfileCatalog.load(fixture.agentDir);
+			await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			await expect(errorPromise).rejects.toThrow(/bad-type/);
+			await expect(errorPromise).rejects.toThrow(/mcp_tools/);
+		});
+
+		it("fails loudly when an mcp_tools server value is not an array of strings", async () => {
+			const filePath = await writeGlobalProfile("bad-server-val", { mcp_tools: { github: "search" } });
+
+			const errorPromise = ProfileCatalog.load(fixture.agentDir);
+			await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			await expect(errorPromise).rejects.toThrow(/bad-server-val/);
+			await expect(errorPromise).rejects.toThrow(/mcp_tools/);
+
+			await writeGlobalProfile("bad-item", { mcp_tools: { github: [123] } });
+			await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/mcp_tools/);
+		});
+
+		it("rejects glob patterns in mcp_tools tool entries with an actionable error", async () => {
+			const filePath = await writeGlobalProfile("glob-tool", { mcp_tools: { github: ["search*"] } });
+
+			const errorPromise = ProfileCatalog.load(fixture.agentDir);
+			await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			await expect(errorPromise).rejects.toThrow(/glob-tool/);
+			await expect(errorPromise).rejects.toThrow(/mcp_tools/);
+			await expect(errorPromise).rejects.toThrow(/literal adapter tool selectors are required/i);
+		});
+
+		it("rejects glob patterns in mcp_tools server keys with an actionable error", async () => {
+			const filePath = await writeGlobalProfile("glob-server", { mcp_tools: { "git*": ["search"] } });
+
+			const errorPromise = ProfileCatalog.load(fixture.agentDir);
+			await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			await expect(errorPromise).rejects.toThrow(/glob-server/);
+			await expect(errorPromise).rejects.toThrow(/mcp_tools/);
+			await expect(errorPromise).rejects.toThrow(/literal MCP server names are required/i);
+		});
 	});
 
 	describe("project catalog (trusted projects only)", () => {

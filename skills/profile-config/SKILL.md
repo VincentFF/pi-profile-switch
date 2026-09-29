@@ -54,8 +54,9 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
 | `description` | `string` | Short description of the profile (e.g. `"Read-only review profile"`). |
 | `skills` | `string[]` | Skill names or globs to reference. When undeclared, available skills are not narrowed. |
 | `extensions` | `string[]` | Extension identifiers or globs to reference. When undeclared, available extensions are not narrowed. |
-| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, there is no dependency on `pi-mcp-adapter`. |
-| `tools` | `string[]` | Whitelisted tool names or globs. When undeclared, tools are not narrowed and Pi's native tool set is kept. |
+| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, `mcps` itself adds no adapter requirement; a nonempty `mcp_tools` still requires `pi-mcp-adapter`. |
+| `tools` | `string[]` | Whitelisted non-MCP tool names or globs (built-in and extension tools only). Live MCP tools remain usable independently of `tools`. When undeclared, tools are not narrowed and Pi's native tool set is kept. |
+| `mcp_tools` | `Record<string, string[]>` | Per-server MCP tool selection: literal server names mapped to literal adapter selectors (original or prefixed names; both forms may select the same tool). Globs are rejected. An omitted server allows all tools; a nonempty array allows only matches; an empty array (`[]`) denies all tools while keeping the server enabled. An empty object (`{}`) behaves like omission. Nonempty declarations require `pi-mcp-adapter`, even when `mcps` is omitted. |
 | `defaultProvider` | `string` | Default model provider (e.g. `"anthropic"`, `"openai"`). Effective only when declared together with `defaultModel`. |
 | `defaultModel` | `string` | Default model name (e.g. `"claude-sonnet-4-5"`). Effective only when declared together with `defaultProvider`. |
 | `defaultThinkingLevel` | `string` | Default thinking level; allowed values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Effective only when the model declaration holds. |
@@ -105,12 +106,20 @@ When helping the user configure a profile, check or consult the following locati
 3. **MCP servers**:
    - Discovery locations: the standard configuration locations recognized by `pi-mcp-adapter` — on the global side `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`; trusted projects additionally have `<projectDir>/.mcp.json` and `<projectDir>/.pi/mcp.json`.
    - Reference identity: the server key names under the `mcpServers` object in those configuration files.
-   - A profile declaring `mcps` must also ensure the `pi-mcp-adapter` extension is available.
+   - A profile declaring nonempty `mcps` or nonempty `mcp_tools` must ensure the `pi-mcp-adapter` extension is available; omitting `mcps` does not remove the requirement for nonempty `mcp_tools`.
 4. **Tools**:
-   - Reference identity: tool names in Pi's live tool registry.
-   - Includes built-in tools (`read`, `write`, `edit`, `bash`, etc.), extension-contributed tools, and tools exposed by MCP servers (the proxy tool `mcp__<server>` and direct tools `<server>_<tool>`).
-   - Globs supported (e.g. `"mcp__*"`, `"github_*"`).
-5. **Narrowing boundary of project-level resources (important)**:
+   - Reference identity: non-MCP tool names in Pi's live tool registry.
+   - Includes built-in tools (`read`, `write`, `edit`, `bash`, etc.) and extension-contributed tools.
+   - MCP-owned tools are **not** controlled by `tools`; legacy references such as `"mcp__*"` or `"github_*"` in `tools` must be migrated to `mcp_tools`.
+5. **MCP Tools (`mcp_tools`)**:
+   - Reference identity: keys are literal configured MCP server names; values are literal pi-mcp-adapter selectors. Original and prefixed selectors can both match the same tool; globs are not accepted.
+   - Selectors are not checked against a live tool catalog. A selector matching no tool stays restrictive and produces no name diagnostic; verify selector forms with the adapter or MCP server before writing the profile.
+   - If the server already has nonempty `includeTools`, each requested selector must be identical to an existing literal or the existing list must include `"*"`; otherwise activation fails before runtime files are written. Existing `excludeTools` still applies.
+   - Omitting a server key preserves unrestricted access to that server's tools.
+   - An empty list (`[]`) denies all tools for that server while keeping the server enabled.
+   - A nonempty list (e.g. `["search", "get_issue"]`) allows only those tools across direct tools, gateway proxies, and scripts.
+   - Narrowing applies only to user-level MCP servers; project-level MCP servers cannot be narrowed by profiles.
+6. **Narrowing boundary of project-level resources (important)**:
    - A profile's resource selection (`skills`, `extensions`) **applies only to user-level resources** (the real agentDir and `~/.agents/skills`).
    - The visibility of project-level resources (project `.pi/skills`, project `.pi/extensions`, ancestor `.agents/skills`) is decided by Pi's project-trust determination: in a trusted project they are always visible under **any** profile; in an untrusted project they are never visible.
    - Therefore project-level resource visibility **does not narrow with profiles** — there is no need, and no guidance, to declare project-level resources in a profile.
