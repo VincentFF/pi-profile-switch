@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.0...v0.12.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* drop startup notifier claim exclusion ([#69](https://github.com/VincentFF/pi-profile-switch/issues/69)) ([c70db8b](https://github.com/VincentFF/pi-profile-switch/commit/c70db8bf3aa31bc90d945a0acdfcb2d9febc6bfa))
+
 ## [0.12.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.11.0...v0.12.0) (2026-09-29)
 
 
