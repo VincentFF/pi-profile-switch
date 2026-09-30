@@ -71,7 +71,7 @@ describe("shipped JSON schemas", () => {
 		expect(validate({ mcps: [] })).toBe(true);
 	});
 
-	it("the profiles schema accepts adapter selectors and prototype-looking server names as JSON data", async () => {
+	it("the profiles schema accepts literal tool names and prototype-looking server names as JSON data", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 		const profile = JSON.parse('{"mcp_tools":{"toString":["search"],"__proto__":["fixture_search"]}}');
 

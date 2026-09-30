@@ -430,37 +430,23 @@ export async function writeRuntimeFiles(
 		await symlink(path.join(options.agentDir, "trust.json"), trustLink);
 	}
 
-	// MCP Servers generation (Ticket 04 & Separate MCP tool filtering)
-	const mcpTarget = path.join(options.agentDir, "mcp.json");
+	// MCP Servers generation: the instance mcp.json is always a generated
+	// snapshot of the merged user-level configuration; it is never a symlink
+	// or a copy of the real agentDir file (ADR-0016).
 	const mcpInstancePath = path.join(runtimeDir, "mcp.json");
-	if (plan.instanceMcpConfig !== undefined) {
-		try { await rm(mcpInstancePath); } catch {}
-		await writeFile(mcpInstancePath, JSON.stringify(plan.instanceMcpConfig, null, 2));
-	} else if (
-		plan.mcps === undefined &&
-		(plan.mcpTools === undefined || Object.keys(plan.mcpTools).length === 0)
-	) {
-		// No restrictions, symlink
-		if (await exists(mcpTarget)) {
-			try { await rm(mcpInstancePath); } catch {}
-			await symlink(mcpTarget, mcpInstancePath);
-		}
-	} else {
-		// Filter MCP servers (fallback when instanceMcpConfig is not pre-populated)
-		try { await rm(mcpInstancePath); } catch {}
-		const discovery = await loadMergedMcpServers(
-			options.agentDir,
-			options.projectDir,
-			options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
-		);
-		const instanceMcpConfig = buildInstanceMcpConfig(
-			plan.profile,
-			discovery,
-			plan.mcps,
-			plan.mcpTools,
-		);
-		await writeFile(mcpInstancePath, JSON.stringify(instanceMcpConfig, null, 2));
-	}
+	try { await rm(mcpInstancePath); } catch {}
+	const discovery = await loadMergedMcpServers(
+		options.agentDir,
+		options.projectDir,
+		options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
+	);
+	const instanceMcpConfig = buildInstanceMcpConfig(
+		plan.profile,
+		discovery,
+		plan.mcps,
+		plan.mcpTools,
+	);
+	await writeFile(mcpInstancePath, JSON.stringify(instanceMcpConfig, null, 2));
 
 	// Instructions generation (Ticket 04)
 	const appendSystemPath = path.join(runtimeDir, "APPEND_SYSTEM.md");

@@ -3,11 +3,7 @@
   "description": "Full-powered implementation profile: every available field, pinned model",
   "skills": [
     "tdd",
-    "internal-*",
-    "mcp-scripting"
-  ],
-  "extensions": [
-    "pi-mcp-adapter"
+    "internal-*"
   ],
   "mcps": [
     "github",
@@ -24,7 +20,7 @@
   ],
   "mcp_tools": {
     "github": [
-      "github_search",
+      "search",
       "get_issue"
     ],
     "linear": []

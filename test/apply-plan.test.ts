@@ -7,12 +7,10 @@ import { applyLaunchPlan, type PlanApplicationSurface } from "../src/switching/a
 
 let root: string;
 let runtimeDir: string;
-let agentDir: string;
 
 beforeEach(async () => {
 	root = await mkdtemp(path.join(tmpdir(), "pi-profile-apply-"));
 	runtimeDir = path.join(root, "runtime");
-	agentDir = path.join(root, "agent");
 	await import("node:fs/promises").then((fs) => fs.mkdir(runtimeDir, { recursive: true }));
 });
 
@@ -69,7 +67,7 @@ describe("applyLaunchPlan", () => {
 		expect(surface.activeTools).toEqual(["read", "lint_check"]);
 	});
 
-	it("does not keep a sibling extension tool when a loose adapter entry is selected with tools empty", async () => {
+	it("does not keep a sibling extension tool when tools is empty", async () => {
 		await writePlan({
 			profile: "no-pi-tools",
 			source: "global",
@@ -78,16 +76,16 @@ describe("applyLaunchPlan", () => {
 			resolved: {
 				skills: [],
 				extensions: [
-					{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter.ts" },
+					{ id: "probe", entry: "/agent/extensions/probe.ts" },
 					{ id: "linter", entry: "/agent/extensions/linter.ts" },
 				],
 			},
 		});
 		const surface = fakeSurface({
 			liveTools: [
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
-				{ name: "adapter_helper_tool", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter-helper.ts", source: "extension" } },
+				{ name: "probe_tool", sourceInfo: { path: "/agent/extensions/probe.ts", source: "extension" } },
 			],
 		});
 
@@ -97,10 +95,7 @@ describe("applyLaunchPlan", () => {
 		expect(result.warnings).toEqual([]);
 	});
 
-	it("does not classify nested loose-adapter siblings or project ancestor paths as MCP-owned", async () => {
-		const adapterEntry = "/agent/extensions/pi-mcp-adapter/index.ts";
-		const nestedSibling = "/agent/extensions/pi-mcp-adapter/linter.ts";
-		const projectTool = "/workspace/pi-mcp-adapter/.pi/extensions/project-linter.ts";
+	it("does not classify sibling extension tools as MCP-owned", async () => {
 		await writePlan({
 			profile: "no-pi-tools",
 			source: "global",
@@ -109,87 +104,22 @@ describe("applyLaunchPlan", () => {
 			resolved: {
 				skills: [],
 				extensions: [
-					{ id: "pi-mcp-adapter", entry: adapterEntry, origin: "local" },
-					{ id: "pi-mcp-adapter/linter", entry: nestedSibling, origin: "local" },
-					{ id: "project-linter", entry: projectTool, origin: "local" },
+					{ id: "mcp-helper", entry: "/agent/extensions/mcp-helper.ts" },
+					{ id: "linter", entry: "/agent/extensions/linter.ts" },
 				],
 			},
 		});
 		const surface = fakeSurface({
 			liveTools: [
-				{ name: "mcp_allowed", sourceInfo: { path: adapterEntry, source: "extension" } },
-				{ name: "lint_check", sourceInfo: { path: nestedSibling, source: "extension" } },
-				{ name: "project_check", sourceInfo: { path: projectTool, source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+				{ name: "helper_tool", sourceInfo: { path: "/agent/extensions/mcp-helper.ts", source: "extension" } },
+				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
 			],
 		});
 
 		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
 
-		expect(surface.activeTools).toEqual(["mcp_allowed"]);
-	});
-
-	it("retains tools from a verified adapter npm package and expands sibling extension globs", async () => {
-		const packageRoot = path.join(agentDir, "npm", "node_modules", "pi-mcp-adapter");
-		const adapterEntry = path.join(packageRoot, "index.ts");
-		const helperEntry = path.join(packageRoot, "src", "tools.ts");
-		await mkdir(path.dirname(helperEntry), { recursive: true });
-		await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "pi-mcp-adapter" }));
-		await writeFile(adapterEntry, "export default function () {}\\n");
-		await writeFile(helperEntry, "export const registerTools = true;\\n");
-		await writePlan({
-			profile: "lint",
-			source: "global",
-			toolReferences: ["lint_*"],
-			resolved: {
-				skills: [],
-				extensions: [
-					{ id: "pi-mcp-adapter", entry: adapterEntry, origin: "package" },
-					{ id: "linter", entry: "/agent/extensions/linter.ts", origin: "local" },
-				],
-			},
-		});
-		const surface = fakeSurface({
-			liveTools: [
-				{ name: "mcp", sourceInfo: { path: adapterEntry, source: "extension" } },
-				{ name: "mcp_helper", sourceInfo: { path: helperEntry, source: "extension" } },
-				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
-			],
-		});
-
-		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
-
-		expect(surface.activeTools).toEqual(["lint_check", "mcp", "mcp_helper"]);
-		expect(result.warnings).toEqual([]);
-	});
-
-	it("reapplies tool overlays without treating loose adapter siblings as MCP", async () => {
-		await writePlan({
-			profile: "lint",
-			source: "global",
-			toolReferences: ["lint_check"],
-			disabledTools: ["lint_check"],
-			resolved: {
-				skills: [],
-				extensions: [
-					{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter.ts" },
-					{ id: "linter", entry: "/agent/extensions/linter.ts" },
-				],
-			},
-		});
-		const surface = fakeSurface({
-			liveTools: [
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter.ts", source: "extension" } },
-				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
-			],
-		});
-
-		const first = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "startup", surface });
 		expect(surface.activeTools).toEqual(["mcp"]);
-		expect(first.warnings).toEqual([]);
-		surface.activeTools = [];
-		const afterReload = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
-		expect(surface.activeTools).toEqual(["mcp"]);
-		expect(afterReload.warnings).toEqual([]);
 	});
 
 	it("retains MCP-owned tools when tools narrows Pi tools to read-only", async () => {
@@ -200,21 +130,21 @@ describe("applyLaunchPlan", () => {
 			toolReferences: ["read"],
 			resolved: {
 				skills: [],
-				extensions: [{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter/index.ts" }],
+				extensions: [],
 			},
 		});
 		const surface = fakeSurface({
 			liveTools: [
 				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
 				{ name: "bash", sourceInfo: { path: "<builtin:bash>", source: "builtin" } },
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
-				{ name: "search", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+				{ name: "search", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			],
 		});
 
 		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
 
-		// Builtin 'read' is selected by tools, 'bash' is excluded, but MCP gateway 'mcp' and 'search' are retained!
+		// Builtin 'read' is selected by tools, 'bash' is excluded, but MCP-owned tools are retained.
 		expect(surface.activeTools).toEqual(["read", "mcp", "search"]);
 	});
 
@@ -226,14 +156,14 @@ describe("applyLaunchPlan", () => {
 			toolReferences: ["read", "mcp__*", "mcp_direct"],
 			resolved: {
 				skills: [],
-				extensions: [{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter/index.ts" }],
+				extensions: [],
 			},
 		});
 		const surface = fakeSurface({
 			liveTools: [
 				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
-				{ name: "mcp__search", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
-				{ name: "mcp_direct", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp__search", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+				{ name: "mcp_direct", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			],
 		});
 
@@ -259,19 +189,10 @@ describe("applyLaunchPlan", () => {
 		expect(resultNonMcp.warnings).toEqual([]);
 
 		// When MCP wins the name, tools does NOT select it as a Pi tool and warns with migration guidance
-		await writePlan({
-			profile: "test",
-			source: "global",
-			tools: ["search"],
-			toolReferences: ["search"],
-			resolved: {
-				skills: [],
-				extensions: [{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter/index.ts" }],
-			},
-		});
+		await writePlan({ profile: "test", source: "global", tools: ["search"], toolReferences: ["search"] });
 		const surfaceMcp = fakeSurface({
 			liveTools: [
-				{ name: "search", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "search", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			],
 		});
 		const resultMcp = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface: surfaceMcp });
@@ -287,13 +208,13 @@ describe("applyLaunchPlan", () => {
 			toolReferences: [],
 			resolved: {
 				skills: [],
-				extensions: [{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter/index.ts" }],
+				extensions: [],
 			},
 		});
 		const surface = fakeSurface({
 			liveTools: [
 				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			],
 		});
 
@@ -311,7 +232,7 @@ describe("applyLaunchPlan", () => {
 		const surface = fakeSurface({
 			liveTools: [
 				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			],
 		});
 
@@ -397,6 +318,8 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("persists the selection to the global state file on reload", async () => {
+		const agentDir = path.join(root, "agent");
+		await mkdir(agentDir, { recursive: true });
 		await writePlan({ profile: "impl", source: "global", agentDir, persistSelection: true });
 		const surface = fakeSurface();
 
@@ -407,6 +330,8 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("persists project-sourced profiles to the project state file", async () => {
+		const agentDir = path.join(root, "agent");
+		await mkdir(agentDir, { recursive: true });
 		await writePlan({ profile: "impl", source: "project", agentDir, persistSelection: true });
 		const surface = fakeSurface();
 
@@ -417,6 +342,8 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("never writes state for launch-transient selections or at startup", async () => {
+		const agentDir = path.join(root, "agent");
+		await mkdir(agentDir, { recursive: true });
 		await writePlan({ profile: "impl", source: "global", agentDir });
 		const surface = fakeSurface();
 		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
@@ -429,6 +356,8 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("returns a one-shot change summary and clears the marker", async () => {
+		const agentDir = path.join(root, "agent");
+		await mkdir(agentDir, { recursive: true });
 		await writePlan({ profile: "impl", source: "global", agentDir, switchedFrom: "review", tools: ["read"] });
 		const surface = fakeSurface();
 

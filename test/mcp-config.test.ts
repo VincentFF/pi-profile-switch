@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { discoverAdapterServerNames, loadMergedMcpServers, McpConfigError } from "../src/mcp-config.ts";
+import { loadMergedMcpServers, McpConfigError } from "../src/mcp-config.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -19,9 +19,9 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-describe("discoverAdapterServerNames", () => {
+describe("loadMergedMcpServers", () => {
 	it("returns no names when no config exists", async () => {
-		expect(await discoverAdapterServerNames(fixture.agentDir)).toEqual([]);
+		expect(Object.keys((await loadMergedMcpServers(fixture.agentDir)).servers)).toEqual([]);
 	});
 
 	it("reads server names from the global agentDir mcp.json", async () => {
@@ -30,7 +30,10 @@ describe("discoverAdapterServerNames", () => {
 			JSON.stringify({ mcpServers: { github: { url: "https://x" }, linear: { command: "mcp-linear" } } }),
 		);
 
-		expect(await discoverAdapterServerNames(fixture.agentDir)).toEqual(["github", "linear"]);
+		expect(Object.keys((await loadMergedMcpServers(fixture.agentDir)).servers).sort()).toEqual([
+			"github",
+			"linear",
+		]);
 	});
 
 	it("ignores non-server keys and never exposes connection config", async () => {
@@ -39,10 +42,10 @@ describe("discoverAdapterServerNames", () => {
 			JSON.stringify({ mcpServers: { github: { url: "https://x", headers: { auth: "secret" } } }, settings: {} }),
 		);
 
-		expect(await discoverAdapterServerNames(fixture.agentDir)).toEqual(["github"]);
+		expect(Object.keys((await loadMergedMcpServers(fixture.agentDir)).servers)).toEqual(["github"]);
 	});
 
-	it("merges the trusted project's .pi/mcp.json and .mcp.json names", async () => {
+	it("merges the trusted project's .pi/mcp.json names only (not project-root .mcp.json)", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
 		await writeFile(
 			path.join(fixture.cwd, ".pi", "mcp.json"),
@@ -53,11 +56,9 @@ describe("discoverAdapterServerNames", () => {
 			JSON.stringify({ mcpServers: { "proj-shared": {} } }),
 		);
 
-		expect(await discoverAdapterServerNames(fixture.agentDir, fixture.cwd)).toEqual([
-			"github",
-			"proj-server",
-			"proj-shared",
-		]);
+		const result = await loadMergedMcpServers(fixture.agentDir, fixture.cwd);
+		expect(Object.keys(result.servers).sort()).toEqual(["github", "proj-server"]);
+		expect([...result.projectServers].sort()).toEqual(["github", "proj-server"]);
 	});
 
 	it("discovers servers from ~/.config/mcp/mcp.json, ~/.agents/mcp.json, and nested", async () => {
@@ -76,7 +77,7 @@ describe("discoverAdapterServerNames", () => {
 			JSON.stringify({ mcpServers: { "agents-nested": { url: "https://z" } } }),
 		);
 
-		expect(await discoverAdapterServerNames(fixture.agentDir)).toEqual([
+		expect(Object.keys((await loadMergedMcpServers(fixture.agentDir)).servers).sort()).toEqual([
 			"agents-global",
 			"agents-nested",
 			"generic-global",
@@ -87,10 +88,10 @@ describe("discoverAdapterServerNames", () => {
 		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid json");
 
-		await expect(discoverAdapterServerNames(fixture.agentDir)).rejects.toThrow(McpConfigError);
+		await expect(loadMergedMcpServers(fixture.agentDir)).rejects.toThrow(McpConfigError);
 	});
 
-	it("loadMergedMcpServers merges server definitions across sources with correct precedence", async () => {
+	it("merges server definitions across sources with correct precedence", async () => {
 		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 		await writeFile(
 			path.join(fixture.root, ".agents", "mcp.json"),
@@ -119,10 +120,32 @@ describe("discoverAdapterServerNames", () => {
 		expect(result.sharedServers.has("shared-a")).toBe(true);
 		expect(result.sharedServers.has("shared-b")).toBe(true);
 		expect(result.sharedServers.has("local-c")).toBe(false);
+		// baseConfig is the merged user-level config object.
+		expect((result.baseConfig?.mcpServers as Record<string, unknown>)?.["shared-a"]).toEqual({
+			url: "https://a-agentdir",
+		});
 		expect(result.baseConfig?.settings).toEqual({ custom: true });
 	});
 
-	it("matches adapter server discovery for own toString and unrepresentable __proto__ keys", async () => {
+	it("baseConfig merges user-level sources with later top-level keys overriding earlier ones", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(
+			path.join(fixture.root, ".agents", "mcp.json"),
+			JSON.stringify({ settings: { fromAgents: true }, extra: "agents" }),
+		);
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ settings: { fromAgentDir: true }, extra: "agentdir" }),
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir);
+		expect(result.baseConfig).toEqual({
+			settings: { fromAgentDir: true },
+			extra: "agentdir",
+		});
+	});
+
+	it("matches toString and excludes unrepresentable __proto__ keys", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			'{"mcpServers":{"toString":{"url":"https://x"},"__proto__":{"url":"https://proto"}}}',
@@ -139,26 +162,42 @@ describe("discoverAdapterServerNames", () => {
 	});
 
 	it("marks servers defined by the trusted project as project servers and records serverOwners", async () => {
-		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { "agent-a": {}, "shadowed-b": { url: "http://user" } } }));
-		await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { "proj-shared": {} } }));
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { "agent-a": {}, "shadowed-b": { url: "http://user" } } }),
+		);
 		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
-		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { "proj-owned": {}, "shadowed-b": { url: "http://proj" } } }));
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { "proj-owned": {}, "shadowed-b": { url: "http://proj" } } }),
+		);
 
 		const result = await loadMergedMcpServers(fixture.agentDir, fixture.cwd);
 
-		expect([...result.projectServers].sort()).toEqual(["proj-owned", "proj-shared", "shadowed-b"]);
+		expect([...result.projectServers].sort()).toEqual(["proj-owned", "shadowed-b"]);
 		expect(result.projectServers.has("agent-a")).toBe(false);
 		expect(result.serverOwners).toEqual({
 			"agent-a": "user",
 			"shadowed-b": "project",
-			"proj-shared": "project",
 			"proj-owned": "project",
 		});
+	});
+
+	it("does not read an untrusted project's .pi/mcp.json", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { "proj-owned": {} } }),
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir);
+		expect(Object.hasOwn(result.servers, "proj-owned")).toBe(false);
 	});
 
 	it("fails loudly on a malformed config instead of reading it as empty", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: ["not-an-object"] }));
 
-		await expect(discoverAdapterServerNames(fixture.agentDir)).rejects.toThrow(McpConfigError);
+		await expect(loadMergedMcpServers(fixture.agentDir)).rejects.toThrow(McpConfigError);
 	});
 });

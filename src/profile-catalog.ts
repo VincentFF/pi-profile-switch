@@ -44,7 +44,7 @@ export interface ProfileDefinition {
 	extensions?: string[];
 	mcps?: string[];
 	tools?: string[];
-	/** Literal adapter selectors (original or prefixed names); globs are rejected. */
+	/** Literal MCP tool names per server; globs are rejected. */
 	mcp_tools?: Record<string, string[]>;
 	defaultProvider?: string;
 	defaultModel?: string;
@@ -125,7 +125,7 @@ function readMcpTools(
 		for (const tool of tools) {
 			if (isGlobPattern(tool)) {
 				throw new CatalogError(
-					`${prefix}profile "${profileName}": "mcp_tools" entry "${tool}" in server "${server}" is a glob pattern; literal adapter tool selectors are required`,
+					`${prefix}profile "${profileName}": "mcp_tools" entry "${tool}" in server "${server}" is a glob pattern; literal MCP tool names are required`,
 				);
 			}
 		}

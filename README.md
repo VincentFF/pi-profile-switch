@@ -51,7 +51,7 @@ pi-profile-switch seeds the global `profiles/` directory with a starter **`ask`*
 }
 ```
 
-One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill, the mcp-scripting skill (shipped by pi-mcp-adapter), and your internal skills; wires up two MCP servers; allows the built-in tools; restricts GitHub MCP tools while denying Linear tools; and pins the model and standing instructions:
+One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill and your internal skills; wires up two MCP servers; allows the built-in tools; restricts GitHub MCP tools while denying Linear tools; and pins the model and standing instructions:
 
 ```json
 {
@@ -59,11 +59,7 @@ One profile can use every field at once. This example `impl` profile (`impl.json
   "description": "Full-powered implementation profile: every available field, pinned model",
   "skills": [
     "tdd",
-    "internal-*",
-    "mcp-scripting"
-  ],
-  "extensions": [
-    "pi-mcp-adapter"
+    "internal-*"
   ],
   "mcps": [
     "github",
@@ -95,15 +91,17 @@ One profile can use every field at once. This example `impl` profile (`impl.json
 How fields resolve:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
-- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-provided tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`.
-- `mcp_tools` defines per-server MCP tool filtering: keys are literal configured server names and values are literal pi-mcp-adapter selectors (original or prefixed names; either form can select the same tool). Globs are not accepted. An omitted server keeps native access to all its tools; a nonempty array allows only matched tools; an empty array (`[]`) denies all tools for that server while leaving it enabled. Unmatched selectors remain restrictive and are not diagnosed, so confirm selectors with the adapter/server before writing them.
-- A nonempty `mcp_tools` requires `pi-mcp-adapter` even when `mcps` is omitted. Existing adapter `includeTools` filters are combined only when the profile uses identical selectors or the existing filter is `"*"`; otherwise activation fails before writing runtime files. Existing `excludeTools` restrictions continue to apply.
-- **Migration note:** Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
-- `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
-  - **Omitting `mcps`** leaves all discovered user-level servers at their normal adapter-defined availability.
-  - **`mcps: []` with `pi-mcp-adapter` selected** disables every discovered user-level server (shared locations are explicitly marked `disabled`; agentDir-only servers are omitted from the generated instance `mcp.json`).
-  - **`mcps: []` without `pi-mcp-adapter`** is inert: it does not read MCP configuration, change server availability, or fail because of a malformed config file.
+- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`.
+- `mcp_tools` defines per-server MCP tool filtering: keys are literal configured server names and values are literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are not accepted. An omitted server keeps native access to all its tools; a nonempty array allows only matched tools; an empty array (`[]`) denies all tools for that server while leaving it enabled. Unmatched selectors remain restrictive and are not diagnosed, so confirm selectors with the server before writing them.
+- **Migration notes:**
+  - Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
+  - Prefixed selectors (e.g. `<server>_<tool>` forms used by previous MCP integrations) no longer apply; replace them with the literal tool names from Pi's built-in MCP extension.
+- `mcps` references servers from your Pi user-level MCP configuration (`~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`); connection details stay in those files.
+  - **Omitting `mcps`** leaves all discovered user-level servers at their normal availability.
+  - **`mcps: []`** disables every discovered user-level server (shared locations are explicitly marked `enabled: false` in the generated instance `mcp.json`; agentDir-only servers are omitted). Project-level servers are never narrowed.
   - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
+  - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
+- The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
 - Any field you omit keeps plain Pi behavior.
 
 The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.

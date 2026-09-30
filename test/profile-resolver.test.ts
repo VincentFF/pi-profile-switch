@@ -125,19 +125,19 @@ describe("resolveProfile", () => {
 		expect(plan.tools).toEqual(["read", "search_issues", "grep"]);
 	});
 
-	it("keeps loose adapter and sibling extension entries distinct for runtime attribution", async () => {
-		const extensions = await extensionsWith(["pi-mcp-adapter", "linter"]);
-		const adapterEntry = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
+	it("keeps loose extension entries distinct for runtime attribution", async () => {
+		const extensions = await extensionsWith(["probe", "linter"]);
+		const probeEntry = path.join(fixture.agentDir, "extensions", "probe.ts");
 		const linterEntry = path.join(fixture.agentDir, "extensions", "linter.ts");
 
 		const plan = await resolveProfile({
-			profile: profile("lint", { extensions: ["pi-mcp-adapter", "linter"], tools: ["lint_*"] }),
+			profile: profile("lint", { extensions: ["probe", "linter"], tools: ["lint_*"] }),
 			skills: [],
 			extensions,
 		});
 
 		expect(plan.extensions).toEqual([
-			{ id: "pi-mcp-adapter", entry: adapterEntry },
+			{ id: "probe", entry: probeEntry },
 			{ id: "linter", entry: linterEntry },
 		]);
 		expect(plan.toolReferences).toEqual(["lint_*"]);
@@ -198,7 +198,7 @@ describe("resolveProfile", () => {
 		).rejects.toThrow(/thinkingLevel/);
 	});
 
-	it("expands mcp references against the discovered adapter server names", async () => {
+	it("expands mcp references against the discovered server names", async () => {
 		const plan = await resolveProfile({
 			profile: profile("review", { mcps: ["github", "internal-*"] }),
 			skills: [],
@@ -209,7 +209,7 @@ describe("resolveProfile", () => {
 		expect(plan.mcps).toEqual(["github", "internal-docs", "internal-ci"]);
 	});
 
-	it("fails activation on a literal mcp reference the adapter never discovered", async () => {
+	it("fails activation on a literal mcp reference the snapshot never discovered", async () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", { mcps: ["github-ro"] }),
@@ -220,14 +220,96 @@ describe("resolveProfile", () => {
 		).rejects.toThrow(/unknown MCP server: "github-ro"/);
 	});
 
-	it("fails activation when mcp is declared without adapter server discovery", async () => {
+	it("fails activation when mcp is declared without server discovery", async () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", { mcps: ["github"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 			}),
-		).rejects.toThrow(/no adapter server discovery/);
+		).rejects.toThrow(/no MCP server discovery is available/);
+	});
+
+	it("fails activation when an explicitly selected server uses the legacy SSE transport", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: { github: { type: "sse", url: "http://localhost:3000/sse" } },
+			sharedServers: new Set(),
+			projectServers: new Set(),
+			serverOwners: { github: "user" },
+		};
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcps: ["github"] }),
+				skills: [],
+				extensions: await extensionsWith(),
+				discoveredMcpServers: ["github"],
+				mcpDiscovery,
+			}),
+		).rejects.toThrow(/selected MCP server "github" uses the legacy SSE transport/);
+	});
+
+	it("passes an unselected SSE server through without failing activation", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: { github: { type: "sse", url: "http://localhost:3000/sse" } },
+			sharedServers: new Set(),
+			projectServers: new Set(),
+			serverOwners: { github: "user" },
+		};
+
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review"] }),
+			skills: [skill("code-review")],
+			extensions: await extensionsWith(),
+			discoveredMcpServers: ["github"],
+			mcpDiscovery,
+		});
+
+		expect(plan.mcps).toBeUndefined();
+		expect(plan.instanceMcpConfig).toBeUndefined();
+	});
+
+	it("fails activation when mcps names a project-owned server", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: { github: { url: "https://gh" }, "proj-srv": { url: "https://proj" } },
+			sharedServers: new Set(["github"]),
+			projectServers: new Set(["proj-srv"]),
+			serverOwners: { github: "user", "proj-srv": "project" },
+		};
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcps: ["github", "proj-srv"] }),
+				skills: [],
+				extensions: await extensionsWith(),
+				mcpDiscovery,
+			}),
+		).rejects.toThrow(/cannot select project-level MCP server "proj-srv"/);
+	});
+
+	it("a non-empty mcps selection does not materialize project-owned servers", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: {
+				github: { url: "https://gh" },
+				linear: { command: "linear" },
+				"proj-srv": { url: "https://proj" },
+			},
+			sharedServers: new Set(["github", "linear"]),
+			projectServers: new Set(["proj-srv"]),
+			serverOwners: { github: "user", linear: "user", "proj-srv": "project" },
+		};
+
+		const plan = await resolveProfile({
+			profile: profile("review", { mcps: ["github"] }),
+			skills: [],
+			extensions: await extensionsWith(),
+			mcpDiscovery,
+		});
+
+		expect(plan.mcps).toEqual(["github"]);
+		expect(plan.instanceMcpConfig).toEqual({
+			mcpServers: { github: { url: "https://gh" }, linear: { enabled: false } },
+		});
 	});
 
 	it("carries declared instructions into the plan", async () => {
@@ -240,11 +322,7 @@ describe("resolveProfile", () => {
 		expect(plan.instructions).toBe("Be picky.");
 	});
 
-	describe("empty mcps selection (honor-empty-mcp-allowlist)", () => {
-		async function extensionsWithAdapter(): Promise<DiscoveredExtensions> {
-			return extensionsWith(["pi-mcp-adapter"]);
-		}
-
+	describe("empty mcps selection", () => {
 		function mockMcpDiscovery(options: {
 			servers?: Record<string, Record<string, unknown>>;
 			sharedServers?: string[];
@@ -267,44 +345,33 @@ describe("resolveProfile", () => {
 			return { servers, sharedServers, projectServers, serverOwners, baseConfig: options.baseConfig };
 		}
 
-		it("retains an empty mcps array as an empty selection when the adapter is active", async () => {
-			const plan = await resolveProfile({
-				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
-				skills: [],
-				extensions: await extensionsWithAdapter(),
-				mcpDiscovery: mockMcpDiscovery({ servers: { github: { url: "https://gh" } }, sharedServers: ["github"] }),
-			});
-
-			expect(plan.mcps).toEqual([]);
-			expect(plan.instanceMcpConfig).toEqual({ mcpServers: { github: { disabled: true } } });
-		});
-
-		it("leaves an empty mcps array inert when the adapter is not active", async () => {
+		it("retains an empty mcps array as an empty selection", async () => {
 			const plan = await resolveProfile({
 				profile: profile("review", { mcps: [] }),
 				skills: [],
 				extensions: await extensionsWith(),
+				mcpDiscovery: mockMcpDiscovery({ servers: { github: { url: "https://gh" } }, sharedServers: ["github"] }),
 			});
 
-			expect(plan.mcps).toBeUndefined();
-			expect(plan.instanceMcpConfig).toBeUndefined();
+			expect(plan.mcps).toEqual([]);
+			expect((plan.instanceMcpConfig?.mcpServers as Record<string, unknown>)?.github).toEqual({ enabled: false });
 		});
 
-		it("fails activation for empty mcps with active adapter but no MCP discovery", async () => {
+		it("fails activation for empty mcps without MCP discovery", async () => {
 			await expect(
 				resolveProfile({
-					profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+					profile: profile("review", { mcps: [] }),
 					skills: [],
-					extensions: await extensionsWithAdapter(),
+					extensions: await extensionsWith(),
 				}),
-			).rejects.toThrow(/no adapter server discovery/);
+			).rejects.toThrow(/empty MCP server selection but no MCP server discovery/);
 		});
 
-		it("retains an empty mcps selection when the adapter discovers no servers", async () => {
+		it("retains an empty mcps selection when discovery finds no servers", async () => {
 			const plan = await resolveProfile({
-				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+				profile: profile("review", { mcps: [] }),
 				skills: [],
-				extensions: await extensionsWithAdapter(),
+				extensions: await extensionsWith(),
 				mcpDiscovery: mockMcpDiscovery({ servers: {}, sharedServers: [], projectServers: [] }),
 			});
 
@@ -314,9 +381,9 @@ describe("resolveProfile", () => {
 
 		it("an empty mcps selection disables shared user servers but keeps project servers enabled", async () => {
 			const plan = await resolveProfile({
-				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+				profile: profile("review", { mcps: [] }),
 				skills: [],
-				extensions: await extensionsWithAdapter(),
+				extensions: await extensionsWith(),
 				mcpDiscovery: mockMcpDiscovery({
 					servers: { github: { url: "https://gh" }, "proj-srv": { url: "https://proj" } },
 					sharedServers: ["github"],
@@ -326,7 +393,7 @@ describe("resolveProfile", () => {
 
 			expect(plan.mcps).toEqual([]);
 			expect(plan.instanceMcpConfig).toEqual({
-				mcpServers: { github: { disabled: true } },
+				mcpServers: { github: { enabled: false } },
 			});
 		});
 	});
@@ -406,8 +473,6 @@ describe("overlay application (ticket 06)", () => {
 			overlay: { disabledTools: ["bash"] },
 		});
 
-		// No declared tools: the plan keeps no tools field; the entries are
-		// carried verbatim for session-start application.
 		expect(plan.tools).toBeUndefined();
 		expect(plan.toolReferences).toBeUndefined();
 		expect(plan.disabledTools).toEqual(["bash"]);
@@ -581,8 +646,6 @@ describe("discovery-first extension references (ADR-0007)", () => {
 			path.join(root, "package.json"),
 			JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
 		);
-		// Discovery reads Pi's configured packages, so the package has to be
-		// configured in the fixture's settings like a real installation.
 		await writeFile(
 			path.join(fixture.agentDir, "settings.json"),
 			JSON.stringify({ packages: [`npm:${name}`] }),
@@ -592,15 +655,15 @@ describe("discovery-first extension references (ADR-0007)", () => {
 	}
 
 	it("a profile references an installed package by name, no registration", async () => {
-		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
+		const { registry, entry } = await registryWithPackage("pi-web-access");
 
 		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
+			profile: profile("review", { extensions: ["pi-web-access"] }),
 			skills: [],
 			extensions: registry,
 		});
 
-		expect(plan.extensions).toEqual([{ id: "pi-mcp-adapter", entry }]);
+		expect(plan.extensions).toEqual([{ id: "pi-web-access", entry }]);
 	});
 
 	it("a profile references an extension by absolute path", async () => {
@@ -619,15 +682,15 @@ describe("discovery-first extension references (ADR-0007)", () => {
 	});
 
 	it("unknown extension literals fail with actionable guidance", async () => {
-		const { registry } = await registryWithPackage("pi-mcp-adapter");
+		const { registry } = await registryWithPackage("pi-web-access");
 
 		const error = await resolveProfile({
-			profile: profile("review", { extensions: ["mcp-adapter"] }),
+			profile: profile("review", { extensions: ["web-access"] }),
 			skills: [],
 			extensions: registry,
 		}).catch((caught: unknown) => caught);
 
-		expect((error as Error).message).toContain('did you mean "pi-mcp-adapter"');
+		expect((error as Error).message).toContain('did you mean "pi-web-access"');
 		expect((error as Error).message).not.toContain("resources.json");
 	});
 
@@ -644,21 +707,21 @@ describe("discovery-first extension references (ADR-0007)", () => {
 	});
 
 	it("overlays disable package-selected extensions by their resolved ID", async () => {
-		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
+		const { registry, entry } = await registryWithPackage("pi-web-access");
 
 		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
+			profile: profile("review", { extensions: ["pi-web-access"] }),
 			skills: [],
 			extensions: registry,
-			overlay: { disabledExtensions: ["pi-mcp-adapter"] },
+			overlay: { disabledExtensions: ["pi-web-access"] },
 		});
 
 		expect(plan.extensions).toEqual([]);
-		expect(entry).toContain("pi-mcp-adapter");
+		expect(entry).toContain("pi-web-access");
 	});
 });
 
-describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
+describe("mcp_tools resolution and server policy", () => {
 	function mockMcpDiscovery(options: {
 		servers?: Record<string, Record<string, unknown>>;
 		sharedServers?: string[];
@@ -687,52 +750,45 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 		};
 	}
 
-	async function extensionsWithAdapter(extra: string[] = []): Promise<DiscoveredExtensions> {
-		return extensionsWith(["pi-mcp-adapter", ...extra]);
-	}
-
 	it("fails activation when mcp_tools names prototype properties absent from discovered servers", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({ servers: { github: { url: "https://gh" } } });
 
 		for (const serverName of ["toString", "__proto__"]) {
 			const definition = JSON.parse(
-				`{"extensions":["pi-mcp-adapter"],"mcp_tools":{${JSON.stringify(serverName)}:["search"]}}`,
+				`{"mcp_tools":{${JSON.stringify(serverName)}:["search"]}}`,
 			);
 			await expect(
 				resolveProfile({
 					profile: profile("review", definition),
 					skills: [],
-					extensions,
+					extensions: await extensionsWith(),
 					mcpDiscovery,
 				}),
 			).rejects.toThrow(`unknown MCP server "${serverName}"`);
 		}
 	});
 
-	it("rejects configured __proto__ when adapter discovery can only represent toString", async () => {
-		const extensions = await extensionsWithAdapter();
+	it("rejects configured __proto__ when discovery can only represent toString", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			'{"mcpServers":{"toString":{"url":"https://string"},"__proto__":{"url":"https://proto"}}}',
 		);
 		const mcpDiscovery = await loadMergedMcpServers(fixture.agentDir, undefined, { homeDir: fixture.root });
 		const definition = JSON.parse(
-			'{"extensions":["pi-mcp-adapter"],"mcp_tools":{"toString":["search"],"__proto__":["lookup"]}}',
+			'{"mcp_tools":{"toString":["search"],"__proto__":["lookup"]}}',
 		);
 
 		await expect(
 			resolveProfile({
 				profile: profile("review", definition),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/unknown MCP server "__proto__".*toString/);
 	});
 
 	it("fails activation when mcp_tools names an unknown server, providing usable candidates", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: { github: { url: "https://gh" } },
 		});
@@ -740,40 +796,36 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
 					mcp_tools: { typo_server: ["search"] },
 				} as any),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/unknown MCP server "typo_server".*github/);
 	});
 
 	it("fails activation when mcp_tools names a disabled server, providing usable candidates", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
-				disabled_server: { url: "https://dis", disabled: true },
+				disabled_server: { url: "https://dis", enabled: false },
 			},
 		});
 
 		await expect(
 			resolveProfile({
 				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
 					mcp_tools: { disabled_server: ["search"] },
 				} as any),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/MCP server "disabled_server" is disabled.*github/);
 	});
 
 	it("fails activation when mcp_tools names a server disabled by mcps allowlist", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -784,19 +836,17 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
 					mcps: ["github"],
 					mcp_tools: { linear: ["search"] },
 				} as any),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/MCP server "linear" is disabled.*github/);
 	});
 
 	it("fails activation when mcp_tools names a project-only server", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -808,18 +858,16 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
 					mcp_tools: { "proj-srv": ["search"] },
 				} as any),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/cannot narrow project-level MCP server "proj-srv"/);
 	});
 
 	it("fails activation when mcp_tools names a project-shadowed server", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				"shared-shadowed": { url: "https://proj-override" },
@@ -831,182 +879,85 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
 					mcp_tools: { "shared-shadowed": ["search"] },
 				} as any),
 				skills: [],
-				extensions,
+				extensions: await extensionsWith(),
 				mcpDiscovery,
 			}),
 		).rejects.toThrow(/cannot narrow project-level MCP server "shared-shadowed"/);
 	});
 
-	it("fails activation when nonempty mcp_tools is declared without active pi-mcp-adapter", async () => {
-		const extensions = await extensionsWith(["other-ext"]);
+	it("does not require an adapter extension for mcp_tools", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: { github: { url: "https://gh" } },
 		});
 
-		await expect(
-			resolveProfile({
-				profile: profile("review", {
-					extensions: ["other-ext"],
-					mcp_tools: { github: ["search"] },
-				} as any),
-				skills: [],
-				extensions,
-				mcpDiscovery,
-			}),
-		).rejects.toThrow(/pi-mcp-adapter is not active/);
+		const plan = await resolveProfile({
+			profile: profile("review", {
+				mcp_tools: { github: ["search"] },
+			} as any),
+			skills: [],
+			extensions: await extensionsWith(),
+			mcpDiscovery,
+		});
+
+		expect(plan.mcpTools).toEqual({ github: ["search"] });
+		expect(plan.instanceMcpConfig).toBeDefined();
 	});
 
 	it("does not require adapter when mcp_tools is empty object or undeclared", async () => {
-		const extensions = await extensionsWith([]);
 		const plan = await resolveProfile({
 			profile: profile("review", {
 				mcp_tools: {},
 			} as any),
 			skills: [],
-			extensions,
+			extensions: await extensionsWith(),
 		});
 
 		expect(plan.mcpTools).toBeUndefined();
 		expect(plan.instanceMcpConfig).toBeUndefined();
 	});
 
-	it("fails activation before file writes on unsafe existing includeTools / excludeTools", async () => {
-		const extensions = await extensionsWithAdapter();
+	it("replaces merged toolExposure with the profile's toolExposure using direct/hidden", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
-				github: {
-					url: "https://gh",
-					includeTools: "not-an-array",
-				},
+				github: { url: "https://gh", toolExposure: { delete: "hidden" } },
 			},
-		});
-
-		await expect(
-			resolveProfile({
-				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
-					mcp_tools: { github: ["search"] },
-				} as any),
-				skills: [],
-				extensions,
-				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unsafe MCP tool filter intersection for server "github"/);
-	});
-
-	it("fails safely when profile selectors are not exact members of an existing allowlist", async () => {
-		const extensions = await extensionsWithAdapter();
-		const mcpDiscovery = mockMcpDiscovery({
-			servers: {
-				github: {
-					url: "https://gh",
-					includeTools: ["search", "read_*"],
-					excludeTools: ["read_secret"],
-				},
-			},
-		});
-
-		await expect(
-			resolveProfile({
-				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
-					mcp_tools: { github: ["search", "read_docs"] },
-				} as any),
-				skills: [],
-				extensions,
-				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unsafe MCP tool filter intersection for server "github"/);
-	});
-
-	it("fails safely when existing selectors collide with a profile selector alias", async () => {
-		const extensions = await extensionsWithAdapter();
-		const mcpDiscovery = mockMcpDiscovery({
-			servers: { github: { url: "https://gh", includeTools: ["foo-bar"] } },
-		});
-
-		await expect(
-			resolveProfile({
-				profile: profile("review", {
-					extensions: ["pi-mcp-adapter"],
-					mcp_tools: { github: ["foo_bar"] },
-				} as any),
-				skills: [],
-				extensions,
-				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unsafe MCP tool filter intersection for server "github".*foo_bar/);
-	});
-
-	it("accepts exact selector overlap and preserves existing exclusions", async () => {
-		const extensions = await extensionsWithAdapter();
-		const mcpDiscovery = mockMcpDiscovery({
-			servers: { github: { url: "https://gh", includeTools: ["foo-bar"], excludeTools: ["hidden"] } },
 		});
 
 		const plan = await resolveProfile({
 			profile: profile("review", {
-				extensions: ["pi-mcp-adapter"],
-				mcp_tools: { github: ["foo-bar"] },
+				mcp_tools: { github: ["search", "delete"] },
 			} as any),
 			skills: [],
-			extensions,
+			extensions: await extensionsWith(),
 			mcpDiscovery,
 		});
 
 		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
-		expect(server.includeTools).toEqual(["foo-bar"]);
-		expect(server.excludeTools).toEqual(["hidden"]);
+		expect(server.toolExposure).toEqual({ "*": "hidden", search: "direct", delete: "direct" });
 	});
 
-	it("narrows a universal existing includeTools selector to the profile's literal selectors", async () => {
-		const extensions = await extensionsWithAdapter();
-		const mcpDiscovery = mockMcpDiscovery({
-			servers: { github: { url: "https://gh", includeTools: ["*"], excludeTools: ["hidden"] } },
-		});
-
-		const plan = await resolveProfile({
-			profile: profile("review", {
-				extensions: ["pi-mcp-adapter"],
-				mcp_tools: { github: ["foo_bar"] },
-			} as any),
-			skills: [],
-			extensions,
-			mcpDiscovery,
-		});
-
-		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
-		expect(server.includeTools).toEqual(["foo_bar"]);
-		expect(server.excludeTools).toEqual(["hidden"]);
-	});
-
-	it("represents an empty tool list as deny-all excludeTools: ['*']", async () => {
-		const extensions = await extensionsWithAdapter();
+	it("represents an empty tool list as deny-all toolExposure", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: { github: { url: "https://gh" } },
 		});
 
 		const plan = await resolveProfile({
 			profile: profile("review", {
-				extensions: ["pi-mcp-adapter"],
 				mcp_tools: { github: [] },
 			} as any),
 			skills: [],
-			extensions,
+			extensions: await extensionsWith(),
 			mcpDiscovery,
 		});
 
 		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
-		expect(server.excludeTools).toEqual(["*"]);
-		expect(server.includeTools).toBeUndefined();
+		expect(server.toolExposure).toEqual({ "*": "hidden" });
 	});
 
 	it("keeps all user-level servers when mcps is omitted and preserves server omitted from mcp_tools", async () => {
-		const extensions = await extensionsWithAdapter();
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -1016,19 +967,55 @@ describe("mcp_tools resolution and server policy (tasks 1.2 & 2.1)", () => {
 
 		const plan = await resolveProfile({
 			profile: profile("review", {
-				extensions: ["pi-mcp-adapter"],
 				mcp_tools: {
 					github: ["search"],
 				},
 			} as any),
 			skills: [],
-			extensions,
+			extensions: await extensionsWith(),
 			mcpDiscovery,
 		});
 
 		expect(plan.mcps).toBeUndefined();
 		const servers = plan.instanceMcpConfig?.mcpServers as Record<string, any>;
-		expect(servers.github.includeTools).toEqual(["search"]);
+		expect(servers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 		expect(servers.linear).toEqual({ command: "linear", env: { API_KEY: "secret" } });
+	});
+
+	it("applies tool restrictions even when mcps is undeclared", async () => {
+		const mcpDiscovery = mockMcpDiscovery({
+			servers: { github: { url: "https://gh" } },
+		});
+
+		const plan = await resolveProfile({
+			profile: profile("review", {
+				mcp_tools: { github: ["search"] },
+			} as any),
+			skills: [],
+			extensions: await extensionsWith(),
+			mcpDiscovery,
+		});
+
+		expect(plan.mcps).toBeUndefined();
+		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
+		expect(server.toolExposure).toEqual({ "*": "hidden", search: "direct" });
+	});
+
+	it("does not write toolExposure when mcp_tools is absent for a server", async () => {
+		const mcpDiscovery = mockMcpDiscovery({
+			servers: { github: { url: "https://gh" } },
+		});
+
+		const plan = await resolveProfile({
+			profile: profile("review", {
+				mcps: ["github"],
+			} as any),
+			skills: [],
+			extensions: await extensionsWith(),
+			mcpDiscovery,
+		});
+
+		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
+		expect(server.toolExposure).toBeUndefined();
 	});
 });

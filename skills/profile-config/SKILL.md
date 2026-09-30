@@ -54,9 +54,9 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
 | `description` | `string` | Short description of the profile (e.g. `"Read-only review profile"`). |
 | `skills` | `string[]` | Skill names or globs to reference. When undeclared, available skills are not narrowed. |
 | `extensions` | `string[]` | Extension identifiers or globs to reference. When undeclared, available extensions are not narrowed. |
-| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, all discovered user-level servers keep their normal adapter availability and `mcps` adds no adapter requirement; a nonempty `mcp_tools` still requires `pi-mcp-adapter`. An explicit `mcps: []` disables every discovered user-level server when `pi-mcp-adapter` is selected, and is inert when the adapter is not selected. Project-level servers are never narrowed. |
+| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, all discovered user-level servers keep their normal availability. An explicit `mcps: []` disables every discovered user-level server. Project-level servers are never narrowed. |
 | `tools` | `string[]` | Whitelisted non-MCP tool names or globs (built-in and extension tools only). Live MCP tools remain usable independently of `tools`. When undeclared, tools are not narrowed and Pi's native tool set is kept. |
-| `mcp_tools` | `Record<string, string[]>` | Per-server MCP tool selection: literal server names mapped to literal adapter selectors (original or prefixed names; both forms may select the same tool). Globs are rejected. An omitted server allows all tools; a nonempty array allows only matches; an empty array (`[]`) denies all tools while keeping the server enabled. An empty object (`{}`) behaves like omission. Nonempty declarations require `pi-mcp-adapter`, even when `mcps` is omitted. |
+| `mcp_tools` | `Record<string, string[]>` | Per-server MCP tool selection: literal server names mapped to literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are rejected. An omitted server allows all tools; a nonempty array allows only matches; an empty array (`[]`) denies all tools while keeping the server enabled. An empty object (`{}`) behaves like omission. |
 | `defaultProvider` | `string` | Default model provider (e.g. `"anthropic"`, `"openai"`). Effective only when declared together with `defaultModel`. |
 | `defaultModel` | `string` | Default model name (e.g. `"claude-sonnet-4-5"`). Effective only when declared together with `defaultProvider`. |
 | `defaultThinkingLevel` | `string` | Default thinking level; allowed values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Effective only when the model declaration holds. |
@@ -69,9 +69,6 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
   "description": "Read-only code review with linting and analysis tools",
   "skills": [
     "profile-config"
-  ],
-  "extensions": [
-    "pi-mcp-adapter"
   ],
   "mcps": [],
   "tools": [
@@ -106,17 +103,17 @@ When helping the user configure a profile, check or consult the following locati
      - Absolute paths or `~/` paths.
      - Glob matching.
 3. **MCP servers**:
-   - Discovery locations: the standard configuration locations recognized by `pi-mcp-adapter` — on the global side `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`; trusted projects additionally have `<projectDir>/.mcp.json` and `<projectDir>/.pi/mcp.json`.
+   - Discovery locations: Pi's user-level MCP configuration files — on the global side `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`; trusted projects additionally have `<projectDir>/.pi/mcp.json`.
    - Reference identity: the server key names under the `mcpServers` object in those configuration files.
-   - A profile declaring nonempty `mcps` or nonempty `mcp_tools` must ensure the `pi-mcp-adapter` extension is available; omitting `mcps` does not remove the requirement for nonempty `mcp_tools`.
+   - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
 4. **Tools**:
    - Reference identity: non-MCP tool names in Pi's live tool registry.
    - Includes built-in tools (`read`, `write`, `edit`, `bash`, etc.) and extension-contributed tools.
    - MCP-owned tools are **not** controlled by `tools`; legacy references such as `"mcp__*"` or `"github_*"` in `tools` must be migrated to `mcp_tools`.
 5. **MCP Tools (`mcp_tools`)**:
-   - Reference identity: keys are literal configured MCP server names; values are literal pi-mcp-adapter selectors. Original and prefixed selectors can both match the same tool; globs are not accepted.
-   - Selectors are not checked against a live tool catalog. A selector matching no tool stays restrictive and produces no name diagnostic; verify selector forms with the adapter or MCP server before writing the profile.
-   - If the server already has nonempty `includeTools`, each requested selector must be identical to an existing literal or the existing list must include `"*"`; otherwise activation fails before runtime files are written. Existing `excludeTools` still applies.
+   - Reference identity: keys are literal configured MCP server names; values are literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are not accepted.
+   - Selectors are not checked against a live tool catalog. A selector matching no tool stays restrictive and produces no name diagnostic; verify selector forms with the MCP server before writing the profile.
+   - Prefixed selectors from previous MCP integrations (e.g. `<server>_<tool>`) no longer apply; replace them with the literal tool names from Pi's built-in MCP extension.
    - Omitting a server key preserves unrestricted access to that server's tools.
    - An empty list (`[]`) denies all tools for that server while keeping the server enabled.
    - A nonempty list (e.g. `["search", "get_issue"]`) allows only those tools across direct tools, gateway proxies, and scripts.

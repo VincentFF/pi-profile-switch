@@ -10,7 +10,7 @@
  * Steps:
  *   1. tools: re-expand the profile's raw references against Pi's LIVE
  *      non-MCP tool registry and call setActiveTools while retaining
- *      adapter-owned registrations. Settings `defaultTools` provides only
+ *      MCP-owned registrations. Settings `defaultTools` provides only
  *      the boot baseline for built-ins. Literals that no Pi tool provides
  *      are dropped with a warning — Pi silently ignores unknown names, so
  *      the warning is the only signal.
@@ -26,8 +26,8 @@
  *      for the next agent turn and is cleared from the plan file.
  *
  * Pi's reload re-executes extension modules, so no stale handler or command
- * context survives; this module is the only place post-reload state is
- * established.
+ *  context survives; this module is the only place post-reload state is
+ *  established.
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -90,68 +90,13 @@ export async function readLaunchPlanFile(runtimeDir: string): Promise<LaunchPlan
 	return result.value as unknown as LaunchPlanFile;
 }
 
-interface AdapterAttribution {
-	/** Exact adapter entry paths (loose adapter files). */
-	exactEntries: string[];
-	/** Verified pi-mcp-adapter npm package roots. */
-	packageRoots: string[];
-}
-
-async function resolveAdapterPackageRoot(entryPath: string): Promise<string | undefined> {
-	let current = path.resolve(entryPath);
-	while (true) {
-		const parent = path.dirname(current);
-		if (parent === current) return undefined;
-		current = parent;
-		try {
-			const manifest: unknown = JSON.parse(await readFile(path.join(current, "package.json"), "utf8"));
-			if (isRecord(manifest) && manifest.name === "pi-mcp-adapter") {
-				return current;
-			}
-		} catch {
-			// Continue walking toward the filesystem root.
-		}
-	}
-}
-
-async function getAdapterAttribution(plan: LaunchPlanFile): Promise<AdapterAttribution> {
-	const exactEntries: string[] = [];
-	const packageRoots: string[] = [];
-	for (const ext of plan.resolved?.extensions ?? []) {
-		if (ext.origin === "package") {
-			const packageName = ext.id.split(":", 1)[0]!;
-			if (packageName === "pi-mcp-adapter") {
-				const root = await resolveAdapterPackageRoot(ext.entry);
-				if (root !== undefined) {
-					packageRoots.push(root);
-				}
-			}
-		} else if (ext.id === "pi-mcp-adapter") {
-			// Loose adapter files (and plan entries without an origin marker)
-			// own only their exact entry; siblings such as
-			// "pi-mcp-adapter/linter" do not become adapter-owned.
-			exactEntries.push(ext.entry);
-		}
-	}
-	return { exactEntries, packageRoots };
-}
-
-export function isMcpOwnedTool(
-	tool: { name: string; sourceInfo?: { path?: string; source?: string } },
-	attribution?: AdapterAttribution,
-): boolean {
+export function isMcpOwnedTool(tool: {
+	name: string;
+	sourceInfo?: { path?: string; source?: string };
+}): boolean {
 	const info = tool.sourceInfo;
 	if (!info) return false;
-	if (info.source === "pi-mcp-adapter" || info.source === "mcp") return true;
-	if (typeof info.path !== "string" || attribution === undefined) return false;
-	if (attribution.exactEntries.includes(info.path)) return true;
-	for (const root of attribution.packageRoots) {
-		const rel = path.relative(root, info.path);
-		if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-			return true;
-		}
-	}
-	return false;
+	return info.path === "builtin:mcp";
 }
 
 /** Applies the plan carried by the runtime dir's pi-profile.json. */
@@ -173,12 +118,11 @@ export async function applyLaunchPlan(input: {
 	const hasOverlayDisables = plan.disabledTools !== undefined && plan.disabledTools.length > 0;
 	if (plan.toolReferences !== undefined || hasOverlayDisables) {
 		const allTools = surface.getAllTools();
-		const attribution = await getAdapterAttribution(plan);
 		const mcpToolNames: string[] = [];
 		const nonMcpToolNames: string[] = [];
 
 		for (const tool of allTools) {
-			if (isMcpOwnedTool(tool, attribution)) {
+			if (isMcpOwnedTool(tool)) {
 				mcpToolNames.push(tool.name);
 			} else {
 				nonMcpToolNames.push(tool.name);

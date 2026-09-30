@@ -2,10 +2,10 @@
  * StatusReport: the `/profile status` observability surface (ticket 07).
  *
  * Pure report builder: combines the ACTIVE launch plan (what the runtime
- * was resolved to), the stored overlay, fresh MCP adapter discovery, and
- * Pi's actual command registrations (the winner evidence for same-name
- * conflicts). Markdown formatting is the only presentation; the extension
- * ships it via `pi.sendMessage`.
+ * was resolved to), the stored overlay, fresh MCP discovery from the merged
+ * user-level snapshot, and Pi's actual command registrations (the winner
+ * evidence for same-name conflicts). Markdown formatting is the only
+ * presentation; the extension ships it via `pi.sendMessage`.
  *
  * Conflict semantics: Pi's load order is first-wins by scope/file order,
  * so the registered command IS the winner. A conflict is reported when the
@@ -73,8 +73,8 @@ export function buildStatusReport(input: {
 	overlay?: RuntimeOverlay;
 	discoveredMcpServers: string[];
 	disabledMcpServers: string[];
-	/** Project-owned server names from trust-gated MCP discovery; kept enabled
-	 *  when the profile declares a defined `mcps` selection. */
+	/** Project-owned server names from trust-gated MCP snapshot discovery;
+	 *  kept enabled when the profile declares a defined `mcps` selection. */
 	projectMcpServers?: string[];
 	commands: RegisteredCommand[];
 	tools: RegisteredTool[];
@@ -87,16 +87,16 @@ export function buildStatusReport(input: {
 	let missing: string[];
 
 	if (plan.mcps === undefined) {
-		const adapterDisabled = new Set(input.disabledMcpServers);
-		enabled = input.discoveredMcpServers.filter((name) => !adapterDisabled.has(name));
-		disabled = input.discoveredMcpServers.filter((name) => adapterDisabled.has(name));
+		const snapshotDisabled = new Set(input.disabledMcpServers);
+		enabled = input.discoveredMcpServers.filter((name) => !snapshotDisabled.has(name));
+		disabled = input.discoveredMcpServers.filter((name) => snapshotDisabled.has(name));
 		missing = [];
 	} else {
 		const projectMcpServers = new Set(input.projectMcpServers ?? []);
-		const adapterDisabled = new Set(input.disabledMcpServers);
+		const snapshotDisabled = new Set(input.disabledMcpServers);
 		const explicitMcps = new Set(plan.mcps);
 		const projectEnabled = input.discoveredMcpServers.filter(
-			(name) => projectMcpServers.has(name) && !explicitMcps.has(name) && !adapterDisabled.has(name),
+			(name) => projectMcpServers.has(name) && !explicitMcps.has(name) && !snapshotDisabled.has(name),
 		);
 		enabled = [...plan.mcps, ...projectEnabled].sort();
 		disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name));

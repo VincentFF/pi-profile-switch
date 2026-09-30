@@ -29,10 +29,8 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	}
 }
 
-async function writeAdapterResources(): Promise<void> {
-	const entry = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
-	await mkdir(path.dirname(entry), { recursive: true });
-	await writeFile(entry, "export default function () {}\n");
+async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
+	await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
 }
 
 describe("resolveInitialProfile", () => {
@@ -192,71 +190,58 @@ describe("resolveInitialProfile", () => {
 	});
 
 	describe("mcp declarations", () => {
-		it("expands the profile's mcp references against adapter-discovered server names", async () => {
-			await writeAdapterResources();
-			await writeFile(
-				path.join(fixture.agentDir, "mcp.json"),
-				JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
-			);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["github"] } });
+		it("expands the profile's mcp references against the merged user-level snapshot", async () => {
+			await writeMcpConfig({ github: {}, linear: {} });
+			await writeCatalog({ review: { mcps: ["github"] } });
 
 			const { plan } = await resolveInitialProfile("review", context());
 
 			expect(plan.mcps).toEqual(["github"]);
 		});
 
-		it("fails before spawn when the adapter is absent from the active extension set", async () => {
-			await writeFile(
-				path.join(fixture.agentDir, "mcp.json"),
-				JSON.stringify({ mcpServers: { github: {} } }),
-			);
-			await writeCatalog({ review: { mcps: ["github"] } });
-
-			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/pi-mcp-adapter is not active/);
-		});
-
-		it("fails before spawn on an mcp reference the adapter never discovered", async () => {
-			await writeAdapterResources();
-			await writeFile(
-				path.join(fixture.agentDir, "mcp.json"),
-				JSON.stringify({ mcpServers: { github: {} } }),
-			);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["typo-server"] } });
+		it("fails before spawn on an mcp reference the snapshot never discovered", async () => {
+			await writeMcpConfig({ github: {} });
+			await writeCatalog({ review: { mcps: ["typo-server"] } });
 
 			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
 		});
 
-		it("does not read MCP config for empty mcps when the adapter is absent, even if config is malformed", async () => {
+		it("does not require an adapter extension for nonempty mcps", async () => {
+			await writeMcpConfig({ github: {} });
+			await writeCatalog({ review: { mcps: ["github"] } });
+
+			const { plan } = await resolveInitialProfile("review", context());
+
+			expect(plan.mcps).toEqual(["github"]);
+		});
+
+		it("fails for empty mcps when the MCP config is malformed", async () => {
 			await writeFile(path.join(fixture.agentDir, "mcp.json"), "{ not valid json");
 			await writeCatalog({ inert: { mcps: [] } });
 
-			const { plan } = await resolveInitialProfile("inert", context());
-
-			expect(plan.mcps).toBeUndefined();
+			await expect(resolveInitialProfile("inert", context())).rejects.toThrow(/MCP config is not valid JSON/);
 		});
 
-		it("requests MCP discovery for empty mcps when the adapter is selected", async () => {
-			await writeAdapterResources();
+		it("requests MCP discovery for empty mcps and marks discovered servers enabled: false", async () => {
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 			await writeFile(
 				path.join(fixture.root, ".agents", "mcp.json"),
 				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
 			);
 			await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
-			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+			await writeCatalog({ denyall: { mcps: [] } });
 
 			const { plan } = await resolveInitialProfile("denyall", context());
 
 			expect(plan.mcps).toEqual([]);
-			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { disabled: true } });
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { enabled: false } });
 		});
 
 		it("does not mark project-sourced MCP servers disabled for an empty mcps selection", async () => {
-			await writeAdapterResources();
 			await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
-			await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }));
+			await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }));
 			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
-			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+			await writeCatalog({ denyall: { mcps: [] } });
 
 			const { plan } = await resolveInitialProfile("denyall", context());
 
@@ -264,5 +249,20 @@ describe("resolveInitialProfile", () => {
 			expect(plan.instanceMcpConfig?.mcpServers).toEqual({});
 		});
 
+		it("fails before spawn when an explicitly selected server uses SSE", async () => {
+			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
+			await writeCatalog({ review: { mcps: ["github"] } });
+
+			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/legacy SSE transport/);
+		});
+
+		it("passes an unselected SSE server through without failing activation", async () => {
+			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
+			await writeCatalog({ review: {} });
+
+			const { plan } = await resolveInitialProfile("review", context());
+
+			expect(plan.mcps).toBeUndefined();
+		});
 	});
 });

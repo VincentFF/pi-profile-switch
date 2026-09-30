@@ -1,18 +1,3 @@
-/**
- * Integration: the bare /profile degraded list and /profile status against
- * a real spawned pi.
- *
- * - Bare `/profile` without dialog-capable UI degrades to the trust-gated
- *   profile list (a same-name project profile shadows the global one),
- *   carrying the structured `{kind, profiles}` payload for RPC consumers.
- * - `/profile status` reports resolved absolute skill paths, the MCP
- *   tri-state, and — after an in-session switch — the glob delta versus
- *   the previous activation.
- *
- * The extension ships both via `pi.sendMessage`, which RPC streams as
- * session events; the driver's `waitFor` watches for them.
- */
-
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,11 +21,11 @@ beforeEach(async () => {
 	const projectProfilesDir = path.join(fixture.cwd, ".pi", "profiles");
 	await mkdir(projectProfilesDir, { recursive: true });
 	await writeFile(path.join(projectProfilesDir, "shared.json"), JSON.stringify({ label: "project shared" }));
-	// An enabled server and an adapter-disabled server are both discovered; without
+	// An enabled server and a snapshot-disabled server are both discovered; without
 	// an explicit mcps whitelist, status must not present the disabled server as enabled.
 	await writeFile(
 		path.join(fixture.agentDir, "mcp.json"),
-		JSON.stringify({ mcpServers: { github: {}, linear: { disabled: true } } }),
+		JSON.stringify({ mcpServers: { github: {}, linear: { enabled: false } } }),
 	);
 });
 
@@ -128,9 +113,6 @@ describe("observability surface against a real spawned pi", () => {
 	}, 90_000);
 
 	it("/profile status keeps project-owned servers enabled with an empty mcps selection", async () => {
-		const extDir = path.join(fixture.agentDir, "extensions");
-		await mkdir(extDir, { recursive: true });
-		await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: {} } }),
@@ -144,7 +126,7 @@ describe("observability surface against a real spawned pi", () => {
 
 		const globalProfilesDir = path.join(fixture.profileSwitchDir, "profiles");
 		await mkdir(globalProfilesDir, { recursive: true });
-		await writeFile(path.join(globalProfilesDir, "closed.json"), JSON.stringify({ extensions: ["pi-mcp-adapter"], mcps: [] }));
+		await writeFile(path.join(globalProfilesDir, "closed.json"), JSON.stringify({ mcps: [] }));
 
 		driver = new RpcDriver("node", [path.resolve("bin/pi-profile.ts"), "closed", "--", "--mode", "rpc"], {
 			cwd: fixture.cwd,

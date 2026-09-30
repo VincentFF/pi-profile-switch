@@ -490,7 +490,7 @@ describe("pi-profile extension", () => {
 		});
 	});
 
-	it("does not register an mcp command (leaves /mcp to pi-mcp-adapter)", async () => {
+	it("does not register an mcp command", async () => {
 		const pi = fakePi();
 		piProfileExtension(pi as never);
 		expect(pi.commands.has("mcp")).toBe(false);
@@ -508,7 +508,7 @@ describe("pi-profile extension", () => {
 		).toBe(true);
 	});
 
-	describe("separate MCP tool filtering in extension (Tasks 3.1 & 3.2)", () => {
+	describe("separate MCP tool filtering", () => {
 		it("session_start retains live MCP tools when tools narrows Pi tools", async () => {
 			await writeLaunchPlan({
 				profile: "narrow",
@@ -518,15 +518,15 @@ describe("pi-profile extension", () => {
 				toolReferences: ["read"],
 				resolved: {
 					skills: [],
-					extensions: [{ id: "pi-mcp-adapter", entry: "/ext/pi-mcp-adapter/index.ts" }],
+					extensions: [],
 				},
 			});
 			const pi = fakePi();
 			pi.getAllTools = () => [
 				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
 				{ name: "bash", sourceInfo: { path: "pi", source: "builtin" } },
-				{ name: "mcp", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
-				{ name: "fixture_tool", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+				{ name: "fixture_tool", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			];
 			piProfileExtension(pi as never);
 
@@ -539,7 +539,7 @@ describe("pi-profile extension", () => {
 			expect(pi.activeTools).toContain("fixture_tool");
 		});
 
-		it("session_start does not retain a tool from beside a loose adapter file", async () => {
+		it("session_start does not retain a tool from a sibling extension as MCP-owned", async () => {
 			await writeLaunchPlan({
 				profile: "no-pi-tools",
 				source: "global",
@@ -549,14 +549,15 @@ describe("pi-profile extension", () => {
 				resolved: {
 					skills: [],
 					extensions: [
-						{ id: "pi-mcp-adapter", entry: "/agent/extensions/pi-mcp-adapter.ts" },
+						{ id: "mcp-helper", entry: "/agent/extensions/mcp-helper.ts" },
 						{ id: "linter", entry: "/agent/extensions/linter.ts" },
 					],
 				},
 			});
 			const pi = fakePi();
 			pi.getAllTools = () => [
-				{ name: "mcp", sourceInfo: { path: "/agent/extensions/pi-mcp-adapter.ts", source: "extension" } },
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
+				{ name: "helper_tool", sourceInfo: { path: "/agent/extensions/mcp-helper.ts", source: "extension" } },
 				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
 			];
 			piProfileExtension(pi as never);
@@ -577,13 +578,13 @@ describe("pi-profile extension", () => {
 				toolReferences: ["read", "mcp__*"],
 				resolved: {
 					skills: [],
-					extensions: [{ id: "pi-mcp-adapter", entry: "/ext/pi-mcp-adapter/index.ts" }],
+					extensions: [],
 				},
 			});
 			const pi = fakePi();
 			pi.getAllTools = () => [
 				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
-				{ name: "mcp__query", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts", source: "extension" } },
+				{ name: "mcp__query", sourceInfo: { path: "builtin:mcp", source: "builtin" } },
 			];
 			piProfileExtension(pi as never);
 			const ctx = fakeCtx();
@@ -600,7 +601,7 @@ describe("pi-profile extension", () => {
 		it("keeps configured MCP names restrictive without warning or validation status", async () => {
 			await writeFile(
 				path.join(root, "mcp.json"),
-				JSON.stringify({ mcpServers: { github: {}, linear: { disabled: true } } }),
+				JSON.stringify({ mcpServers: { github: {}, linear: { enabled: false } } }),
 			);
 			await writeLaunchPlan({
 				profile: "restricted",

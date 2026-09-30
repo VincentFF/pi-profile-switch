@@ -87,7 +87,7 @@ const EMPTY: ImplicitExtensionDiscovery = { packages: [], local: [], warnings: [
 
 describe("packageNameFromSource", () => {
 	it("strips prefixes and version specs", () => {
-		expect(packageNameFromSource("npm:pi-mcp-adapter")).toBe("pi-mcp-adapter");
+		expect(packageNameFromSource("npm:pi-web-access")).toBe("pi-web-access");
 		expect(packageNameFromSource("npm:@janvitos/pi-plan-build")).toBe("@janvitos/pi-plan-build");
 		expect(packageNameFromSource("npm:@scope/pkg@1.2.3")).toBe("@scope/pkg");
 		expect(packageNameFromSource("npm:pkg@^2.0.0")).toBe("pkg");
@@ -97,15 +97,15 @@ describe("packageNameFromSource", () => {
 
 describe("discoverImplicitExtensions", () => {
 	it("discovers a package's declared pi.extensions entries", async () => {
-		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		const pkg = await addPackage("pi-web-access", { extensions: ["./index.ts"] });
 
 		const result = await discoverImplicitExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		expect(result.warnings).toEqual([]);
 		expect(result.packages).toEqual([
 			{
-				name: "pi-mcp-adapter",
-				source: "npm:pi-mcp-adapter",
+				name: "pi-web-access",
+				source: "npm:pi-web-access",
 				root: pkg.root,
 				entries: [path.join(pkg.root, "index.ts")],
 			},
@@ -303,18 +303,18 @@ describe("discoverImplicitExtensions", () => {
 
 describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	it("selects extensions by package name, alias, and loose file stem", async () => {
-		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addPackage("pi-web-access", { extensions: ["./index.ts"] });
 		await addLoose(path.join(fixture.agentDir, "extensions"), "conventions.ts");
 
 		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
-		const selection = await extensions.select(["pi-mcp-adapter", "conventions"]);
+		const selection = await extensions.select(["pi-web-access", "conventions"]);
 		expect(selection.unmatched).toEqual([]);
-		expect(selection.entries.map((e) => e.id).sort()).toEqual(["conventions", "pi-mcp-adapter"]);
+		expect(selection.entries.map((e) => e.id).sort()).toEqual(["conventions", "pi-web-access"]);
 
 		// Also selectable by source alias
-		const aliasSelection = await extensions.select(["npm:pi-mcp-adapter"]);
-		expect(aliasSelection.entries.map((e) => e.id)).toEqual(["pi-mcp-adapter"]);
+		const aliasSelection = await extensions.select(["npm:pi-web-access"]);
+		expect(aliasSelection.entries.map((e) => e.id)).toEqual(["pi-web-access"]);
 	});
 
 	it("selects a directory-declared package entry", async () => {
@@ -353,14 +353,14 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	});
 
 	it("expands glob patterns and records unmatched globs", async () => {
-		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addPackage("pi-web-access", { extensions: ["./index.ts"] });
 		await addLoose(path.join(fixture.agentDir, "extensions"), "pi-guard.ts");
 		await addLoose(path.join(fixture.agentDir, "extensions"), "other.ts");
 
 		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		const selection = await extensions.select(["pi-*", "nonexistent-*"]);
-		expect(selection.entries.map((e) => e.id).sort()).toEqual(["pi-guard", "pi-mcp-adapter"]);
+		expect(selection.entries.map((e) => e.id).sort()).toEqual(["pi-guard", "pi-web-access"]);
 		expect(selection.unmatched).toEqual(["nonexistent-*"]);
 	});
 
@@ -376,11 +376,11 @@ describe("DiscoveredExtensions (pure discovery & selection)", () => {
 	});
 
 	it("fails on unknown literal with candidates and did-you-mean, never mentioning resources.json", async () => {
-		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addPackage("pi-web-access", { extensions: ["./index.ts"] });
 		const extensions = await discoverExtensions({ cwd: fixture.cwd, agentDir: fixture.agentDir });
 
 		try {
-			await extensions.select(["pi-mcp-adaptr"]);
+			await extensions.select(["pi-web-accesr"]);
 			expect.unreachable("should have thrown");
 		} catch (err) {
 			const msg = (err as Error).message;

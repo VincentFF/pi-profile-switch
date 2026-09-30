@@ -14,7 +14,7 @@
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
-import { isAdapterExtension, loadMergedMcpServers, MissingMcpAdapterError } from "../mcp-config.ts";
+import { loadMergedMcpServers } from "../mcp-config.ts";
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
 import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
@@ -125,7 +125,7 @@ export async function resolveInitialProfile(
 		// The default profile is normally unfiltered. With an overlay it becomes
 		// a synthetic "everything minus disabled" selection (PRD: overlays may
 		// temporarily narrow default's scope). MCP narrowing on default is
-		// rejected — the adapter's own /mcp commands own that surface natively.
+		// rejected — the default profile declares no MCP server selection.
 		const overlay = options?.overlay;
 		const narrowed =
 			overlay !== undefined &&
@@ -138,7 +138,7 @@ export async function resolveInitialProfile(
 		}
 		if ((overlay.disabledMcps?.length ?? 0) > 0) {
 			throw new ActivationError(
-				"the default profile has no MCP allowlist to narrow — use the adapter's own /mcp commands instead",
+				"the default profile has no MCP allowlist to narrow",
 			);
 		}
 		const synthetic: ResolvedProfile = {
@@ -163,15 +163,8 @@ export async function resolveInitialProfile(
 	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;
 	const hasMcpTools = mcpToolsDef !== undefined && Object.keys(mcpToolsDef).length > 0;
 	const declaredMcps = profile.definition.mcps;
-	const isEmptyMcps = declaredMcps !== undefined && declaredMcps.length === 0;
-	let adapterSelectedForEmptyMcps = false;
-	if (isEmptyMcps) {
-		const extSelection = await discovery.extensions.select(profile.definition.extensions ?? []);
-		adapterSelectedForEmptyMcps = extSelection.entries.some(isAdapterExtension);
-	}
 	const needsMcp = Boolean(
-		(declaredMcps?.length ?? 0) > 0 ||
-		(isEmptyMcps && adapterSelectedForEmptyMcps) ||
+		declaredMcps !== undefined ||
 		hasMcpTools ||
 		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
 	);
@@ -190,15 +183,5 @@ export async function resolveInitialProfile(
 		liveToolNames: options?.liveToolNames,
 	});
 	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
-	if (plan.mcps !== undefined && !plan.extensions.some(isAdapterExtension)) {
-		throw new MissingMcpAdapterError(plan.profile, "mcps");
-	}
-	if (
-		plan.mcpTools !== undefined &&
-		Object.keys(plan.mcpTools).length > 0 &&
-		!plan.extensions.some(isAdapterExtension)
-	) {
-		throw new MissingMcpAdapterError(plan.profile, "mcp_tools");
-	}
 	return { plan, discovery, projectDir, projectTrusted, warnings };
 }

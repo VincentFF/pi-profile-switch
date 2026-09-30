@@ -51,7 +51,7 @@ describe("buildStatusReport", () => {
 		expect(report.mcp).toEqual({ enabled: ["github", "linear"], disabled: [], missing: [] });
 	});
 
-	it("respects adapter-disabled servers without an MCP whitelist", () => {
+	it("respects merged-config-disabled servers without an MCP whitelist", () => {
 		const planWithoutMcps = {
 			profile: "default",
 			source: "builtin",
@@ -60,7 +60,7 @@ describe("buildStatusReport", () => {
 		const report = buildStatusReport({
 			plan: planWithoutMcps,
 			discoveredMcpServers: ["github", "linear"],
-			disabledMcpServers: ["linear"],
+			disabledMcpServers: ["linear"], // server marked enabled: false in the merged snapshot
 			commands: [],
 			tools: [],
 		});

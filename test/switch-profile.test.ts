@@ -138,22 +138,21 @@ describe("switchProfile", () => {
 
 	it("restores mcp.json, APPEND_SYSTEM.md, and trust.json to the pre-switch state when the reload fails", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: { url: "https://x" }, linear: { command: "linear" } } }),
 		);
 		await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ projects: {} }));
 		await writeCatalog({
-			impl: { skills: ["alpha-skill"], extensions: ["pi-mcp-adapter"], mcps: ["github"], instructions: "Be terse." },
+			impl: { skills: ["alpha-skill"], mcps: ["github"], instructions: "Be terse." },
 		});
 		// Re-apply the default plan so the runtime dir reflects a real default
-		// launch: mcp.json + trust.json linked, no APPEND_SYSTEM.md.
+		// launch: mcp.json snapshot, trust.json linked, no APPEND_SYSTEM.md.
 		await writeRuntimeFiles(runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
 		const agentMcp = path.join(fixture.agentDir, "mcp.json");
 		const agentTrust = path.join(fixture.agentDir, "trust.json");
-		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
-		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(agentMcp);
+		const originalInstanceMcp = await readFile(path.join(runtimeDir, "mcp.json"), "utf8");
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
 		expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(agentTrust);
 		let reloads = 0;
 		const reload = async () => {
@@ -168,23 +167,22 @@ describe("switchProfile", () => {
 		// created, trust.json removed); the rollback must leave them in the
 		// pre-switch state, not the target profile's.
 		const mcpStat = await lstat(path.join(runtimeDir, "mcp.json"));
-		expect(mcpStat.isSymbolicLink()).toBe(true);
-		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(agentMcp);
+		expect(mcpStat.isSymbolicLink()).toBe(false);
+		expect(await readFile(path.join(runtimeDir, "mcp.json"), "utf8")).toBe(originalInstanceMcp);
 		const trustStat = await lstat(path.join(runtimeDir, "trust.json"));
 		expect(trustStat.isSymbolicLink()).toBe(true);
 		expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(agentTrust);
 		await expect(lstat(path.join(runtimeDir, "APPEND_SYSTEM.md"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it("restores a snapshotted regular file exactly, even after the switch replaced it with a symlink or deleted it", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
+	it("restores a snapshotted regular file exactly, even after the switch replaced it", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: { url: "https://x" }, linear: { command: "linear" } } }),
 		);
 		await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ projects: {} }));
 		await writeCatalog({
-			impl: { extensions: ["pi-mcp-adapter"], mcps: ["github"], instructions: "Be terse." },
+			impl: { mcps: ["github"], instructions: "Be terse." },
 		});
 		// Clean switch to the named profile: mcp.json is a filtered regular
 		// file, APPEND_SYSTEM.md carries the profile instructions.
@@ -205,11 +203,9 @@ describe("switchProfile", () => {
 
 		await expect(switchProfile("default", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
 
-		// The default profile's generator swapped mcp.json for a symlink to the
-		// real config and deleted APPEND_SYSTEM.md; rollback must replace the mcp
-		// link — never writeFile through it, which would clobber the user's real
-		// mcp.json — and recreate the deleted file with the exact content. The
-		// trust.json link is profile-independent, so it survives untouched.
+		// The default profile's generator regenerated the mcp.json snapshot
+		// and deleted APPEND_SYSTEM.md; rollback must replace it with the
+		// snapshot's content. The user's real mcp.json must stay byte-identical.
 		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(realMcpBefore);
 		const mcpStat = await lstat(path.join(runtimeDir, "mcp.json"));
 		expect(mcpStat.isSymbolicLink()).toBe(false);
@@ -285,20 +281,19 @@ describe("switchProfile", () => {
 		]);
 	});
 
-	it("profile switch changes per-server MCP tool policy (Task 3.3)", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
+	it("profile switch changes per-server MCP tool policy", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
 		);
 		await writeCatalog({
-			broad: { extensions: ["pi-mcp-adapter"] },
-			narrow: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+			broad: {},
+			narrow: { mcp_tools: { github: ["search"] } },
 		});
 
 		await switchProfile("broad", deps());
 		let instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github.includeTools).toBeUndefined();
+		expect(instanceMcp.mcpServers.github.toolExposure).toBeUndefined();
 
 		await switchProfile("narrow", deps());
 		const plan = await readPlanFile();
@@ -306,26 +301,25 @@ describe("switchProfile", () => {
 		expect(plan.mcpTools).toEqual({ github: ["search"] });
 
 		instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+		expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 	});
 
-	it("empty MCP tool list survives reload (Task 3.3)", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
+	it("empty MCP tool list survives reload", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
 		);
 		await writeCatalog({
-			denied: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+			denied: { mcp_tools: { github: [] } },
 		});
 
 		await switchProfile("denied", deps());
 		let instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+		expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden" });
 
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 		instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+		expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden" });
 	});
 
 	async function writeSharedMcpConfig(servers: Record<string, unknown>): Promise<void> {
@@ -333,71 +327,68 @@ describe("switchProfile", () => {
 		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), JSON.stringify({ mcpServers: servers }));
 	}
 
-	it("switching to an empty mcps selection disables user-level servers", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
+	it("switching to an empty mcps selection disables discovered user-level servers", async () => {
 		await writeSharedMcpConfig({ github: { url: "https://x" } });
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
 		await writeCatalog({
-			open: { extensions: ["pi-mcp-adapter"] },
-			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+			open: {},
+			closed: { mcps: [] },
 		});
 
 		await switchProfile("open", deps());
-		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
 
 		await switchProfile("closed", deps());
 		const plan = await readPlanFile();
 		expect(plan.mcps).toEqual([]);
 		const instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+		expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
 	});
 
 	it("empty mcps selection survives reload", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
 		await writeSharedMcpConfig({ github: { url: "https://x" } });
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
 		await writeCatalog({
-			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+			closed: { mcps: [] },
 		});
 
 		await switchProfile("closed", deps());
 		const before = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(before.mcpServers.github).toEqual({ disabled: true });
+		expect(before.mcpServers.github).toEqual({ enabled: false });
 
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 		const after = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(after.mcpServers.github).toEqual({ disabled: true });
+		expect(after.mcpServers.github).toEqual({ enabled: false });
 	});
 
 	it("switching back to omitted mcps selection restores server availability", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
 		const originalMcp = JSON.stringify({ mcpServers: {} });
 		await writeSharedMcpConfig({ github: { url: "https://x" } });
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), originalMcp);
 		await writeCatalog({
-			open: { extensions: ["pi-mcp-adapter"] },
-			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+			open: {},
+			closed: { mcps: [] },
 		});
 
 		await switchProfile("closed", deps());
 		const closedMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(closedMcp.mcpServers.github).toEqual({ disabled: true });
+		expect(closedMcp.mcpServers.github).toEqual({ enabled: false });
 
 		await switchProfile("open", deps());
-		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
-		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(path.join(fixture.agentDir, "mcp.json"));
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
+		const openMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(openMcp.mcpServers.github).toEqual({ url: "https://x" });
 		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
 	});
 
-	it("failed switch restores previous MCP tool policy (Task 3.3)", async () => {
-		await addGlobalExtension(fixture, "pi-mcp-adapter");
+	it("failed switch restores previous MCP tool policy", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }),
 		);
 		await writeCatalog({
-			initial: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
-			failing: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+			initial: { mcp_tools: { github: ["search"] } },
+			failing: { mcp_tools: { github: [] } },
 		});
 
 		await switchProfile("initial", deps());
