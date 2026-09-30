@@ -100,6 +100,10 @@ pi-profile-switch 会向全局 `profiles/` 目录播种一个初始 **`ask`** pr
 - 非空的 `mcp_tools` 即使在省略 `mcps` 时也需要 `pi-mcp-adapter`。只有当 profile selector 与已有的 `includeTools` 字面值完全相同，或已有列表是 `"*"` 时才能安全组合；否则会在写入 runtime 文件前报错。已有的 `excludeTools` 限制仍然生效。
 - **迁移提示**：旧 profile 中写入 `tools` 的 MCP 工具名称或 glob（如 `mcp__*`、`<server>_*`）不再控制 MCP 访问；如有需要请迁移至 `mcp_tools`。
 - `mcps` 引用 pi-mcp-adapter 配置中的 server；连接细节留在 adapter 自己的配置里。
+  - **省略 `mcps`**：保留所有已发现用户级 server 的原生可用性。
+  - **`mcps: []` 且选中了 `pi-mcp-adapter`**：禁用所有已发现用户级 server（共享位置的 server 会被显式标记为 `disabled`；仅位于 agentDir 的 server 会从生成的实例 `mcp.json` 中省略）。
+  - **`mcps: []` 但未选中 `pi-mcp-adapter`**：该声明不生效，不会读取 MCP 配置、改变 server 可用性，也不会因配置文件损坏而报错。
+  - 受信任的项目级 MCP server 始终保持启用，不受 `mcps` 收窄。
 - 未写的字段保持原生 Pi 行为。
 
 [`examples/`](examples/) 中的两个文件与上面一一对应：`ask.json` 是播种的初始 profile，`example.json` 是全字段演示。

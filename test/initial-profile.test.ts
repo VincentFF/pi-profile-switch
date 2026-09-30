@@ -225,5 +225,44 @@ describe("resolveInitialProfile", () => {
 
 			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
 		});
+
+		it("does not read MCP config for empty mcps when the adapter is absent, even if config is malformed", async () => {
+			await writeFile(path.join(fixture.agentDir, "mcp.json"), "{ not valid json");
+			await writeCatalog({ inert: { mcps: [] } });
+
+			const { plan } = await resolveInitialProfile("inert", context());
+
+			expect(plan.mcps).toBeUndefined();
+		});
+
+		it("requests MCP discovery for empty mcps when the adapter is selected", async () => {
+			await writeAdapterResources();
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(
+				path.join(fixture.root, ".agents", "mcp.json"),
+				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
+			);
+			await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+
+			const { plan } = await resolveInitialProfile("denyall", context());
+
+			expect(plan.mcps).toEqual([]);
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { disabled: true } });
+		});
+
+		it("does not mark project-sourced MCP servers disabled for an empty mcps selection", async () => {
+			await writeAdapterResources();
+			await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+			await writeFile(path.join(fixture.cwd, ".mcp.json"), JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }));
+			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+
+			const { plan } = await resolveInitialProfile("denyall", context());
+
+			expect(plan.mcps).toEqual([]);
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({});
+		});
+
 	});
 });

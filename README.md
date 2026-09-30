@@ -100,6 +100,10 @@ How fields resolve:
 - A nonempty `mcp_tools` requires `pi-mcp-adapter` even when `mcps` is omitted. Existing adapter `includeTools` filters are combined only when the profile uses identical selectors or the existing filter is `"*"`; otherwise activation fails before writing runtime files. Existing `excludeTools` restrictions continue to apply.
 - **Migration note:** Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
 - `mcps` references servers from your pi-mcp-adapter configuration; connection details stay in the adapter's own config.
+  - **Omitting `mcps`** leaves all discovered user-level servers at their normal adapter-defined availability.
+  - **`mcps: []` with `pi-mcp-adapter` selected** disables every discovered user-level server (shared locations are explicitly marked `disabled`; agentDir-only servers are omitted from the generated instance `mcp.json`).
+  - **`mcps: []` without `pi-mcp-adapter`** is inert: it does not read MCP configuration, change server availability, or fail because of a malformed config file.
+  - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
 - Any field you omit keeps plain Pi behavior.
 
 The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.

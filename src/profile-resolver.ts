@@ -228,23 +228,14 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		input.discoveredMcpServers = Object.keys(input.mcpDiscovery.servers).sort();
 	}
 
-	let mcps: string[] | undefined;
-	if (definition.mcps !== undefined && definition.mcps.length > 0) {
-		if (input.discoveredMcpServers === undefined) {
-			throw new ActivationError(
-				`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
-			);
-		}
-		mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
-			onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
-		});
-	}
-
 	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
 		onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
 	});
 
 	// Extension references resolve directly against discovered extensions.
+	// Resolve extensions before MCP so an explicitly empty `mcps` array can
+	// be distinguished from omission based on whether the profile selects the
+	// adapter (honor-empty-mcp-allowlist).
 	const selection = await extensions.select(definition.extensions ?? []);
 	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
 	let planExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }> = selection.entries.map(
@@ -254,6 +245,29 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			...(entry.origin ? { origin: entry.origin } : {}),
 		}),
 	);
+
+	const hasAdapter = planExtensions.some((entry) => isAdapterExtension(entry));
+
+	let mcps: string[] | undefined;
+	if (definition.mcps !== undefined) {
+		if (definition.mcps.length > 0) {
+			if (input.discoveredMcpServers === undefined) {
+				throw new ActivationError(
+					`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
+				);
+			}
+			mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
+				onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
+			});
+		} else if (hasAdapter) {
+			if (input.mcpDiscovery === undefined) {
+				throw new ActivationError(
+					`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
+				);
+			}
+			mcps = [];
+		}
+	}
 
 	// --- overlay narrowing (ticket 06) ---
 	// Overlay disable entries are names or globs stored as written and

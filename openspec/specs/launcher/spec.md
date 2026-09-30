@@ -143,7 +143,7 @@ The managed files in the instance (`settings.json`, `pi-profile.json`, `mcp.json
 
 `trust.json` SHALL be a symlink to the corresponding path in the real agentDir, and this SHALL hold for every profile: it MUST NOT be omitted or removed because the profile is not `default`, and MUST NOT be skipped because the target file does not exist yet (trust decisions Pi writes through the link land in the real agentDir).
 
-When a profile declares `mcps`, the instance's `mcp.json` SHALL be the generated filter result containing only the allowed server definitions. For unselected servers in user-level shared locations, the instance configuration SHALL explicitly mark them disabled and MUST NOT rely on omission alone: those locations are read directly by the adapter, and without a disable mark an omitted server does not become ineffective. Servers defined in project-level locations SHALL stay enabled and MUST NOT be marked disabled.
+When a profile declares `mcps`, the instance's `mcp.json` SHALL be the generated filter result containing only the allowed server definitions. For unselected servers in user-level shared locations, the instance configuration SHALL explicitly mark them disabled and MUST NOT rely on omission alone: those locations are read directly by the adapter, and without a disable mark an omitted server does not become ineffective. An explicitly empty `mcps` selection with an active adapter SHALL disable every discovered user-level server from the standard configuration sources, whether the server was defined in the agentDir or in a shared location. Servers defined in project-level locations SHALL stay enabled and MUST NOT be marked disabled.
 
 When `mcp_tools` names any server, the instance's MCP configuration SHALL carry its tool restriction even if `mcps` is undeclared. Servers omitted from `mcp_tools` SHALL retain their existing tool availability. An explicitly empty tool list SHALL deny all the named server's tools, not restore an unrestricted server. Profile-generated restrictions MUST NOT broaden restrictions already present in adapter configuration or alter project-only servers.
 
@@ -173,6 +173,16 @@ User configuration files MUST NOT be modified.
 
 - **WHEN** the profile declares `mcps` allowing only server A, while project `.mcp.json` defines server P
 - **THEN** P carries no disable mark in the instance's `mcp.json` and remains usable
+
+#### Scenario: Empty MCP selection disables discovered user servers
+
+- **WHEN** an adapter-active named profile declares `mcps: []` and the standard user-level configuration defines a shared server and an agentDir-only server
+- **THEN** neither server can be connected or called, the shared server is explicitly marked disabled in the instance, and the source configuration files are unchanged
+
+#### Scenario: Project-sourced server survives an empty selection
+
+- **WHEN** an adapter-active named profile declares `mcps: []` and a trusted project defines an enabled server
+- **THEN** that project-owned server remains enabled and callable
 
 #### Scenario: Tool restriction without a server whitelist
 

@@ -158,10 +158,20 @@ export async function resolveInitialProfile(
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
+	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
+
 	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;
 	const hasMcpTools = mcpToolsDef !== undefined && Object.keys(mcpToolsDef).length > 0;
+	const declaredMcps = profile.definition.mcps;
+	const isEmptyMcps = declaredMcps !== undefined && declaredMcps.length === 0;
+	let adapterSelectedForEmptyMcps = false;
+	if (isEmptyMcps) {
+		const extSelection = await discovery.extensions.select(profile.definition.extensions ?? []);
+		adapterSelectedForEmptyMcps = extSelection.entries.some(isAdapterExtension);
+	}
 	const needsMcp = Boolean(
-		profile.definition.mcps?.length ||
+		(declaredMcps?.length ?? 0) > 0 ||
+		(isEmptyMcps && adapterSelectedForEmptyMcps) ||
 		hasMcpTools ||
 		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
 	);
@@ -169,7 +179,6 @@ export async function resolveInitialProfile(
 		? await loadMergedMcpServers(context.agentDir, projectDir)
 		: undefined;
 
-	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 	const plan = await resolveProfile({
 		profile,
 		skills: discovery.skills,

@@ -126,4 +126,41 @@ describe("observability surface against a real spawned pi", () => {
 		await command("profile status");
 		await messageContaining("delta: +[skill:impl] -[skill:review]");
 	}, 90_000);
+
+	it("/profile status keeps project-owned servers enabled with an empty mcps selection", async () => {
+		const extDir = path.join(fixture.agentDir, "extensions");
+		await mkdir(extDir, { recursive: true });
+		await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: {} } }),
+		);
+		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { proj: {} } }),
+		);
+		await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+
+		const globalProfilesDir = path.join(fixture.profileSwitchDir, "profiles");
+		await mkdir(globalProfilesDir, { recursive: true });
+		await writeFile(path.join(globalProfilesDir, "closed.json"), JSON.stringify({ extensions: ["pi-mcp-adapter"], mcps: [] }));
+
+		driver = new RpcDriver("node", [path.resolve("bin/pi-profile.ts"), "closed", "--", "--mode", "rpc"], {
+			cwd: fixture.cwd,
+			env: {
+				...process.env,
+				HOME: fixture.root,
+				PI_CODING_AGENT_DIR: fixture.agentDir,
+				PI_OFFLINE: "1",
+			},
+		});
+		await driver.send({ type: "get_state" });
+
+		await command("profile status");
+		await messageContaining("mcp: enabled=[proj]");
+		const seen = driver.messages.map((message) => JSON.stringify(message)).join("\n");
+		expect(seen).toContain("disabled=[github]");
+		expect(seen).not.toContain("disabled=[proj]");
+	}, 90_000);
 });

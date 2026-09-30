@@ -92,6 +92,8 @@ Discovery SHALL read the standard configuration locations recognized by the adap
 
 When a profile declares MCP servers while the adapter's discovery result is unavailable, activation SHALL fail: this covers both the adapter being inactive and no usable server discovery result.
 
+With an active adapter, an explicitly empty `mcps` list SHALL resolve to an empty server selection, even when discovery finds no servers. Without an active adapter, an empty `mcps` list alone SHALL leave MCP availability unchanged and SHALL NOT introduce an adapter dependency.
+
 A profile that declares no MCP servers MUST NOT depend on the adapter because of that.
 
 #### Scenario: Untrusted project's MCP configuration does not participate
@@ -108,6 +110,16 @@ A profile that declares no MCP servers MUST NOT depend on the adapter because of
 
 - **WHEN** a profile declares `mcps` while `pi-mcp-adapter` is not active
 - **THEN** activation fails with an error explaining that the adapter must be selected in the profile's extensions, or the `mcps` declaration must be removed
+
+#### Scenario: Empty selection with active adapter
+
+- **WHEN** a profile declares `mcps: []` and `pi-mcp-adapter` is active, whether or not any servers are discovered
+- **THEN** the resolution result contains no user-level MCP servers and activation succeeds
+
+#### Scenario: Empty selection without adapter
+
+- **WHEN** a profile declares `mcps: []` and no `pi-mcp-adapter` is active
+- **THEN** MCP availability remains unchanged and activation succeeds
 
 #### Scenario: Unknown server name
 

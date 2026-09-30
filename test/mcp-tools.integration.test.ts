@@ -158,6 +158,93 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	}
 }
 
+describe("launcher integration: empty mcps selection disables user-level servers (honor-empty-mcp-allowlist)", () => {
+	it("a shared user-level server and an agentDir-only server cannot be used under mcps: [], while a trusted project server remains callable", async () => {
+		await setupExtensions();
+
+		const sharedMcp = {
+			mcpServers: {
+				shared_srv: {
+					command: "node",
+					args: [FIXTURE_SERVER_PATH],
+				},
+			},
+		};
+		const agentMcp = {
+			mcpServers: {
+				agent_srv: {
+					command: "node",
+					args: [FIXTURE_SERVER_PATH],
+				},
+			},
+		};
+		const projectMcp = {
+			mcpServers: {
+				proj_srv: {
+					command: "node",
+					args: [FIXTURE_SERVER_PATH],
+				},
+			},
+		};
+
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), JSON.stringify(sharedMcp));
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify(agentMcp));
+		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify(projectMcp));
+		await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+
+		const originalShared = JSON.stringify(sharedMcp);
+		const originalAgent = JSON.stringify(agentMcp);
+		const originalProject = JSON.stringify(projectMcp);
+
+		await writeCatalog({
+			denyall: {
+				extensions: ["pi-mcp-adapter", "probe"],
+				mcps: [],
+			},
+		});
+
+		await writeProbePlan([
+			{ type: "connect", server: "shared_srv" },
+			{ type: "call_mcp", tool: "search", server: "shared_srv", args: { query: "shared-q" } },
+			{ type: "connect", server: "agent_srv" },
+			{ type: "call_mcp", tool: "search", server: "agent_srv", args: { query: "agent-q" } },
+			{ type: "connect", server: "proj_srv" },
+			{ type: "call_mcp", tool: "search", server: "proj_srv", args: { query: "proj-q" } },
+		]);
+
+		const res = await runLauncher(fixture, ["denyall", "--", "--mode", "json"]);
+		expect(res.code).toBe(0);
+
+		const instanceDir = await soleInstanceDir(fixture);
+		const instanceMcp = JSON.parse(await readFile(path.join(instanceDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.shared_srv).toEqual({ disabled: true });
+		expect(instanceMcp.mcpServers.agent_srv).toBeUndefined();
+		expect(instanceMcp.mcpServers.proj_srv).toBeUndefined();
+
+		expect(await readFile(path.join(fixture.root, ".agents", "mcp.json"), "utf8")).toBe(originalShared);
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalAgent);
+		expect(await readFile(path.join(fixture.cwd, ".pi", "mcp.json"), "utf8")).toBe(originalProject);
+
+		const output = await readProbeOutput();
+		const sharedConnect = output.find((o) => o.type === "connect" && o.result?.details?.server === "shared_srv");
+		expect(sharedConnect?.result?.details?.error).toBe("server_disabled");
+		const sharedCall = output.find((o) => o.type === "call_mcp" && o.result?.details?.server === "shared_srv");
+		expect(sharedCall?.result?.details?.error).toBe("server_disabled");
+
+		const agentConnect = output.find((o) => o.type === "connect" && o.result?.details?.server === "agent_srv");
+		expect(agentConnect?.result?.details?.error).toBe("not_found");
+		const agentCall = output.find((o) => o.type === "call_mcp" && o.result?.details?.server === "agent_srv");
+		expect(agentCall?.result?.details?.error).toBe("server_not_found");
+
+		const projConnect = output.find((o) => o.type === "connect" && o.result?.details?.server === "proj_srv");
+		expect(projConnect?.result?.details?.tools).toEqual(["proj_srv_search", "proj_srv_delete"]);
+		const projCall = output.find((o) => o.type === "call_mcp" && o.result?.details?.server === "proj_srv");
+		expect(projCall?.result?.content?.[0]?.text).toContain("search-result:proj-q");
+	}, 60_000);
+});
+
 describe("launcher integration: per-server MCP tool selection (Task 2.2)", () => {
 	it("direct tools: executes allowed direct tools and excludes unlisted direct tools", async () => {
 		await setupExtensions();

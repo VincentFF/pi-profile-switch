@@ -244,4 +244,111 @@ describe("launcher integration: mcp coordination", () => {
 			});
 		},
 	);
+
+	it(
+		"empty mcps selection disables discovered shared user servers and leaves source files unchanged",
+		{ timeout: 45_000 },
+		async () => {
+			await installFakeAdapter();
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			const sharedConfig = { shared: { url: "https://shared" } };
+			await writeFile(
+				path.join(fixture.root, ".agents", "mcp.json"),
+				JSON.stringify({ mcpServers: sharedConfig }),
+			);
+			const agentConfig = { agentonly: { url: "https://agent" } };
+			await writeMcpConfig(agentConfig);
+			const originalMcp = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+
+			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			const instanceMcp = JSON.parse(await readFile(instanceMcpPath, "utf8"));
+			expect(instanceMcp.mcpServers).toEqual({
+				shared: { disabled: true },
+			});
+
+			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
+			expect(JSON.parse(await readFile(path.join(fixture.root, ".agents", "mcp.json"), "utf8"))).toEqual({
+				mcpServers: sharedConfig,
+			});
+		},
+	);
+
+	it(
+		"empty mcps selection does not fail when the adapter is absent and the MCP config is malformed",
+		{ timeout: 30_000 },
+		async () => {
+			await writeMcpConfig("{ not valid json" as unknown as Record<string, unknown>);
+			await writeCatalog({ inert: { mcps: [] } });
+
+			const res = await runLauncher(fixture, ["inert", "--", "--mode", "rpc"]);
+			expect(res.code).toBe(0);
+		},
+	);
+
+	it(
+		"project-sourced MCP server is not disabled by an empty mcps selection",
+		{ timeout: 45_000 },
+		async () => {
+			await installFakeAdapter();
+			await writeMcpConfig({});
+			await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "mcp.json"),
+				JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }),
+			);
+			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+
+			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			const instanceMcp = JSON.parse(await readFile(instanceMcpPath, "utf8"));
+			expect(instanceMcp.mcpServers).toEqual({});
+		},
+	);
+
+	it(
+		"empty mcps selection with active adapter and no discovered servers generates an empty instance mcp.json",
+		{ timeout: 45_000 },
+		async () => {
+			await installFakeAdapter();
+			await writeMcpConfig({});
+			await writeCatalog({ empty: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+
+			const rpc = new RpcDriver("node", [BIN, "empty", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({ mcpServers: {} });
+		},
+	);
 });
