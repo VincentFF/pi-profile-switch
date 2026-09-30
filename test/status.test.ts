@@ -148,6 +148,90 @@ describe("buildStatusReport", () => {
 		expect(report.conflicts.map((conflict) => conflict.winnerPath)).toEqual(["not loaded", "not loaded"]);
 	});
 
+	it("keeps project-owned, non-disabled servers enabled when mcps is defined", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcps: ["github"] },
+			discoveredMcpServers: ["github", "linear", "proj-srv"],
+			disabledMcpServers: [],
+			projectMcpServers: ["proj-srv"],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({
+			enabled: ["github", "proj-srv"],
+			disabled: ["linear"],
+			missing: [],
+		});
+	});
+
+	it("reports a project-owned server as enabled even with an empty mcps selection", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcps: [] },
+			discoveredMcpServers: ["github", "proj-srv"],
+			disabledMcpServers: [],
+			projectMcpServers: ["proj-srv"],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({
+			enabled: ["proj-srv"],
+			disabled: ["github"],
+			missing: [],
+		});
+	});
+
+	it("treats a project-shadowed user-level server as project-owned and enabled", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcps: [] },
+			discoveredMcpServers: ["shared-shadowed"],
+			disabledMcpServers: [],
+			projectMcpServers: ["shared-shadowed"],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({
+			enabled: ["shared-shadowed"],
+			disabled: [],
+			missing: [],
+		});
+	});
+
+	it("does not add disabled project servers to enabled when mcps is defined", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcps: [] },
+			discoveredMcpServers: ["github", "proj-srv"],
+			disabledMcpServers: ["proj-srv"],
+			projectMcpServers: ["proj-srv"],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({
+			enabled: [],
+			disabled: ["github", "proj-srv"],
+			missing: [],
+		});
+	});
+
+	it("keeps existing behavior when projectMcpServers is omitted", () => {
+		const report = buildStatusReport({
+			plan: { ...basePlan, mcps: [] },
+			discoveredMcpServers: ["github", "proj-srv"],
+			disabledMcpServers: [],
+			commands: [],
+			tools: [],
+		});
+
+		expect(report.mcp).toEqual({
+			enabled: [],
+			disabled: ["github", "proj-srv"],
+			missing: [],
+		});
+	});
+
 	it("reports tool conflicts only when the winner is neither builtin nor a selected extension", () => {
 		const tools = [
 			{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },

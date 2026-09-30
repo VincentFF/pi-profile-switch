@@ -328,6 +328,67 @@ describe("switchProfile", () => {
 		expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
 	});
 
+	async function writeSharedMcpConfig(servers: Record<string, unknown>): Promise<void> {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), JSON.stringify({ mcpServers: servers }));
+	}
+
+	it("switching to an empty mcps selection disables user-level servers", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeSharedMcpConfig({ github: { url: "https://x" } });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await writeCatalog({
+			open: { extensions: ["pi-mcp-adapter"] },
+			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+		});
+
+		await switchProfile("open", deps());
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
+
+		await switchProfile("closed", deps());
+		const plan = await readPlanFile();
+		expect(plan.mcps).toEqual([]);
+		const instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+	});
+
+	it("empty mcps selection survives reload", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		await writeSharedMcpConfig({ github: { url: "https://x" } });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await writeCatalog({
+			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+		});
+
+		await switchProfile("closed", deps());
+		const before = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(before.mcpServers.github).toEqual({ disabled: true });
+
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		const after = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(after.mcpServers.github).toEqual({ disabled: true });
+	});
+
+	it("switching back to omitted mcps selection restores server availability", async () => {
+		await addGlobalExtension(fixture, "pi-mcp-adapter");
+		const originalMcp = JSON.stringify({ mcpServers: {} });
+		await writeSharedMcpConfig({ github: { url: "https://x" } });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), originalMcp);
+		await writeCatalog({
+			open: { extensions: ["pi-mcp-adapter"] },
+			closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+		});
+
+		await switchProfile("closed", deps());
+		const closedMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
+		expect(closedMcp.mcpServers.github).toEqual({ disabled: true });
+
+		await switchProfile("open", deps());
+		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "mcp.json"))).toBe(path.join(fixture.agentDir, "mcp.json"));
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
+	});
+
 	it("failed switch restores previous MCP tool policy (Task 3.3)", async () => {
 		await addGlobalExtension(fixture, "pi-mcp-adapter");
 		await writeFile(

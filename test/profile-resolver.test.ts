@@ -239,6 +239,97 @@ describe("resolveProfile", () => {
 
 		expect(plan.instructions).toBe("Be picky.");
 	});
+
+	describe("empty mcps selection (honor-empty-mcp-allowlist)", () => {
+		async function extensionsWithAdapter(): Promise<DiscoveredExtensions> {
+			return extensionsWith(["pi-mcp-adapter"]);
+		}
+
+		function mockMcpDiscovery(options: {
+			servers?: Record<string, Record<string, unknown>>;
+			sharedServers?: string[];
+			projectServers?: string[];
+			serverOwners?: Record<string, "user" | "project">;
+			baseConfig?: Record<string, unknown>;
+		} = {}): MergedMcpResult {
+			const servers = options.servers ?? {
+				github: { url: "https://gh" },
+				linear: { command: "linear" },
+			};
+			const sharedServers = new Set(options.sharedServers ?? ["github"]);
+			const projectServers = new Set(options.projectServers ?? []);
+			const serverOwners: Record<string, "user" | "project"> = options.serverOwners ?? {};
+			for (const s of Object.keys(servers)) {
+				if (!Object.hasOwn(serverOwners, s)) {
+					serverOwners[s] = projectServers.has(s) ? "project" : "user";
+				}
+			}
+			return { servers, sharedServers, projectServers, serverOwners, baseConfig: options.baseConfig };
+		}
+
+		it("retains an empty mcps array as an empty selection when the adapter is active", async () => {
+			const plan = await resolveProfile({
+				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+				skills: [],
+				extensions: await extensionsWithAdapter(),
+				mcpDiscovery: mockMcpDiscovery({ servers: { github: { url: "https://gh" } }, sharedServers: ["github"] }),
+			});
+
+			expect(plan.mcps).toEqual([]);
+			expect(plan.instanceMcpConfig).toEqual({ mcpServers: { github: { disabled: true } } });
+		});
+
+		it("leaves an empty mcps array inert when the adapter is not active", async () => {
+			const plan = await resolveProfile({
+				profile: profile("review", { mcps: [] }),
+				skills: [],
+				extensions: await extensionsWith(),
+			});
+
+			expect(plan.mcps).toBeUndefined();
+			expect(plan.instanceMcpConfig).toBeUndefined();
+		});
+
+		it("fails activation for empty mcps with active adapter but no MCP discovery", async () => {
+			await expect(
+				resolveProfile({
+					profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+					skills: [],
+					extensions: await extensionsWithAdapter(),
+				}),
+			).rejects.toThrow(/no adapter server discovery/);
+		});
+
+		it("retains an empty mcps selection when the adapter discovers no servers", async () => {
+			const plan = await resolveProfile({
+				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+				skills: [],
+				extensions: await extensionsWithAdapter(),
+				mcpDiscovery: mockMcpDiscovery({ servers: {}, sharedServers: [], projectServers: [] }),
+			});
+
+			expect(plan.mcps).toEqual([]);
+			expect(plan.instanceMcpConfig).toEqual({ mcpServers: {} });
+		});
+
+		it("an empty mcps selection disables shared user servers but keeps project servers enabled", async () => {
+			const plan = await resolveProfile({
+				profile: profile("review", { extensions: ["pi-mcp-adapter"], mcps: [] }),
+				skills: [],
+				extensions: await extensionsWithAdapter(),
+				mcpDiscovery: mockMcpDiscovery({
+					servers: { github: { url: "https://gh" }, "proj-srv": { url: "https://proj" } },
+					sharedServers: ["github"],
+					projectServers: ["proj-srv"],
+				}),
+			});
+
+			expect(plan.mcps).toEqual([]);
+			expect(plan.instanceMcpConfig).toEqual({
+				mcpServers: { github: { disabled: true } },
+			});
+		});
+	});
 });
 
 describe("overlay application (ticket 06)", () => {

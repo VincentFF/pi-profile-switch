@@ -234,6 +234,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						overlay: state.overlay,
 						discoveredMcpServers,
 						disabledMcpServers,
+						projectMcpServers: [...mcpDiscovery.projectServers].sort(),
 						commands: pi.getCommands(),
 						tools: pi.getAllTools(),
 					});

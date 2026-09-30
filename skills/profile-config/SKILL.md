@@ -54,7 +54,7 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
 | `description` | `string` | Short description of the profile (e.g. `"Read-only review profile"`). |
 | `skills` | `string[]` | Skill names or globs to reference. When undeclared, available skills are not narrowed. |
 | `extensions` | `string[]` | Extension identifiers or globs to reference. When undeclared, available extensions are not narrowed. |
-| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, `mcps` itself adds no adapter requirement; a nonempty `mcp_tools` still requires `pi-mcp-adapter`. |
+| `mcps` | `string[]` | MCP server names or globs to reference. When undeclared, all discovered user-level servers keep their normal adapter availability and `mcps` adds no adapter requirement; a nonempty `mcp_tools` still requires `pi-mcp-adapter`. An explicit `mcps: []` disables every discovered user-level server when `pi-mcp-adapter` is selected, and is inert when the adapter is not selected. Project-level servers are never narrowed. |
 | `tools` | `string[]` | Whitelisted non-MCP tool names or globs (built-in and extension tools only). Live MCP tools remain usable independently of `tools`. When undeclared, tools are not narrowed and Pi's native tool set is kept. |
 | `mcp_tools` | `Record<string, string[]>` | Per-server MCP tool selection: literal server names mapped to literal adapter selectors (original or prefixed names; both forms may select the same tool). Globs are rejected. An omitted server allows all tools; a nonempty array allows only matches; an empty array (`[]`) denies all tools while keeping the server enabled. An empty object (`{}`) behaves like omission. Nonempty declarations require `pi-mcp-adapter`, even when `mcps` is omitted. |
 | `defaultProvider` | `string` | Default model provider (e.g. `"anthropic"`, `"openai"`). Effective only when declared together with `defaultModel`. |
@@ -70,7 +70,9 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
   "skills": [
     "profile-config"
   ],
-  "extensions": [],
+  "extensions": [
+    "pi-mcp-adapter"
+  ],
   "mcps": [],
   "tools": [
     "read",

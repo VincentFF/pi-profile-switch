@@ -310,6 +310,45 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		);
 	});
 
+	it("generates an empty mcps selection that disables discovered shared user servers", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(
+			path.join(fixture.root, ".agents", "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					shared: { url: "http://shared" },
+				},
+			}),
+		);
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+
+		const result = await generateRuntimeDir(selectionPlan({ mcps: [] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({ shared: { disabled: true } });
+		expect((await lstat(path.join(result.runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
+	});
+
+	it("does not mark project-sourced MCP servers disabled for an empty mcps selection", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await writeFile(
+			path.join(fixture.cwd, ".mcp.json"),
+			JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ mcps: [] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectDir: fixture.cwd,
+		});
+
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({});
+	});
+
 	it("symlinks auth state and links trust.json for named profiles", async () => {
 		await writeFile(path.join(fixture.agentDir, "auth.json"), "{}");
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");

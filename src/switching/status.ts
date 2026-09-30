@@ -73,6 +73,9 @@ export function buildStatusReport(input: {
 	overlay?: RuntimeOverlay;
 	discoveredMcpServers: string[];
 	disabledMcpServers: string[];
+	/** Project-owned server names from trust-gated MCP discovery; kept enabled
+	 *  when the profile declares a defined `mcps` selection. */
+	projectMcpServers?: string[];
 	commands: RegisteredCommand[];
 	tools: RegisteredTool[];
 }): StatusReport {
@@ -89,9 +92,15 @@ export function buildStatusReport(input: {
 		disabled = input.discoveredMcpServers.filter((name) => adapterDisabled.has(name));
 		missing = [];
 	} else {
-		enabled = plan.mcps;
+		const projectMcpServers = new Set(input.projectMcpServers ?? []);
+		const adapterDisabled = new Set(input.disabledMcpServers);
+		const explicitMcps = new Set(plan.mcps);
+		const projectEnabled = input.discoveredMcpServers.filter(
+			(name) => projectMcpServers.has(name) && !explicitMcps.has(name) && !adapterDisabled.has(name),
+		);
+		enabled = [...plan.mcps, ...projectEnabled].sort();
 		disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name));
-		missing = enabled.filter((name) => !discovered.has(name));
+		missing = plan.mcps.filter((name) => !discovered.has(name));
 	}
 
 	const mcp = { enabled, disabled, missing };

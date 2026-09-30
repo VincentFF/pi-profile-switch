@@ -162,6 +162,16 @@ describe("ProfileCatalog (global catalog)", () => {
 		expect(resolved?.definition.mcp_tools).toBeUndefined();
 	});
 
+	it("retains an explicitly empty mcps array as distinct from omission", async () => {
+		await writeGlobalProfile("empty-mcps", { mcps: [] });
+		await writeGlobalProfile("omitted-mcps", { label: "Omitted" });
+
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
+
+		expect(catalog.resolve("empty-mcps")?.definition.mcps).toEqual([]);
+		expect(catalog.resolve("omitted-mcps")?.definition.mcps).toBeUndefined();
+	});
+
 	describe("mcp_tools parsing and validation", () => {
 		it("retains an empty per-server list distinct from an absent field or absent server", async () => {
 			await writeGlobalProfile("restricted", { mcp_tools: { github: [] } });

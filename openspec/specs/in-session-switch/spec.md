@@ -44,6 +44,8 @@ Switching SHALL NOT change Pi's project-trust input: the instance's `trust.json`
 
 `/profile reload` SHALL follow the same path, but SHALL NOT produce a change summary and SHALL preserve the current profile's existing selection persistence (a one-shot selection made at launch remains one-shot after reload).
 
+An explicit empty `mcps` selection on an adapter-active named profile SHALL have the same effect after `/profile use` and `/profile reload` as at launch. Switching to a profile that omits `mcps` SHALL restore the adapter's normal user-level server availability.
+
 #### Scenario: Successful switch
 
 - **WHEN** `/profile use implement` is executed and both resolution and reload succeed
@@ -63,6 +65,21 @@ Switching SHALL NOT change Pi's project-trust input: the instance's `trust.json`
 
 - **WHEN** launched as `pi-profile review` (one-shot selection), followed by `/profile reload`
 - **THEN** `review` is still running and the selection is not thereby written into runtime state
+
+#### Scenario: Switching to an empty MCP selection
+
+- **WHEN** an adapter-active session switches from a profile that omits `mcps` to a named profile declaring `mcps: []`
+- **THEN** the discovered user-level servers are unavailable without restarting the Pi session
+
+#### Scenario: Empty MCP selection survives reload
+
+- **WHEN** an adapter-active named profile with `mcps: []` executes `/profile reload`
+- **THEN** the discovered user-level servers remain unavailable
+
+#### Scenario: Switching back to omitted MCP selection
+
+- **WHEN** an adapter-active session switches from a named profile with `mcps: []` to a profile omitting `mcps`
+- **THEN** user-level servers return to their normal adapter-defined availability
 
 ### Requirement: Rollback on switch failure
 
@@ -232,7 +249,7 @@ The selector and the degraded list SHALL show only visible profiles and SHALL us
 
 Each list entry SHALL report the winning definition's source and be marked when the project definition shadows a same-named global definition.
 
-`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners.
+`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners. For a named profile whose active adapter applies `mcps: []`, the discovered user-level servers SHALL be reported as disabled, not enabled, while trusted project-owned servers SHALL remain reported as enabled.
 
 The degraded list and `status` SHALL be emitted as messages carrying structured payloads for non-interactive consumers.
 
@@ -245,6 +262,16 @@ The degraded list and `status` SHALL be emitted as messages carrying structured 
 
 - **WHEN** the project and global catalogs define the same-named profile
 - **THEN** the list entry reports its source as project and is marked as shadowing the global definition
+
+#### Scenario: Empty MCP selection is visible in status
+
+- **WHEN** a named profile with an active adapter declares `mcps: []` and user-level servers have been discovered
+- **THEN** `/profile status` reports no selected user-level servers and reports the discovered user-level servers as disabled
+
+#### Scenario: Project-owned server remains enabled in status
+
+- **WHEN** a named profile with an active adapter declares `mcps: []` and a trusted project defines an enabled server
+- **THEN** `/profile status` reports the project-owned server as enabled rather than disabled
 
 ### Requirement: MCP tool policy observability and switch rollback
 
