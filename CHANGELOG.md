@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.1...v0.12.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* honor empty MCP allowlist ([#71](https://github.com/VincentFF/pi-profile-switch/issues/71)) ([b0853de](https://github.com/VincentFF/pi-profile-switch/commit/b0853de1b696335525f5619ce395c079724c4a97))
+
 ## [0.12.1](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.0...v0.12.1) (2026-09-30)
 
 
