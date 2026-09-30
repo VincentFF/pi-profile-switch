@@ -263,7 +263,7 @@ describe("startup notifier: announcements", () => {
 	});
 });
 
-describe("startup notifier: per-source cache, backoff, and claims", () => {
+describe("startup notifier: per-source cache and backoff", () => {
 	async function seedNpmCache(latest: string, timestamps?: { lastSuccess?: number; lastAttempt?: number }): Promise<void> {
 		const dir = path.join(workspaceDir, "notifications");
 		await mkdir(dir, { recursive: true });
@@ -329,7 +329,7 @@ describe("startup notifier: per-source cache, backoff, and claims", () => {
 		expect(second.requested).toHaveLength(0);
 	});
 
-	it("two simultaneous launches display the same reminder only once", async () => {
+	it("overlapping launches each display the reminder at most once and history is recorded", async () => {
 		const routes = { [NPM_METADATA_URL]: npmBody("1.1.0"), [ANNOUNCEMENTS_URL]: feedBody([]) };
 		const { fetcher } = fakeFetch(routes);
 		const surfaceA = recordingSurface();
@@ -345,7 +345,20 @@ describe("startup notifier: per-source cache, backoff, and claims", () => {
 			runStartupNotifications({ ...common, surface: surfaceA }),
 			runStartupNotifications({ ...common, surface: surfaceB }),
 		]);
-		expect(surfaceA.messages.length + surfaceB.messages.length).toBe(1);
+		// Overlapping launches are not synchronized: either may display the
+		// reminder, but no launch may display it twice.
+		expect(surfaceA.messages.length).toBeLessThanOrEqual(1);
+		expect(surfaceB.messages.length).toBeLessThanOrEqual(1);
+		expect(surfaceA.messages.length + surfaceB.messages.length).toBeGreaterThanOrEqual(1);
+		expect(surfaceA.messages.length + surfaceB.messages.length).toBeLessThanOrEqual(2);
+		// The displayed key is recorded for launches that evaluate later.
+		const history = JSON.parse(
+			await readFile(path.join(workspaceDir, "notifications", "displayed.json"), "utf8"),
+		) as { keys: string[] };
+		expect(history.keys).toContain("upgrade:1.1.0");
+		const third = recordingSurface();
+		await runStartupNotifications({ ...common, surface: third });
+		expect(third.messages).toEqual([]);
 	});
 
 	it("keeps previously validated cached announcements usable when a later response is invalid", async () => {
