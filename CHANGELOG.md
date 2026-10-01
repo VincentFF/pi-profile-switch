@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.1...v0.13.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* require native MCP Pi and refresh upgrade notice ([#80](https://github.com/VincentFF/pi-profile-switch/issues/80)) ([6a1f591](https://github.com/VincentFF/pi-profile-switch/commit/6a1f5910e52f72c4e61d8f54d69a37b42cb5cd3a))
+
 ## [0.13.1](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.0...v0.13.1) (2026-10-01)
 
 
