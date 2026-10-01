@@ -224,4 +224,57 @@ describe("loadMergedMcpServers", () => {
 
 		await expect(loadMergedMcpServers(fixture.agentDir)).rejects.toThrow(McpConfigError);
 	});
+
+	it("diagnostic mode skips a malformed source and keeps valid sources", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const malformedPath = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(malformedPath, "{ invalid");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir, undefined, { invalidSource: "diagnose" });
+
+		expect(Object.keys(result.servers)).toEqual(["github"]);
+		expect(result.diagnostics).toEqual([`MCP config is not valid JSON: ${path.resolve(malformedPath)}`]);
+	});
+
+	it("diagnostic mode skips a non-object envelope without merging it", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify(["not", "an", "object"]));
+
+		const result = await loadMergedMcpServers(fixture.agentDir, undefined, { invalidSource: "diagnose" });
+
+		expect(Object.keys(result.servers)).toEqual([]);
+		expect(result.baseConfig).toBeUndefined();
+		expect(result.diagnostics?.[0]).toContain("must be a JSON object");
+	});
+
+	it("diagnostic mode skips a malformed mcpServers envelope without merging its other keys", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: ["not-an-object"], settings: { leaked: true } }),
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir, undefined, { invalidSource: "diagnose" });
+
+		expect(Object.keys(result.servers)).toEqual([]);
+		expect(result.baseConfig).toBeUndefined();
+		expect(result.diagnostics?.[0]).toContain('"mcpServers" must be a JSON object');
+	});
+
+	it("diagnostic mode diagnoses a malformed trusted project source without blocking", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+		await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
+		const projectPath = path.join(fixture.cwd, ".pi", "mcp.json");
+		await writeFile(projectPath, "{ invalid");
+
+		const result = await loadMergedMcpServers(fixture.agentDir, fixture.cwd, { invalidSource: "diagnose" });
+
+		expect(Object.keys(result.servers)).toEqual(["github"]);
+		expect(result.diagnostics).toEqual([`MCP config is not valid JSON: ${path.resolve(projectPath)}`]);
+	});
 });

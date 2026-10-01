@@ -351,6 +351,46 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(mcpInstance.mcpServers).toEqual({ github: {} });
 	});
 
+	it("reports warnings when a malformed MCP source is skipped under an undeclared policy", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const malformedPath = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(malformedPath, "{ invalid");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(result.warnings).toEqual([`MCP config is not valid JSON: ${path.resolve(malformedPath)}`]);
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({ github: { url: "https://x" } });
+	});
+
+	it("fails generation under an explicit MCP policy when a required source is malformed", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid");
+
+		await expect(
+			generateRuntimeDir(selectionPlan({ mcps: ["github"] }), {
+				agentDir: fixture.agentDir,
+				discovery: { skills: [], packages: [] },
+			}),
+		).rejects.toThrow(/not valid JSON/);
+	});
+
+	it("returns an empty warnings list when every MCP source is valid", async () => {
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(result.warnings).toEqual([]);
+	});
+
 	it("generates an empty mcps selection that disables discovered shared user servers", async () => {
 		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 		await writeFile(

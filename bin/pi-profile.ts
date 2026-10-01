@@ -67,6 +67,9 @@ try {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
 	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectDir });
+	for (const warning of generated.warnings) {
+		console.error(`pi-profile: warning: ${warning}`);
+	}
 	process.exitCode = await spawnPi({
 		generated,
 		piArgs: args.piArgs,

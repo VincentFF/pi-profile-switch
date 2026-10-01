@@ -34,6 +34,10 @@ export class McpConfigError extends Error {
 
 export interface McpDiscoveryOptions {
 	homeDir?: string;
+	/** How an unreadable or malformed source is handled. "throw" (default)
+	 *  fails discovery with `McpConfigError`; "diagnose" skips the source and
+	 *  records a path-bearing diagnostic so valid sources still merge. */
+	invalidSource?: "throw" | "diagnose";
 }
 
 export interface MergedMcpResult {
@@ -48,6 +52,10 @@ export interface MergedMcpResult {
 	/** The merged user-level configuration object, with later sources
 	 *  overriding earlier ones per server name. */
 	baseConfig?: Record<string, unknown>;
+	/** Path-bearing diagnostics for sources skipped in "diagnose" mode.
+	 *  Always populated by `loadMergedMcpServers`; absent from hand-built
+	 *  discovery fixtures. */
+	diagnostics?: string[];
 }
 
 function setOwnRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
@@ -98,13 +106,25 @@ export async function loadMergedMcpServers(
 	projectDir?: string,
 	options?: McpDiscoveryOptions,
 ): Promise<MergedMcpResult> {
+	const invalidSource = options?.invalidSource ?? "throw";
 	const sources = getStandardMcpConfigSources(agentDir, projectDir, options);
 	const seenPaths = new Set<string>();
 	const servers: Record<string, Record<string, unknown>> = {};
 	const sharedServers = new Set<string>();
 	const projectServers = new Set<string>();
 	const serverOwners: Record<string, "user" | "project"> = {};
+	const diagnostics: string[] = [];
 	let baseConfig: Record<string, unknown> | undefined;
+
+	/** Strict mode fails discovery; diagnostic mode records the path and
+	 *  skips only that source, leaving valid sources available. */
+	const reject = (message: string, filePath: string): boolean => {
+		if (invalidSource === "diagnose") {
+			diagnostics.push(message);
+			return false;
+		}
+		throw new McpConfigError(message, filePath);
+	};
 
 	for (const source of sources) {
 		const resolvedPath = path.resolve(source.path);
@@ -114,10 +134,13 @@ export async function loadMergedMcpServers(
 		const result = await readJsonFile(resolvedPath);
 		if (!result.ok) {
 			if (result.reason === "missing") continue;
-			throw new McpConfigError(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath);
+			if (!reject(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath)) continue;
 		}
 		if (!isRecord(result.value)) {
-			throw new McpConfigError(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath);
+			if (!reject(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath)) continue;
+		}
+		if (result.value.mcpServers !== undefined && !isRecord(result.value.mcpServers)) {
+			if (!reject(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath)) continue;
 		}
 
 		if (!source.isProject) {
@@ -128,9 +151,6 @@ export async function loadMergedMcpServers(
 		}
 
 		if (result.value.mcpServers === undefined) continue;
-		if (!isRecord(result.value.mcpServers)) {
-			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
-		}
 		for (const [name, def] of Object.entries(result.value.mcpServers)) {
 			// Align discovery with JSON semantics: inherited prototype keys are
 			// never treated as discoverable server names.
@@ -148,5 +168,5 @@ export async function loadMergedMcpServers(
 		}
 	}
 
-	return { servers, sharedServers, projectServers, serverOwners, baseConfig };
+	return { servers, sharedServers, projectServers, serverOwners, baseConfig, diagnostics };
 }

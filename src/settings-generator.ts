@@ -83,6 +83,9 @@ export interface GeneratedRuntime {
 	runtimeDir: string;
 	/** Environment variables for the spawned pi process. */
 	env: Record<string, string>;
+	/** Non-fatal diagnostics (e.g. malformed MCP sources skipped under an
+	 *  undeclared MCP policy). The launcher prints them on stderr. */
+	warnings: string[];
 }
 
 /** Files managed explicitly by pi-profile in runtimeDir; excluded from auto-symlinking. */
@@ -405,14 +408,34 @@ export interface ResolvedNames {
 /** Writes settings.json + pi-profile.json into an existing runtime dir and
  *  keeps the trust.json link in place for every profile: Pi reads its
  *  project-scope decision from that path, and project-level resources belong
- *  to Pi's trust gate rather than to the profile. */
+ *  to Pi's trust gate rather than to the profile.
+ *
+ *  All generated content (settings, launch plan, MCP snapshot, diagnostics)
+ *  is prepared in memory before any runtime file is touched, so a discovery
+ *  failure can never leave a half-written runtime dir (D3). */
 export async function writeRuntimeFiles(
 	runtimeDir: string,
 	plan: ActivationPlan,
 	options: RuntimeFileOptions,
-): Promise<void> {
+): Promise<{ warnings: string[] }> {
+	const warnings: string[] = [];
 	const settings = await computeSettings(plan, options, runtimeDir);
-	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
+
+	// Prepare the MCP snapshot and diagnostics before the write stage. A
+	// declared mcps or nonempty mcp_tools policy is strict; an undeclared
+	// policy diagnoses malformed sources by path and keeps valid ones (D2).
+	const hasMcpPolicy =
+		plan.mcps !== undefined || (plan.mcpTools !== undefined && Object.keys(plan.mcpTools).length > 0);
+	const discovery = await loadMergedMcpServers(
+		options.agentDir,
+		options.projectDir,
+		{
+			...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+			invalidSource: hasMcpPolicy ? "throw" : "diagnose",
+		},
+	);
+	warnings.push(...(discovery.diagnostics ?? []));
+	const instanceMcpConfig = buildInstanceMcpConfig(plan.profile, discovery, plan.mcps, plan.mcpTools);
 
 	// The launch plan feeds the in-pi extension: tool re-application after
 	// reload (the tools strict allowlist), in-session switching, status
@@ -420,33 +443,30 @@ export async function writeRuntimeFiles(
 	// agentDir is the REAL agent dir — the extension needs it for trust
 	// checks, state files, and catalog reads (its own
 	// PI_CODING_AGENT_DIR points at this runtime dir).
-	await writeFile(
-		path.join(runtimeDir, "pi-profile.json"),
-		`${JSON.stringify(
-			{
-				profile: plan.profile,
-				source: plan.source,
-				agentDir: options.agentDir,
-				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
-				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
-				...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
-				...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
-				...(plan.mcpTools !== undefined ? { mcpTools: plan.mcpTools } : {}),
-				// The resolved sets feed /profile status (absolute paths) and the
-				// glob-delta diff against the previous activation.
-				resolved: {
-					skills: plan.skills.map((skill) => ({ name: skill.name, filePath: skill.filePath })),
-					extensions: plan.extensions,
-				},
-				// Zero-match glob references (ADR-0009) — surfaced by /profile status
-				// so a typo'd glob is visible instead of silently selecting nothing.
-				...(plan.unmatched !== undefined ? { unmatched: plan.unmatched } : {}),
-				...options.planExtras,
-			},
-			null,
-			2,
-		)}\n`,
-	);
+	const launchPlan = {
+		profile: plan.profile,
+		source: plan.source,
+		agentDir: options.agentDir,
+		...(plan.tools !== undefined ? { tools: plan.tools } : {}),
+		...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
+		...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
+		...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
+		...(plan.mcpTools !== undefined ? { mcpTools: plan.mcpTools } : {}),
+		// The resolved sets feed /profile status (absolute paths) and the
+		// glob-delta diff against the previous activation.
+		resolved: {
+			skills: plan.skills.map((skill) => ({ name: skill.name, filePath: skill.filePath })),
+			extensions: plan.extensions,
+		},
+		// Zero-match glob references (ADR-0009) — surfaced by /profile status
+		// so a typo'd glob is visible instead of silently selecting nothing.
+		...(plan.unmatched !== undefined ? { unmatched: plan.unmatched } : {}),
+		...options.planExtras,
+	};
+
+	// --- write stage: all content is ready; no reads re-run here. ---
+	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
+	await writeFile(path.join(runtimeDir, "pi-profile.json"), `${JSON.stringify(launchPlan, null, 2)}\n`);
 
 	// Every profile gets the link, dangling allowed: Pi's stored trust decision
 	// is what makes a trusted project's resources visible, and a decision Pi
@@ -460,20 +480,11 @@ export async function writeRuntimeFiles(
 
 	// MCP Servers generation: the instance mcp.json is always a generated
 	// snapshot of the merged user-level configuration; it is never a symlink
-	// or a copy of the real agentDir file (ADR-0016).
+	// or a copy of the real agentDir file (ADR-0016). The replacement content
+	// was prepared above, so the old file is removed only once its successor
+	// is ready to write.
 	const mcpInstancePath = path.join(runtimeDir, "mcp.json");
 	try { await rm(mcpInstancePath); } catch {}
-	const discovery = await loadMergedMcpServers(
-		options.agentDir,
-		options.projectDir,
-		options.homeDir !== undefined ? { homeDir: options.homeDir } : undefined,
-	);
-	const instanceMcpConfig = buildInstanceMcpConfig(
-		plan.profile,
-		discovery,
-		plan.mcps,
-		plan.mcpTools,
-	);
 	await writeFile(mcpInstancePath, JSON.stringify(instanceMcpConfig, null, 2));
 
 	// Instructions generation (Ticket 04)
@@ -486,6 +497,8 @@ export async function writeRuntimeFiles(
 
 	// Full-fidelity symlink mirroring and dangling link cleanup (Ticket 02).
 	await syncAgentSymlinks(options.agentDir, runtimeDir);
+
+	return { warnings };
 }
 
 /**
@@ -595,12 +608,13 @@ export async function generateRuntimeDir(
 	// their switches) rewrite each other's files (ADR-0010).
 	const runtimeDir = await mkdtemp(path.join(runtimeRoot, "launch-"));
 
-	await writeRuntimeFiles(runtimeDir, plan, options);
+	const { warnings } = await writeRuntimeFiles(runtimeDir, plan, options);
 
 	return {
 		runtimeDir,
 		env: {
 			PI_CODING_AGENT_DIR: runtimeDir,
 		},
+		warnings,
 	};
 }
