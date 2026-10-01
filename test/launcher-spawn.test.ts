@@ -6,6 +6,7 @@ import type { GeneratedRuntime } from "../src/settings-generator.ts";
 const generated: GeneratedRuntime = {
 	runtimeDir: "/tmp/runtime",
 	env: { PI_CODING_AGENT_DIR: "/tmp/runtime" },
+	warnings: [],
 };
 
 describe("buildPiArgs", () => {

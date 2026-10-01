@@ -234,7 +234,7 @@ describe("resolveInitialProfile", () => {
 			const { plan } = await resolveInitialProfile("denyall", context());
 
 			expect(plan.mcps).toEqual([]);
-			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { enabled: false } });
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { url: "https://gh", enabled: false } });
 		});
 
 		it("does not mark project-sourced MCP servers disabled for an empty mcps selection", async () => {

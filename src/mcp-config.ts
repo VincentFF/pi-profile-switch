@@ -118,13 +118,6 @@ export async function loadMergedMcpServers(
 
 	/** Strict mode fails discovery; diagnostic mode records the path and
 	 *  skips only that source, leaving valid sources available. */
-	const reject = (message: string, filePath: string): boolean => {
-		if (invalidSource === "diagnose") {
-			diagnostics.push(message);
-			return false;
-		}
-		throw new McpConfigError(message, filePath);
-	};
 
 	for (const source of sources) {
 		const resolvedPath = path.resolve(source.path);
@@ -134,13 +127,25 @@ export async function loadMergedMcpServers(
 		const result = await readJsonFile(resolvedPath);
 		if (!result.ok) {
 			if (result.reason === "missing") continue;
-			if (!reject(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath)) continue;
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`MCP config is not valid JSON: ${resolvedPath}`);
+				continue;
+			}
+			throw new McpConfigError(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath);
 		}
 		if (!isRecord(result.value)) {
-			if (!reject(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath)) continue;
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`MCP config must be a JSON object: ${resolvedPath}`);
+				continue;
+			}
+			throw new McpConfigError(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath);
 		}
 		if (result.value.mcpServers !== undefined && !isRecord(result.value.mcpServers)) {
-			if (!reject(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath)) continue;
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`"mcpServers" must be a JSON object: ${resolvedPath}`);
+				continue;
+			}
+			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
 		}
 
 		if (!source.isProject) {
