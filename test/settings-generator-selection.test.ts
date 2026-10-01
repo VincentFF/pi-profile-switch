@@ -332,8 +332,8 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
 		expect(mcpInstance.mcpServers).toEqual({
 			"mcp-atlassian": { url: "http://127.0.0.1:10801/mcp", lifecycle: "keep-alive" },
-			"mcp-grafana": { enabled: false },
-			"agent-only": { enabled: false },
+			"mcp-grafana": { url: "http://127.0.0.1:10802/mcp", enabled: false },
+			"agent-only": { url: "http://x", enabled: false },
 		});
 	});
 
@@ -369,7 +369,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		});
 
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
-		expect(mcpInstance.mcpServers).toEqual({ shared: { enabled: false } });
+		expect(mcpInstance.mcpServers).toEqual({ shared: { url: "http://shared", enabled: false } });
 		expect((await lstat(path.join(result.runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
 	});
 

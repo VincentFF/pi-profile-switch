@@ -72,7 +72,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
 					github: { url: "https://x" },
-					linear: { enabled: false },
+					linear: { command: "mcp-linear", enabled: false },
 				},
 			});
 
@@ -241,8 +241,8 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			const instanceMcp = JSON.parse(await readFile(instanceMcpPath, "utf8"));
 			expect(instanceMcp.mcpServers).toEqual({
-				shared: { enabled: false },
-				agentonly: { enabled: false },
+				shared: { url: "https://shared", enabled: false },
+				agentonly: { url: "https://agent", enabled: false },
 			});
 
 			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
@@ -302,6 +302,45 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({ mcpServers: {} });
+		},
+	);
+
+	it(
+		"mcps: [] disables discovered stdio servers without connecting them or warning about missing transports",
+		{ timeout: 45_000 },
+		async () => {
+			const marker = path.join(fixture.root, "mcp-server-started.marker");
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(
+				path.join(fixture.root, ".agents", "mcp.json"),
+				JSON.stringify({
+					mcpServers: {
+						shared: {
+							command: "node",
+							args: [path.resolve("test/fixtures/fixture-mcp-server.mjs")],
+							env: { FIXTURE_MCP_START_MARKER: marker },
+						},
+					},
+				}),
+			);
+			await writeMcpConfig({});
+			await writeCatalog({ denyall: { mcps: [] } });
+
+			const result = await runLauncher(fixture, ["denyall", "--", "--mode", "rpc"]);
+
+			expect(result.code).toBe(0);
+			expect(result.stderr).not.toContain('needs either "command"');
+			// The disabled stdio server must never be spawned.
+			expect(existsSync(marker)).toBe(false);
+			const instanceMcp = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+			expect(instanceMcp.mcpServers).toEqual({
+				shared: {
+					command: "node",
+					args: [path.resolve("test/fixtures/fixture-mcp-server.mjs")],
+					env: { FIXTURE_MCP_START_MARKER: marker },
+					enabled: false,
+				},
+			});
 		},
 	);
 

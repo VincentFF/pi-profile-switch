@@ -114,7 +114,7 @@ describe("loadMergedMcpServers", () => {
 		);
 
 		const result = await loadMergedMcpServers(fixture.agentDir);
-		expect(result.servers["shared-a"]).toEqual({ url: "https://a-agentdir", key: "from-agents" });
+		expect(result.servers["shared-a"]).toEqual({ url: "https://a-agentdir" });
 		expect(result.servers["shared-b"]).toEqual({ url: "https://b" });
 		expect(result.servers["local-c"]).toEqual({ command: "c" });
 		expect(result.sharedServers.has("shared-a")).toBe(true);
@@ -125,6 +125,30 @@ describe("loadMergedMcpServers", () => {
 			url: "https://a-agentdir",
 		});
 		expect(result.baseConfig?.settings).toEqual({ custom: true });
+	});
+
+	it("a later URL does not inherit an earlier authorization header", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(
+			path.join(fixture.root, ".agents", "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					"github-api": { url: "https://old", headers: { Authorization: "Bearer secret" } },
+				},
+			}),
+		);
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					"github-api": { url: "https://new" },
+				},
+			}),
+		);
+
+		const result = await loadMergedMcpServers(fixture.agentDir);
+
+		expect(result.servers["github-api"]).toEqual({ url: "https://new" });
 	});
 
 	it("baseConfig merges user-level sources with later top-level keys overriding earlier ones", async () => {

@@ -140,9 +140,11 @@ export async function loadMergedMcpServers(
 			}
 			if (source.isProject === true) projectServers.add(name);
 			setOwnRecordValue(serverOwners, name, source.isProject === true ? "project" : "user");
-			const previous = Object.hasOwn(servers, name) ? servers[name] : undefined;
-			const merged = isRecord(def) ? { ...(previous ?? {}), ...def } : { ...(previous ?? {}) };
-			setOwnRecordValue(servers, name, merged);
+			// Whole-definition precedence: a later definition replaces the same-named
+			// server entirely. Connection, credential, and exposure fields are never
+			// inherited from an earlier source, so a later URL cannot pick up an
+			// earlier authorization header (D1).
+			setOwnRecordValue(servers, name, isRecord(def) ? { ...def } : {});
 		}
 	}
 

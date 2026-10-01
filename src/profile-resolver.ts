@@ -479,6 +479,14 @@ export function buildInstanceMcpConfig(
 			mcpDiscovery.serverOwners[serverName] === "project" || mcpDiscovery.projectServers.has(serverName);
 		if (isProjectOwned) continue;
 
+		// A selected server the winning source explicitly disables fails with a
+		// fix, never a silent enablement override (D1).
+		if (mcps?.includes(serverName) === true && originalDef.enabled === false) {
+			throw new ActivationError(
+				`profile "${profileName}": selected MCP server "${serverName}" is disabled in its source configuration; enable it there or remove it from "mcps"`,
+			);
+		}
+
 		// A server explicitly selected by mcps whose definition uses a
 		// transport Pi's built-in MCP extension cannot use fails activation.
 		if (mcps?.includes(serverName) === true && originalDef.type === "sse") {
@@ -502,11 +510,14 @@ export function buildInstanceMcpConfig(
 		setOwnRecordValue(filteredServers, serverName, def);
 	}
 
-	// Unselected user-level servers are explicitly disabled.
+	// Unselected user-level servers keep their complete winning definition and
+	// are explicitly disabled. Pi validates the transport before `enabled`, so
+	// a transport-less placeholder would warn on every valid disabled server.
 	if (mcps !== undefined) {
 		for (const userName of userServers) {
 			if (mcps.includes(userName)) continue;
-			setOwnRecordValue(filteredServers, userName, { enabled: false });
+			const unselectedDef = mcpDiscovery.servers[userName] ?? {};
+			setOwnRecordValue(filteredServers, userName, { ...unselectedDef, enabled: false });
 		}
 	}
 

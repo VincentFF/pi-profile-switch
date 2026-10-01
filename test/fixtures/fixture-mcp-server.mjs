@@ -2,6 +2,13 @@
 import fs from "node:fs";
 import readline from "node:readline";
 
+// Env-driven startup marker: tests set FIXTURE_MCP_START_MARKER to a file
+// path and assert the file stays absent when a server must never connect.
+const startMarker = process.env.FIXTURE_MCP_START_MARKER;
+if (startMarker) {
+	fs.writeFileSync(startMarker, "started");
+}
+
 const rl = readline.createInterface({
 	input: process.stdin,
 	output: process.stdout,

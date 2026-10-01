@@ -230,6 +230,25 @@ describe("resolveProfile", () => {
 		).rejects.toThrow(/no MCP server discovery is available/);
 	});
 
+	it("fails activation when mcps selects a server disabled in its winning definition", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: { github: { url: "https://gh", enabled: false } },
+			sharedServers: new Set(),
+			projectServers: new Set(),
+			serverOwners: { github: "user" },
+		};
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcps: ["github"] }),
+				skills: [],
+				extensions: await extensionsWith(),
+				discoveredMcpServers: ["github"],
+				mcpDiscovery,
+			}),
+		).rejects.toThrow(/selected MCP server "github" is disabled in its source configuration/);
+	});
+
 	it("fails activation when an explicitly selected server uses the legacy SSE transport", async () => {
 		const mcpDiscovery: MergedMcpResult = {
 			servers: { github: { type: "sse", url: "http://localhost:3000/sse" } },
@@ -308,7 +327,7 @@ describe("resolveProfile", () => {
 
 		expect(plan.mcps).toEqual(["github"]);
 		expect(plan.instanceMcpConfig).toEqual({
-			mcpServers: { github: { url: "https://gh" }, linear: { enabled: false } },
+			mcpServers: { github: { url: "https://gh" }, linear: { command: "linear", enabled: false } },
 		});
 	});
 
@@ -354,7 +373,7 @@ describe("resolveProfile", () => {
 			});
 
 			expect(plan.mcps).toEqual([]);
-			expect((plan.instanceMcpConfig?.mcpServers as Record<string, unknown>)?.github).toEqual({ enabled: false });
+			expect((plan.instanceMcpConfig?.mcpServers as Record<string, unknown>)?.github).toEqual({ url: "https://gh", enabled: false });
 		});
 
 		it("fails activation for empty mcps without MCP discovery", async () => {
@@ -393,7 +412,7 @@ describe("resolveProfile", () => {
 
 			expect(plan.mcps).toEqual([]);
 			expect(plan.instanceMcpConfig).toEqual({
-				mcpServers: { github: { enabled: false } },
+				mcpServers: { github: { url: "https://gh", enabled: false } },
 			});
 		});
 	});
