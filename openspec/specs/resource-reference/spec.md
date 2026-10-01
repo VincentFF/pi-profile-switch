@@ -220,6 +220,8 @@ The visibility of project-level resources (project `.pi/skills`, project `.pi/ex
 
 Project-level resources not selected by the profile MUST NOT be excluded, and project-level resources selected by the profile MUST NOT thereby be written as additional resource paths. A trusted project's project-level resources SHALL stay in the resolution vocabulary; referencing them MUST NOT fail activation as unmatched and MUST NOT produce zero-match warnings.
 
+A named profile MUST NOT make visible a user-level skill that the user's own settings exclude. The user's `!pattern` and `-path` skill entries SHALL stay effective in a named profile's session, with the same meaning they have under plain Pi.
+
 #### Scenario: Unselected project-level skills stay visible
 
 - **WHEN** the project is trusted, the project contains skill A and skill B, and the active profile declares only A
@@ -234,6 +236,11 @@ Project-level resources not selected by the profile MUST NOT be excluded, and pr
 
 - **WHEN** the project is untrusted and the project directory contains skills and extensions
 - **THEN** neither appears in the referenceable set nor in the session
+
+#### Scenario: User exclusions stay effective under a named profile
+
+- **WHEN** the user's settings exclude an agentDir skill and a `~/.agents/skills` skill with `!skills/**`, force-include one agentDir skill with `+`, and a named profile declares `skills: ["*"]`
+- **THEN** the session shows the force-included skill and neither excluded skill
 
 ### Requirement: Per-server MCP tool selection
 
