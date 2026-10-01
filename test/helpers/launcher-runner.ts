@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 
 import type { PiFixture } from "./pi-fixture.ts";
+import { RpcDriver } from "./rpc-driver.ts";
 
 /** Absolute path to the launcher entrypoint (vitest runs from the repo root). */
 export const LAUNCHER_BIN = path.resolve("bin/pi-profile.ts");
@@ -46,5 +47,16 @@ export function runLauncher(fixture: PiFixture, args: string[]): Promise<Launche
 			30_000,
 		);
 		timer.unref();
+	});
+}
+
+/** Starts the launcher in RPC mode for scripted input (get_state, prompt,
+ *  waitFor). This is the sanctioned interactive counterpart to `runLauncher`:
+ *  integration tests must construct their RPC driver here, not spawn the
+ *  launcher directly. Callers MUST `await driver.close()` in a finally block. */
+export function runLauncherRpc(fixture: PiFixture, args: string[]): RpcDriver {
+	return new RpcDriver("node", [LAUNCHER_BIN, ...args], {
+		cwd: fixture.cwd,
+		env: launcherEnv(fixture),
 	});
 }
