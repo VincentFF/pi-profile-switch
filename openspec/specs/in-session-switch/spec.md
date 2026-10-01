@@ -44,7 +44,7 @@ Switching SHALL NOT change Pi's project-trust input: the instance's `trust.json`
 
 `/profile reload` SHALL follow the same path, but SHALL NOT produce a change summary and SHALL preserve the current profile's existing selection persistence (a one-shot selection made at launch remains one-shot after reload).
 
-An explicit empty `mcps` selection on an adapter-active named profile SHALL have the same effect after `/profile use` and `/profile reload` as at launch. Switching to a profile that omits `mcps` SHALL restore the adapter's normal user-level server availability.
+An explicit empty `mcps` selection SHALL have the same effect after `/profile use` and `/profile reload` as at launch: the rewritten instance configuration disables every user-level server in the merged snapshot. Switching to a profile that omits `mcps` SHALL restore the merged snapshot's full user-level server availability.
 
 #### Scenario: Successful switch
 
@@ -68,18 +68,18 @@ An explicit empty `mcps` selection on an adapter-active named profile SHALL have
 
 #### Scenario: Switching to an empty MCP selection
 
-- **WHEN** an adapter-active session switches from a profile that omits `mcps` to a named profile declaring `mcps: []`
-- **THEN** the discovered user-level servers are unavailable without restarting the Pi session
+- **WHEN** a session switches from a profile that omits `mcps` to a named profile declaring `mcps: []`
+- **THEN** the user-level servers from the merged snapshot are unavailable without restarting the Pi session
 
 #### Scenario: Empty MCP selection survives reload
 
-- **WHEN** an adapter-active named profile with `mcps: []` executes `/profile reload`
-- **THEN** the discovered user-level servers remain unavailable
+- **WHEN** a named profile with `mcps: []` executes `/profile reload`
+- **THEN** the user-level servers from the merged snapshot remain unavailable
 
 #### Scenario: Switching back to omitted MCP selection
 
-- **WHEN** an adapter-active session switches from a named profile with `mcps: []` to a profile omitting `mcps`
-- **THEN** user-level servers return to their normal adapter-defined availability
+- **WHEN** a session switches from a named profile with `mcps: []` to a profile omitting `mcps`
+- **THEN** user-level servers return to their merged-snapshot availability
 
 ### Requirement: Rollback on switch failure
 
@@ -101,13 +101,13 @@ Persistence of selection and overlay SHALL happen in the post-reload extension i
 - **WHEN** reload neither errors nor actually re-executes the extension
 - **THEN** it is treated as a failure and rolled back, reporting that reload did not execute
 
-### Requirement: Plan application and change summary at session start
+### Requirement: Session-start plan application and change summary
 
 Every session start (launch, reload, new, resume, fork) SHALL apply the plan in the current runtime directory. When `tools` is declared, the active tool set SHALL combine its original references expanded against Pi's live non-MCP registry with the MCP-owned tools available under the server and per-server tool selections. When `tools` is absent, Pi's current non-MCP tool availability SHALL stay unchanged; overlay disabled tool entries still narrow their established base. An absent or empty `mcp_tools` object MUST NOT by itself change Pi's tool state.
 
 When the plan carries disabled tool entries from the overlay, the active tool set SHALL subtract their matches at that moment. The base for overlay resolution SHALL remain the profile's resolved Pi tool references when `tools` is declared, or the runtime's available tool set when it is not; per-server MCP tool filtering SHALL be governed by `mcp_tools` and server selection.
 
-Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. Literal adapter selectors in `mcp_tools` SHALL retain the adapter's restrictive matching without a missing-name diagnostic, as specified in "Per-server MCP tool reference resolution" in the resource-reference specification.
+Pi tool literals with zero matches against the applicable live registry SHALL be reported as warnings and MUST NOT be silently dropped. Literal selectors in `mcp_tools` SHALL remain restrictive without a missing-name diagnostic, as specified in "Per-server MCP tool selection" in the resource-reference specification.
 
 When the plan marks the selection for persistence and this session start was triggered by a reload, the active profile SHALL be written to the state file of that profile's source scope.
 
@@ -118,10 +118,10 @@ The change summary produced by a switch SHALL be injected into the next agent tu
 - **WHEN** the new extension instance executes session start after reload
 - **THEN** the active non-MCP tool set is reset to the original references expanded against the live registry, while available MCP-owned tools remain independent of those references
 
-#### Scenario: Loose adapter file does not own sibling extension tools
+#### Scenario: Built-in MCP extension does not own sibling extension tools
 
-- **WHEN** the selected MCP adapter is a loose extension file beside an unrelated extension that registers a tool, and the profile declares `tools: []`
-- **THEN** the unrelated tool is not active after session start or reload, while adapter-owned tools permitted by MCP policy remain available
+- **WHEN** a profile declares `tools: []`, MCP servers provide tools through Pi's built-in MCP extension, and an unrelated extension registers a tool
+- **THEN** the unrelated extension's tool is not active after session start or reload, while MCP tools permitted by MCP policy remain available
 
 #### Scenario: Disabled tools stay disabled across reload
 
@@ -249,7 +249,7 @@ The selector and the degraded list SHALL show only visible profiles and SHALL us
 
 Each list entry SHALL report the winning definition's source and be marked when the project definition shadows a same-named global definition.
 
-`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners. For a named profile whose active adapter applies `mcps: []`, the discovered user-level servers SHALL be reported as disabled, not enabled, while trusted project-owned servers SHALL remain reported as enabled.
+`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners. For a named profile declaring `mcps: []`, the discovered user-level servers in the merged snapshot SHALL be reported as disabled, not enabled, while trusted project-owned servers SHALL remain reported as enabled.
 
 The degraded list and `status` SHALL be emitted as messages carrying structured payloads for non-interactive consumers.
 
@@ -265,26 +265,26 @@ The degraded list and `status` SHALL be emitted as messages carrying structured 
 
 #### Scenario: Empty MCP selection is visible in status
 
-- **WHEN** a named profile with an active adapter declares `mcps: []` and user-level servers have been discovered
+- **WHEN** a named profile declares `mcps: []` and user-level servers have been discovered in the merged snapshot
 - **THEN** `/profile status` reports no selected user-level servers and reports the discovered user-level servers as disabled
 
 #### Scenario: Project-owned server remains enabled in status
 
-- **WHEN** a named profile with an active adapter declares `mcps: []` and a trusted project defines an enabled server
+- **WHEN** a named profile declares `mcps: []` and a trusted project defines an enabled server
 - **THEN** `/profile status` reports the project-owned server as enabled rather than disabled
 
-### Requirement: MCP tool policy observability and switch rollback
+### Requirement: MCP tool policy status and switch rollback
 
-`/profile status` SHALL show which enabled servers have unrestricted, explicitly restricted, or no MCP tools, including the declared selectors for explicitly restricted servers; it SHALL NOT report selector validity or missing-name candidates. When `mcps` is undeclared, a server marked disabled by the effective adapter configuration SHALL appear as discovered but not enabled, rather than enabled. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
+`/profile status` SHALL show which enabled servers have unrestricted, explicitly restricted, or no MCP tools, including the declared selectors for explicitly restricted servers; it SHALL NOT report selector validity or missing-name candidates. When `mcps` is undeclared, a server the merged user-level configuration marks `enabled: false` SHALL appear as discovered but not enabled, rather than enabled. A switch or reload failure while applying a per-server restriction SHALL restore the previous MCP and Pi tool availability, not leave a partial policy.
 
 #### Scenario: Status distinguishes absent and empty lists
 
 - **WHEN** an active profile omits `github` from `mcp_tools` and explicitly sets `linear` to `[]`
 - **THEN** `/profile status` reports `github` as unrestricted and `linear` as having no enabled MCP tools
 
-#### Scenario: Status respects adapter-disabled servers without an MCP whitelist
+#### Scenario: Status respects merged-config-disabled servers without an MCP whitelist
 
-- **WHEN** `mcps` is undeclared and the effective adapter configuration marks `linear` disabled while `github` is enabled
+- **WHEN** `mcps` is undeclared and the merged user-level configuration marks `linear` with `enabled: false` while `github` is enabled
 - **THEN** `/profile status` reports `github` as enabled and `linear` as discovered but not enabled, without listing `linear` as an unrestricted enabled server
 
 #### Scenario: Failed switch restores previous tool policy
