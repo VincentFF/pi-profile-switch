@@ -135,12 +135,35 @@ async function fireSessionStart(pi: FakePi, reason = "startup", ctx?: ReturnType
 }
 
 /** Lets the un-awaited startup-notifier job (fs-bound, no network with a
- *  fresh seeded cache) settle before asserting on recorded notices. */
+ *  fresh seeded cache) surface its notices. The notice is displayed before
+ *  its key is persisted, so the history is a LATER step: never assert on
+ *  `displayed.json` right after this returns, wait for the expected key with
+ *  `waitForDisplayedKey` instead. */
 async function waitForNotices(ctx: ReturnType<typeof fakeCtx>): Promise<void> {
 	const deadline = Date.now() + 2000;
 	while (ctx.notifications.length === 0 && Date.now() < deadline) {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
+}
+
+/** Waits for the recorded displayed-history to contain `until` and returns
+ *  the keys read. Recording follows display by a few (fs-latency-bound)
+ *  milliseconds; a single read races that write. */
+async function waitForDisplayedKey(until: string): Promise<string[]> {
+	const deadline = Date.now() + 2000;
+	let keys: string[] = [];
+	while (!keys.includes(until) && Date.now() < deadline) {
+		try {
+			const history = JSON.parse(await readFile(path.join(root, "notifications", "displayed.json"), "utf8")) as {
+				keys?: unknown;
+			};
+			keys = Array.isArray(history.keys) ? history.keys.filter((key): key is string => typeof key === "string") : [];
+		} catch {
+			// Not written yet (or observed mid-rename): retry until the deadline.
+		}
+		if (!keys.includes(until)) await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	return keys;
 }
 
 async function runBeforeAgentStart(pi: FakePi, systemPrompt: string): Promise<string | undefined> {
@@ -244,11 +267,9 @@ describe("startup notifications (add-startup-notifications)", () => {
 		expect(text).toContain(upgradeAnnouncement.message);
 		expect(text).not.toContain(`${ownVersion} → ${newerTarget}`);
 		// The suppressed reminder target is NOT recorded as shown…
-		const history = JSON.parse(await readFile(path.join(root, "notifications", "displayed.json"), "utf8")) as {
-			keys: string[];
-		};
-		expect(history.keys).toContain(`announcement:${upgradeAnnouncement.id}`);
-		expect(history.keys).not.toContain(`upgrade:${newerTarget}`);
+		const keys = await waitForDisplayedKey(`announcement:${upgradeAnnouncement.id}`);
+		expect(keys).toContain(`announcement:${upgradeAnnouncement.id}`);
+		expect(keys).not.toContain(`upgrade:${newerTarget}`);
 	});
 
 	it("writes notices to stderr outside TUI modes", async () => {
