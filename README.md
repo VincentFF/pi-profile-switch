@@ -91,16 +91,18 @@ One profile can use every field at once. This example `impl` profile (`impl.json
 How fields resolve:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
-- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`.
+- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`. When a profile declares `tools` and at least one MCP server is enabled, Pi's native MCP discovery entry points (`codemode` and `tool_search`) stay active even if you did not list them; unrelated non-MCP tools excluded by `tools` stay excluded.
 - `mcp_tools` defines per-server MCP tool filtering: keys are literal configured server names and values are literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are not accepted. An omitted server keeps native access to all its tools; a nonempty array allows only matched tools; an empty array (`[]`) denies all tools for that server while leaving it enabled. Unmatched selectors remain restrictive and are not diagnosed, so confirm selectors with the server before writing them.
 - **Migration notes:**
   - Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
   - Prefixed selectors (e.g. `<server>_<tool>` forms used by previous MCP integrations) no longer apply; replace them with the literal tool names from Pi's built-in MCP extension.
 - `mcps` references servers from your Pi user-level MCP configuration (`~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`); connection details stay in those files.
   - **Omitting `mcps`** leaves all discovered user-level servers at their normal availability.
-  - **`mcps: []`** disables every discovered user-level server, including agentDir-only servers; every unselected user-level server is explicitly marked `enabled: false` in the generated instance `mcp.json`. Project-level servers are never narrowed.
+  - **`mcps: []`** disables every discovered user-level server, including agentDir-only servers; every unselected user-level server keeps its full definition and is explicitly marked `enabled: false` in the generated instance `mcp.json`. Project-level servers are never narrowed.
   - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
   - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
+  - A later user-level source replaces a same-named server from an earlier source in full (no field-wise merging), so connection and credential fields are never inherited across files.
+  - A profile that declares neither `mcps` nor `mcp_tools` treats a malformed user-level MCP source as a non-fatal diagnostic (printed on stderr with the file path) and starts with the remaining valid sources. Declaring `mcps` or a nonempty `mcp_tools` makes the same malformed source fail activation, because the allowlist cannot be trusted.
 - The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
 - Any field you omit keeps plain Pi behavior.
 
@@ -118,7 +120,7 @@ The `/profile` command family manages everything in-session:
 | `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Narrow / un-narrow the active profile for this session only; `disable` entries accept names or globs |
 | `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
 
-All forms work in every mode, including non-interactive ones (`--mode rpc|print|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
+All forms work in every mode, including non-interactive ones (`--mode rpc|text|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
 
 ## Docs
 
