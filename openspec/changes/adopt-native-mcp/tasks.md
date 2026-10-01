@@ -83,5 +83,5 @@
 
 - [x] 10.1 Run `openspec validate adopt-native-mcp --strict` after revising the deltas and `openspec validate --specs` after syncing the main specs; fix every reported issue.
   Verification: both commands exit 0; a malformed or incomplete delta or main spec causes a nonzero exit.
-- [ ] 10.2 Run `npm run check` and `npm test` on the final tree after documentation and spec sync.
+- [x] 10.2 Run `npm run check` and `npm test` on the final tree after documentation and spec sync.
   Verification: both commands exit 0; no test was weakened by removing adapter coverage without a replacement scenario from the delta specs.
