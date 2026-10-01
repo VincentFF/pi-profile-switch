@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.2...v0.13.0) (2026-10-01)
+
+
+### Features
+
+* adopt native Pi MCP, drop pi-mcp-adapter ([#73](https://github.com/VincentFF/pi-profile-switch/issues/73)) ([fa45418](https://github.com/VincentFF/pi-profile-switch/commit/fa4541818636f048425f2afaf6edfc13eafc8d42))
+
 ## [0.12.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.1...v0.12.2) (2026-09-30)
 
 
