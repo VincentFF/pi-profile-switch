@@ -4,7 +4,7 @@
  * Two independent sources, checked once per Pi process launch and presented
  * through a caller-supplied NoticeSurface:
  *
- * - npm package metadata: compare the running package version against the
+ * - npm dist-tags: compare the running package version against the
  *   registry's installable `latest` dist-tag and remind once per target
  *   version (design decision 2: authority and cache).
  * - a single maintainer-reviewed `announcements.json` feed (design decision
@@ -30,9 +30,9 @@ import { isRecord } from "./json-file.ts";
 export const ANNOUNCEMENTS_URL =
 	"https://raw.githubusercontent.com/VincentFF/pi-profile-switch/main/announcements.json";
 
-/** npm registry package metadata; the installable stable version is read
- *  from `dist-tags.latest`, never from the largest published version. */
-const NPM_METADATA_URL = "https://registry.npmjs.org/pi-profile-switch";
+/** npm registry dist-tags; the installable stable version is read from
+ *  top-level `latest`, never from the largest published version. */
+const NPM_DIST_TAGS_URL = "https://registry.npmjs.org/-/package/pi-profile-switch/dist-tags";
 
 /** Hard ceiling on one remote check; the timer is unref'd so a pending
  *  check never keeps a short-lived Pi process alive. */
@@ -261,10 +261,10 @@ function parseNpmLatest(text: string): string {
 	} catch {
 		throw new InvalidContentError("response is not valid JSON");
 	}
-	if (!isRecord(raw) || !isRecord(raw["dist-tags"]) || typeof raw["dist-tags"].latest !== "string") {
-		throw new InvalidContentError("missing dist-tags.latest");
+	if (!isRecord(raw) || typeof raw.latest !== "string") {
+		throw new InvalidContentError("missing latest");
 	}
-	const latest = raw["dist-tags"].latest;
+	const latest = raw.latest;
 	if (parseVersion(latest) === undefined) {
 		throw new InvalidContentError(`malformed latest version: ${JSON.stringify(latest)}`);
 	}
@@ -574,7 +574,7 @@ async function run(options: StartupNotifierOptions): Promise<void> {
 		const refreshedNpm = await refreshSource<{ latest: string }>({
 			dir,
 			name: "npm-latest",
-			url: NPM_METADATA_URL,
+			url: NPM_DIST_TAGS_URL,
 			label: "npm registry",
 			cache: npmCache,
 			parse: (text) => ({ latest: parseNpmLatest(text) }),

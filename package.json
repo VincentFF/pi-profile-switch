@@ -30,10 +30,10 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.99.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": ">=0.99.1",
     "@types/node": "^24.0.0",
     "ajv": "^8.20.0",
     "typescript": "^5.8.0",

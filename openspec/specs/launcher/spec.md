@@ -315,7 +315,7 @@ The launcher SHALL forward the child process's exit code and forward signals to 
 
 ### Requirement: Startup upgrade reminder
 
-On a pi-profile launch, the system SHALL compare the running pi-profile-switch package version with the npm registry's installable `latest` tag. It SHALL show a concise upgrade reminder with the installed and target versions and the global-install command only when the target is newer and that target has not already been shown. It MUST NOT automatically install a package, show release notes, or use an announcement as the authoritative latest version. A target that is not newer, including when the running package is a prerelease ahead of `latest`, MUST NOT trigger a reminder.
+On a pi-profile launch, the system SHALL compare the running pi-profile-switch package version with the npm registry's installable `latest` tag. It SHALL obtain the tag without requiring the registry's full package-metadata response to fit within the remote-response limit. It SHALL show a concise upgrade reminder with the installed and target versions and the global-install command only when the target is newer and that target has not already been shown. It MUST NOT automatically install a package, show release notes, or use an announcement as the authoritative latest version. A target that is not newer, including when the running package is a prerelease ahead of `latest`, MUST NOT trigger a reminder.
 
 #### Scenario: New stable version
 - **WHEN** npm's installable `latest` is newer than the running package and has not been shown
@@ -328,6 +328,10 @@ On a pi-profile launch, the system SHALL compare the running pi-profile-switch p
 #### Scenario: No newer installable version
 - **WHEN** the running package is at or ahead of npm's installable `latest`
 - **THEN** no ordinary upgrade reminder is displayed
+
+#### Scenario: Large package metadata with a bounded latest tag
+- **WHEN** the registry's full package-metadata response exceeds the notifier's remote-response limit, but an installable `latest` tag newer than the running package is available in a bounded response and has not been shown
+- **THEN** the ordinary upgrade reminder is displayed without requiring the full package-metadata response
 
 ### Requirement: Applicable startup announcements
 
@@ -388,3 +392,17 @@ Startup notices SHALL be presented in Pi's interactive UI when available and on 
 #### Scenario: Profile reload does not rerun notices
 - **WHEN** a notice has been considered and the same Pi process reloads or switches profiles
 - **THEN** no second startup notice check or display is triggered by that session event
+
+### Requirement: Native MCP Pi version compatibility
+
+The package SHALL declare a Pi peer dependency that excludes releases lacking Pi's native MCP extension. The exact supported version range SHALL defer to `package.json`; the development dependency SHALL have the same lower bound. Normal npm peer resolution MUST reject an already-installed Pi release outside that range rather than postponing the incompatibility until launch.
+
+#### Scenario: Unsupported Pi release
+
+- **WHEN** a user installs pi-profile-switch alongside a Pi release without native MCP under normal npm peer resolution
+- **THEN** the declared Pi peer range rejects that release
+
+#### Scenario: Supported Pi release
+
+- **WHEN** a user installs pi-profile-switch alongside a Pi release satisfying the declared supported range
+- **THEN** the Pi peer constraint allows that installation
