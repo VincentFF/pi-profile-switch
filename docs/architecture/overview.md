@@ -32,7 +32,7 @@ A profile takes over exactly four resource categories (skills, extensions, MCP s
 
 | Scope | Pi mechanism | Form |
 | --- | --- | --- |
-| agentDir level (`skills`, `extensions`) | The discovery root moves with `PI_CODING_AGENT_DIR`, so these are naturally not discovered; settings arrays carry the absolute paths of selected entries | Whitelist (attached paths) |
+| agentDir level (`skills`, `extensions`) | `extensions` is managed, so its entries are not discovered; `skills` is mirrored into the instance, so unselected skills are force-excluded by their runtime mirror path. Settings arrays carry the absolute paths of selected entries, followed by the user's own `!pattern`/`-path` skill exclusions (absolute agentDir `-path` entries rewritten to the runtime mirror path) | Whitelist (attached paths) plus exclusion |
 | `~/.agents/skills` (HOME level, cannot be suppressed) | Always auto-discovered, so the settings array carries `-<absolute path>` to force-exclude unselected entries | Complement exclusion |
 | Project level (`.pi/skills`, `.pi/extensions`, ancestor `.agents/skills`) | Owned by Pi: the instance's `trust.json` link points at the real trust store, and Pi auto-discovers per stored decisions. A named profile's generated settings still set `defaultProjectTrust: "never"`, but that only suppresses the trust prompt (stored decisions take precedence over it). The narrowing contract is in `openspec/specs/resource-reference/spec.md`, "Narrowing boundary of project-level resources" | Not narrowed by profiles |
 | packages (user-configured packages) | The settings `packages` array is rewritten in object form with per-type allowlist globs | Whitelist |
