@@ -242,7 +242,7 @@ describe("ProfileCatalog (global catalog)", () => {
 			await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 			await expect(errorPromise).rejects.toThrow(/glob-tool/);
 			await expect(errorPromise).rejects.toThrow(/mcp_tools/);
-			await expect(errorPromise).rejects.toThrow(/literal adapter tool selectors are required/i);
+			await expect(errorPromise).rejects.toThrow(/literal MCP tool names are required/i);
 		});
 
 		it("rejects glob patterns in mcp_tools server keys with an actionable error", async () => {

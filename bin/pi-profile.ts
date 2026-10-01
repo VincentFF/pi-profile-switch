@@ -19,7 +19,7 @@ import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/init
 import { untrustedProjectDiagnostic } from "../src/launcher/untrusted-project-diagnostic.ts";
 import { sweepStaleInstances } from "../src/launcher/runtime-cleanup.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
-import { McpConfigError, MissingMcpAdapterError } from "../src/mcp-config.ts";
+import { McpConfigError } from "../src/mcp-config.ts";
 import { CatalogError } from "../src/profile-catalog.ts";
 import { ActivationError } from "../src/profile-resolver.ts";
 import { ensureStarterAssets } from "../src/starter-assets.ts";
@@ -77,13 +77,13 @@ try {
 	});
 } catch (error) {
 	// Launcher input/selection failures (unknown profile, unresolvable
-	// references, missing adapter, malformed catalogs) are usage errors:
+	// references, malformed catalogs, illegal MCP config) are usage errors:
 	// exit 2. Unexpected failures: exit 1.
 	const isUsageError =
 		error instanceof UnknownProfileError ||
 		error instanceof ActivationError ||
 		error instanceof ExtensionError ||
-		error instanceof MissingMcpAdapterError ||
+
 		error instanceof McpConfigError ||
 		error instanceof CatalogError;
 	console.error(error instanceof Error ? `pi-profile: ${error.message}` : error);

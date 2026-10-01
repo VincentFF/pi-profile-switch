@@ -227,7 +227,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					);
 					const discoveredMcpServers = Object.keys(mcpDiscovery.servers).sort();
 					const disabledMcpServers = discoveredMcpServers.filter(
-						(server) => mcpDiscovery.servers[server]?.disabled === true,
+						(server) => mcpDiscovery.servers[server]?.enabled === false,
 					);
 					const report = buildStatusReport({
 						plan,

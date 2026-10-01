@@ -35,7 +35,7 @@ export interface DiscoveredPackage {
 	 *  npm:/git:/github: prefix (and any version spec) when unreadable. */
 	name: string;
 	/** The source string exactly as configured in the user's settings
-	 *  (e.g. "npm:pi-mcp-adapter"); accepted as a reference alias. */
+	 *  (e.g. "npm:pi-web-access"); accepted as a reference alias. */
 	source: string;
 	/** Absolute install/local root of the package. */
 	root: string;

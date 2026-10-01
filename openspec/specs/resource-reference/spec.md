@@ -84,47 +84,57 @@ When a loose file and a package name produce the same ID, the loose file SHALL w
 - **WHEN** the extension directory contains a loose extension with the same name as an installed package
 - **THEN** referencing that name selects the loose file, produces a warning, and the package remains selectable via its source alias
 
-### Requirement: MCP server reference resolution and the adapter dependency
+### Requirement: MCP server reference resolution
 
-An MCP server reference's identity SHALL be a server name discovered in `pi-mcp-adapter` configuration.
+An MCP server reference's identity SHALL be a server name defined in the merged user-level MCP configuration snapshot. The snapshot SHALL merge, by server name, the standard user-level configuration locations — `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and the real agent directory's `mcp.json` — with later locations in that list overriding earlier ones per server name.
 
-Discovery SHALL read the standard configuration locations recognized by the adapter; project-scope configuration SHALL be read only when the project is trusted. When configuration content is illegal the system SHALL report an error identifying the file path and MUST NOT silently read it as "no servers".
+Project-scope configuration SHALL NOT be part of the snapshot: servers defined in a trusted project's `.pi/mcp.json` SHALL be read by Pi itself and SHALL remain outside profile control.
 
-When a profile declares MCP servers while the adapter's discovery result is unavailable, activation SHALL fail: this covers both the adapter being inactive and no usable server discovery result.
+When any merged configuration content is illegal, the system SHALL report an error identifying the file path and MUST NOT silently read it as "no servers". When a profile declares a server name the snapshot does not define, activation SHALL fail with an error identifying the name and near-miss candidates.
 
-With an active adapter, an explicitly empty `mcps` list SHALL resolve to an empty server selection, even when discovery finds no servers. Without an active adapter, an empty `mcps` list alone SHALL leave MCP availability unchanged and SHALL NOT introduce an adapter dependency.
+A profile that declares no MCP servers MUST NOT depend on any MCP configuration content. An explicitly empty `mcps` list SHALL resolve to an empty server selection.
 
-A profile that declares no MCP servers MUST NOT depend on the adapter because of that.
+A server explicitly selected by `mcps` whose definition Pi's built-in MCP extension cannot use — for example the legacy SSE transport — SHALL fail activation with an error naming the server and a migration hint; the authoritative set of supported transports is defined by Pi's built-in MCP extension. A snapshot server not explicitly selected SHALL be passed through to the instance configuration unchanged, and Pi SHALL report its own configuration errors for it.
 
 #### Scenario: Untrusted project's MCP configuration does not participate
 
 - **WHEN** the project is untrusted and an MCP configuration file exists under the project directory
-- **THEN** the servers in that file do not appear in the referenceable set and the file is not read
+- **THEN** the servers in that file are not merged into the snapshot and the file is not read
 
 #### Scenario: Illegal MCP configuration content
 
-- **WHEN** an MCP configuration at a standard location is not legal JSON, or is not an object
+- **WHEN** an MCP configuration at a user-level location is not legal JSON, or is not an object
 - **THEN** an error is reported identifying the file path, instead of reading it as "no servers"
 
-#### Scenario: MCP servers declared but adapter unavailable
+#### Scenario: Later user-level source overrides an earlier one per server name
 
-- **WHEN** a profile declares `mcps` while `pi-mcp-adapter` is not active
-- **THEN** activation fails with an error explaining that the adapter must be selected in the profile's extensions, or the `mcps` declaration must be removed
+- **WHEN** a server name appears in `~/.agents/mcp.json` and in the real agent directory's `mcp.json` with different definitions
+- **THEN** the snapshot carries the real agent directory's definition, because it is the later source in the merge order
 
-#### Scenario: Empty selection with active adapter
+#### Scenario: Project-owned server cannot be selected
 
-- **WHEN** a profile declares `mcps: []` and `pi-mcp-adapter` is active, whether or not any servers are discovered
-- **THEN** the resolution result contains no user-level MCP servers and activation succeeds
-
-#### Scenario: Empty selection without adapter
-
-- **WHEN** a profile declares `mcps: []` and no `pi-mcp-adapter` is active
-- **THEN** MCP availability remains unchanged and activation succeeds
+- **WHEN** a trusted project's `.pi/mcp.json` defines server P and a profile names P in `mcps`
+- **THEN** activation fails with an error explaining the project-scope boundary, and P remains enabled through Pi's own project read
 
 #### Scenario: Unknown server name
 
-- **WHEN** a profile declares a server name the adapter has not discovered
-- **THEN** activation fails with an error identifying the name
+- **WHEN** a profile declares a server name no user-level configuration defines
+- **THEN** activation fails with an error identifying the name and near-miss candidates
+
+#### Scenario: Empty selection without any MCP extension
+
+- **WHEN** a named profile declares `mcps: []` and no MCP extension is selected
+- **THEN** resolution retains an empty server selection, activation does not fail for a missing extension, and no MCP availability is changed by the empty declaration
+
+#### Scenario: Selected server uses a transport Pi cannot use
+
+- **WHEN** a profile's `mcps` names a server whose definition uses a transport Pi's built-in MCP extension does not support
+- **THEN** activation fails with an error naming the server and a migration hint
+
+#### Scenario: Unselected server with a bad transport passes through
+
+- **WHEN** a profile omits `mcps` and the merged snapshot contains a server whose definition Pi's built-in MCP extension does not support
+- **THEN** activation succeeds, the server definition is written to the instance configuration unchanged, and Pi reports its own configuration error for it
 
 ### Requirement: Tool reference resolution
 
@@ -195,7 +205,7 @@ Reference resolution SHALL be tiered by error certainty and MUST NOT silently dr
 
 An unmatched literal SHALL fail activation. A zero-match glob SHALL be collected as a warning item, visible in launch output and status queries, without blocking activation.
 
-Pi tool references are the exception: they are unknowable before spawn, so they neither fail on a pre-spawn miss nor get recorded as warning items. After session start, missing Pi tool literals SHALL be reported. Literal adapter selectors in `mcp_tools` are restrictive policy inputs rather than pre-spawn-resolvable references; they SHALL remain in the policy without a missing-name diagnostic.
+Pi tool references are the exception: they are unknowable before spawn, so they neither fail on a pre-spawn miss nor get recorded as warning items. After session start, missing Pi tool literals SHALL be reported. Literal MCP tool selectors in `mcp_tools` are restrictive policy inputs rather than pre-spawn-resolvable references; they SHALL remain in the policy without a missing-name diagnostic, as specified in "Per-server MCP tool selection".
 
 #### Scenario: Different outcomes for literals and globs
 
@@ -225,28 +235,30 @@ Project-level resources not selected by the profile MUST NOT be excluded, and pr
 - **WHEN** the project is untrusted and the project directory contains skills and extensions
 - **THEN** neither appears in the referenceable set nor in the session
 
-### Requirement: Per-server MCP tool reference resolution
+### Requirement: Per-server MCP tool selection
 
-`mcp_tools` SHALL narrow tools within each explicitly named MCP server using the active adapter's literal tool-selector matching, independently of the Pi `tools` field. The profile-catalog field contract defines which literals are accepted; the adapter MAY match a tool by its original or prefixed name. A server not named in `mcp_tools` SHALL retain its normal tool availability. An empty object SHALL change nothing. A server mapped to an empty list SHALL offer no callable MCP tools while remaining an enabled server; a nonempty list SHALL permit only tools matched by listed selectors. Adapter-side restrictions already placed on a server MUST NOT be widened.
+`mcp_tools` SHALL narrow tools within each explicitly named MCP server, independently of the Pi `tools` field, by exposing only tools matched by the listed selectors and hiding all others. A selector SHALL be a literal tool name as registered by Pi's built-in MCP extension; prefixed or aliased selector spellings from the adapter era SHALL NOT match. The profile-catalog field contract defines which literals are accepted.
 
-Every server key SHALL resolve to a discovered, profile-controllable, enabled server; an unknown, disabled, or project-only server SHALL fail activation with an error naming the server and usable candidates or the project-scope boundary. A nonempty `mcp_tools` declaration SHALL require an active MCP adapter; an absent or empty `mcp_tools` object SHALL introduce no adapter dependency.
+A server not named in `mcp_tools` SHALL retain its configured tool availability. An empty object SHALL change nothing. A server mapped to an empty list SHALL offer no callable MCP tools while remaining an enabled server; a nonempty list SHALL permit only tools matched by listed selectors. The profile's per-server policy SHALL replace the server's tool exposure from the merged configuration wholesale: a tool the merged configuration hides SHALL become available only when a selector matches it.
 
-Literal selectors in `mcp_tools` SHALL NOT be checked against a server's tool list or produce missing-name notifications or validation status. A selector matching no tool SHALL remain restrictive: it MUST NOT silently become an unrestricted server. Existing adapter exclusions SHALL continue to apply. If an existing adapter allowlist and the profile policy cannot be combined without potentially widening the former, activation SHALL fail with an actionable error naming the server before writing runtime files. The resulting restriction SHALL hold for direct tools and indirect routes through MCP gateways, proxies, and scripts, including tools added after the initial session start.
+Every server key SHALL resolve to an enabled user-level server in the merged configuration snapshot; an unknown, disabled, or project-only server SHALL fail activation with an error naming the server and usable candidates or the project-scope boundary. An absent or empty `mcp_tools` object SHALL introduce no MCP configuration dependency.
+
+Literal selectors in `mcp_tools` SHALL NOT be checked against a server's tool list or produce missing-name notifications or validation status. A selector matching no tool SHALL remain restrictive: it MUST NOT silently become an unrestricted server. The resulting restriction SHALL hold for direct tools and indirect routes through MCP gateways, proxies, and scripts, including tools added after the initial session start.
 
 #### Scenario: Missing server key defaults to all tools
 
 - **WHEN** an enabled `github` server offers `search` and `delete`, and `mcp_tools` has no `github` entry
-- **THEN** both tools remain available, subject to the server's existing restrictions, regardless of the profile's `tools` list
+- **THEN** both tools remain available, subject to the server's configured tool exposure, regardless of the profile's `tools` list
 
 #### Scenario: Explicit per-server whitelist
 
 - **WHEN** `mcp_tools` sets `github` to `["search"]` and the server offers `search` and `delete`
 - **THEN** only `search` is available through direct and indirect MCP tool invocation; `delete` is not exposed or callable
 
-#### Scenario: Prefixed literal follows adapter matching
+#### Scenario: Prefixed adapter alias no longer matches
 
-- **WHEN** server `fixture` offers original tool `search`, the adapter recognizes `fixture_search` as a name for that tool, and `mcp_tools` sets `fixture` to `["fixture_search"]`
-- **THEN** `search` is available through direct and indirect MCP tool invocation because the literal selector matches it; tools not matched by that selector remain unavailable
+- **WHEN** server `fixture` registers original tool `search` and `mcp_tools` sets `fixture` to `["fixture_search"]`, the adapter-era prefixed spelling
+- **THEN** no `fixture` tool is exposed, because a selector must be the tool's literal registered name; the restriction remains in force without a missing-name diagnostic
 
 #### Scenario: Empty server list denies all tools
 
@@ -255,28 +267,23 @@ Literal selectors in `mcp_tools` SHALL NOT be checked against a server's tool li
 
 #### Scenario: Server name typo fails before activation
 
-- **WHEN** `mcp_tools` names a server absent from the discovered and enabled profile-controllable servers
+- **WHEN** `mcp_tools` names a server absent from the merged user-level snapshot
 - **THEN** activation fails with the name and usable server candidates
 
 #### Scenario: Special-looking unknown server is not discovered
 
-- **WHEN** `mcp_tools` names `toString` or `__proto__` but no such server was discovered
+- **WHEN** `mcp_tools` names `toString` or `__proto__` but no such server was defined in the merged snapshot
 - **THEN** activation fails with that server name and usable candidates instead of treating the key as implicitly present
 
 #### Scenario: Unmatched literal selector stays restrictive without a diagnosis
 
-- **WHEN** `mcp_tools` lists `serach` for `github` but the adapter matches no offered tool to that selector, regardless of whether its complete tool list has been discovered
+- **WHEN** `mcp_tools` lists `serach` for `github` but no registered `github` tool has that name
 - **THEN** `search` remains unavailable through direct and indirect MCP tool calls, and the user receives no tool-name validation warning or missing-name status
 
-#### Scenario: Existing adapter restrictions are not widened
+#### Scenario: Profile policy replaces merged tool exposure
 
-- **WHEN** the adapter already excludes an MCP tool and `mcp_tools` lists a selector matching that tool
-- **THEN** the tool remains unavailable, and the restriction does not silently become permission to invoke it
-
-#### Scenario: Unsafe allowlist intersection fails before runtime writes
-
-- **WHEN** an existing adapter `includeTools` and the profile's literal selectors use different spellings that could match the same tool or collide with another tool's name
-- **THEN** activation fails with the server name and an unsafe-intersection explanation before runtime files are written, rather than replacing the adapter's restriction with a potentially wider one
+- **WHEN** the merged configuration hides one of a server's tools and `mcp_tools` lists a selector matching that tool
+- **THEN** that tool becomes available through direct and indirect MCP tool calls, and every unlisted tool on the server is hidden
 
 #### Scenario: Project-only server is outside the narrowing boundary
 

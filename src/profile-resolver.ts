@@ -12,11 +12,9 @@
  *   pre-registration required.
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
- * - MCP references (`mcp`) expand against the server names the launcher
- *   discovered from pi-mcp-adapter's pi-native config files: literal misses
- *   fail loudly; globs expand to zero or more matches (consistent with
- *   skills/extensions). Adapter presence is checked separately by the
- *   launcher (ADR-0002).
+ * - MCP references (`mcps`) expand against the merged user-level MCP
+ *   configuration snapshot: literal misses fail loudly; globs expand to zero
+ *   or more matches (consistent with skills/extensions).
  * - Tool globs expand against Pi's built-in tool names for settings
  *   `defaultTools`; raw tool references are also carried into the launch
  *   plan so the in-session extension can expand them against Pi's live
@@ -28,7 +26,7 @@ import { minimatch } from "minimatch";
 
 import type { DiscoveredExtensions } from "./extension-discovery.ts";
 import { isRecord } from "./json-file.ts";
-import { isAdapterExtension, type MergedMcpResult } from "./mcp-config.ts";
+import type { MergedMcpResult } from "./mcp-config.ts";
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
 
 /** Extracts a ProfileModel from flat definition keys, if declared. */
@@ -83,11 +81,10 @@ export interface ActivationPlan {
 	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
 	/** Expanded MCP server allowlist: written by SettingsGenerator into the
-	 *  filtered instance `mcp.json` (the adapter's runtime restriction) and
-	 *  surfaced in `/profile status`; undefined when the profile declares
-	 *  no `mcps` (no restriction). */
+	 *  instance `mcp.json` snapshot and surfaced in `/profile status`;
+	 *  undefined when the profile declares no `mcps` (no restriction). */
 	mcps?: string[];
-	/** Per-server MCP tool policy: literal adapter selectors per server. */
+	/** Per-server MCP tool policy: literal tool names per server. */
 	mcpTools?: Record<string, string[]>;
 	/** Prepared in-memory instance mcp.json config; never written to pi-profile.json */
 	instanceMcpConfig?: Record<string, unknown>;
@@ -111,10 +108,11 @@ export interface ResolveInput {
 	 */
 	validateModel?: (model: ProfileModel) => Promise<string | undefined>;
 	/**
-	 * Server names discovered from pi-mcp-adapter's pi-native config files
-	 * (see mcp-config.ts). Required when the profile declares `mcp`: without
-	 * the discovered names a reference cannot be validated, so activation
-	 * fails rather than passing references through unchecked.
+	 * Server names discovered from the merged user-level MCP configuration
+	 * snapshot (see mcp-config.ts). Required when the profile declares `mcps`
+	 * or `mcp_tools`: without the discovered names a reference cannot be
+	 * validated, so activation fails rather than passing references through
+	 * unchecked.
 	 */
 	discoveredMcpServers?: string[];
 	/**
@@ -144,11 +142,10 @@ function isGlob(reference: string): boolean {
 }
 
 /** Expands overlay disable entries against the names the profile resolved.
- *  Entries are names or globs stored as written, re-expanded at every
- *  resolution with the same matcher as profile references (ADR-0009 tiering):
- *  an unmatched literal fails and identifies the entry; a zero-match glob is
- *  reported through `onZeroMatch` instead of failing. Returns the resolved
- *  names to disable. */
+ *  Entries are names or globs stored as written and
+ *  re-expanded at every resolution; unmatched literals fail and identify
+ *  the entry, zero-match globs join `unmatched` with an `overlay ` prefix.
+ *  Overlays can disable any resolved extension. */
 function expandDisableEntries(
 	entries: string[],
 	activeNames: readonly string[],
@@ -233,9 +230,6 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	});
 
 	// Extension references resolve directly against discovered extensions.
-	// Resolve extensions before MCP so an explicitly empty `mcps` array can
-	// be distinguished from omission based on whether the profile selects the
-	// adapter (honor-empty-mcp-allowlist).
 	const selection = await extensions.select(definition.extensions ?? []);
 	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
 	let planExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }> = selection.entries.map(
@@ -246,23 +240,34 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}),
 	);
 
-	const hasAdapter = planExtensions.some((entry) => isAdapterExtension(entry));
-
 	let mcps: string[] | undefined;
 	if (definition.mcps !== undefined) {
 		if (definition.mcps.length > 0) {
 			if (input.discoveredMcpServers === undefined) {
 				throw new ActivationError(
-					`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
+					`profile "${profile.name}" declares MCP servers but no MCP server discovery is available`,
 				);
 			}
 			mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
 				onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
 			});
-		} else if (hasAdapter) {
+			if (input.mcpDiscovery !== undefined) {
+				const discovery = input.mcpDiscovery;
+				const projectNamed = mcps.find(
+					(name) => discovery.serverOwners[name] === "project" || discovery.projectServers.has(name),
+				);
+				if (projectNamed !== undefined) {
+					throw new ActivationError(
+						`profile "${profile.name}": cannot select project-level MCP server "${projectNamed}" (project-level servers are outside profile selection)`,
+					);
+				}
+			}
+		} else {
+			// Explicitly empty mcps: requires discovery so the empty selection
+			// disables every discovered user-level server.
 			if (input.mcpDiscovery === undefined) {
 				throw new ActivationError(
-					`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
+					`profile "${profile.name}" declares an empty MCP server selection but no MCP server discovery is available`,
 				);
 			}
 			mcps = [];
@@ -270,11 +275,6 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	}
 
 	// --- overlay narrowing (ticket 06) ---
-	// Overlay disable entries are names or globs stored as written and
-	// re-expanded at every resolution; unmatched literals fail and identify
-	// the entry, zero-match globs join `unmatched` with an `overlay ` prefix.
-	// Overlays can disable any resolved extension.
-	const toolReferences = definition.tools;
 	if (overlay !== undefined) {
 		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
 			const disabled = expandDisableEntries(
@@ -320,16 +320,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 
 	let mcpTools: Record<string, string[]> | undefined;
 	if (mcpToolKeys.length > 0) {
-		const hasAdapter = planExtensions.some((entry) => isAdapterExtension(entry));
-		if (!hasAdapter) {
-			throw new ActivationError(
-				`profile "${profile.name}" declares MCP tools but pi-mcp-adapter is not active. ` +
-					`Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcp_tools" declaration.`,
-			);
-		}
 		if (input.mcpDiscovery === undefined) {
 			throw new ActivationError(
-				`profile "${profile.name}" declares MCP tools but no adapter server discovery is available`,
+				`profile "${profile.name}" declares MCP tools but no MCP server discovery is available`,
 			);
 		}
 
@@ -340,7 +333,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 					Object.hasOwn(mcpDiscovery.serverOwners, s) &&
 					mcpDiscovery.serverOwners[s] === "user" &&
 					!mcpDiscovery.projectServers.has(s);
-				const isEnabled = mcpDiscovery.servers[s]?.disabled !== true;
+				const isEnabled = mcpDiscovery.servers[s]?.enabled !== false;
 				const isAllowedByMcps = mcps === undefined || mcps.includes(s);
 				return isUser && isEnabled && isAllowedByMcps;
 			})
@@ -359,7 +352,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				);
 			}
 			const isDisabled =
-				mcpDiscovery.servers[serverKey]?.disabled === true ||
+				mcpDiscovery.servers[serverKey]?.enabled === false ||
 				(mcps !== undefined && !mcps.includes(serverKey));
 			if (isDisabled) {
 				throw new ActivationError(`profile "${profile.name}": MCP server "${serverKey}" is disabled${candidateMsg}`);
@@ -370,6 +363,8 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			Object.entries(mcpToolsDef ?? {}).map(([server, selectors]) => [server, [...selectors]]),
 		);
 	}
+
+	const toolReferences = definition.tools;
 
 	let instanceMcpConfig: Record<string, unknown> | undefined;
 	if (input.mcpDiscovery !== undefined && (mcps !== undefined || mcpToolKeys.length > 0)) {
@@ -453,32 +448,6 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	};
 }
 
-function computeSafeMcpToolIntersection(
-	profileName: string,
-	serverName: string,
-	requestedTools: string[],
-	existingIncludes?: string[],
-): string[] {
-	if (
-		requestedTools.length === 0 ||
-		existingIncludes === undefined ||
-		existingIncludes.length === 0 ||
-		existingIncludes.includes("*")
-	) {
-		return [...requestedTools];
-	}
-
-	const unsafeSelector = requestedTools.find((selector) => !existingIncludes.includes(selector));
-	if (unsafeSelector !== undefined) {
-		throw new ActivationError(
-			`profile "${profileName}": unsafe MCP tool filter intersection for server "${serverName}": ` +
-				`selector ${JSON.stringify(unsafeSelector)} is not an exact member of existing includeTools; ` +
-				`use identical literals or an existing "*" allowlist to prove the restriction is safe`,
-		);
-	}
-	return [...requestedTools];
-}
-
 function setOwnRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
 	Object.defineProperty(record, key, { value, enumerable: true, configurable: true, writable: true });
 }
@@ -502,61 +471,42 @@ export function buildInstanceMcpConfig(
 		const originalDef = Object.hasOwn(mcpDiscovery.servers, serverName)
 			? mcpDiscovery.servers[serverName]
 			: undefined;
-		if (originalDef !== undefined) {
-			const def = { ...originalDef };
-			if (mcps !== undefined) {
-				delete def.disabled;
-			}
+		if (originalDef === undefined) continue;
 
-			if (mcpTools && Object.hasOwn(mcpTools, serverName)) {
-				if (
-					def.includeTools !== undefined &&
-					(!Array.isArray(def.includeTools) || !def.includeTools.every((t) => typeof t === "string"))
-				) {
-					throw new ActivationError(
-						`profile "${profileName}": unsafe MCP tool filter intersection for server "${serverName}": invalid existing includeTools`,
-					);
-				}
-				if (
-					def.excludeTools !== undefined &&
-					(!Array.isArray(def.excludeTools) || !def.excludeTools.every((t) => typeof t === "string"))
-				) {
-					throw new ActivationError(
-						`profile "${profileName}": unsafe MCP tool filter intersection for server "${serverName}": invalid existing excludeTools`,
-					);
-				}
+		// Project-owned servers are never materialized into the snapshot;
+		// Pi reads the trusted project's .pi/mcp.json itself.
+		const isProjectOwned =
+			mcpDiscovery.serverOwners[serverName] === "project" || mcpDiscovery.projectServers.has(serverName);
+		if (isProjectOwned) continue;
 
-				const requested = mcpTools[serverName];
-				const existingIncludes = Array.isArray(def.includeTools) ? (def.includeTools as string[]) : undefined;
-				const existingExcludes = Array.isArray(def.excludeTools) ? (def.excludeTools as string[]) : undefined;
-
-				const safeTools = computeSafeMcpToolIntersection(
-					profileName,
-					serverName,
-					requested,
-					existingIncludes,
-				);
-
-				if (safeTools.length === 0) {
-					delete def.includeTools;
-					if (existingExcludes === undefined || !existingExcludes.includes("*")) {
-						def.excludeTools = [...(existingExcludes ?? []), "*"];
-					}
-				} else {
-					def.includeTools = safeTools;
-				}
-			}
-
-			setOwnRecordValue(filteredServers, serverName, def);
+		// A server explicitly selected by mcps whose definition uses a
+		// transport Pi's built-in MCP extension cannot use fails activation.
+		if (mcps?.includes(serverName) === true && originalDef.type === "sse") {
+			throw new ActivationError(
+				`profile "${profileName}": selected MCP server "${serverName}" uses the legacy SSE transport, which Pi does not support; switch to the server's streamable HTTP URL or remove it from "mcps"`,
+			);
 		}
+
+		const def = { ...originalDef };
+
+		if (mcpTools && Object.hasOwn(mcpTools, serverName)) {
+			// Profile policy replaces the merged toolExposure wholesale.
+			const requested = mcpTools[serverName];
+			const exposure: Record<string, string> = { "*": "hidden" };
+			for (const selector of requested) {
+				exposure[selector] = "direct";
+			}
+			def.toolExposure = exposure;
+		}
+
+		setOwnRecordValue(filteredServers, serverName, def);
 	}
 
+	// Unselected user-level servers are explicitly disabled.
 	if (mcps !== undefined) {
-		for (const sharedName of mcpDiscovery.sharedServers) {
-			if (!mcps.includes(sharedName)) {
-				if (mcpDiscovery.projectServers.has(sharedName)) continue;
-				setOwnRecordValue(filteredServers, sharedName, { disabled: true });
-			}
+		for (const userName of userServers) {
+			if (mcps.includes(userName)) continue;
+			setOwnRecordValue(filteredServers, userName, { enabled: false });
 		}
 	}
 

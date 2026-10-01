@@ -33,35 +33,13 @@ async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
 }
 
-/** A fake pi-mcp-adapter: lives in a dir named like the real package (so the
- *  launcher's presence check matches). */
-async function installFakeAdapter(): Promise<void> {
-	const extFile = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
-	await mkdir(path.dirname(extFile), { recursive: true });
-	await writeFile(extFile, "export default function () {}\n");
-}
-
-describe("launcher integration: mcp coordination", () => {
+describe("launcher integration: native MCP snapshot semantics", () => {
 	it(
-		"a profile declaring mcp fails before spawn when the adapter is absent",
+		"a profile declaring mcp fails before spawn when the snapshot does not define it",
 		{ timeout: 30_000 },
 		async () => {
 			await writeMcpConfig({ github: { url: "https://x" } });
-			await writeCatalog({ review: { mcps: ["github"] } });
-
-			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
-			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain("pi-mcp-adapter is not active");
-		},
-	);
-
-	it(
-		"an mcp reference the adapter never discovered fails before spawn",
-		{ timeout: 30_000 },
-		async () => {
-			await installFakeAdapter();
-			await writeMcpConfig({ github: {} });
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["typo-server"] } });
+			await writeCatalog({ review: { mcps: ["typo-server"] } });
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
@@ -70,13 +48,12 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"filters the instance mcp.json to only allowed servers and never writes the adapter's original mcp.json",
+		"materializes the instance mcp.json as a generated snapshot, never a symlink",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["github"] } });
+			await writeCatalog({ review: { mcps: ["github"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -89,16 +66,16 @@ describe("launcher integration: mcp coordination", () => {
 				await rpc.close();
 			}
 
-			// The generated instance mcp.json contains only the allowed server.
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			const stat = await (await import("node:fs/promises")).lstat(instanceMcpPath);
+			expect(stat.isSymbolicLink()).toBe(false);
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
 					github: { url: "https://x" },
+					linear: { enabled: false },
 				},
 			});
 
-			// The adapter's own files were never written: the global config is
-			// byte-identical and no project overlay appeared.
 			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8"))).toEqual({
 				mcpServers: globalConfig,
 			});
@@ -107,13 +84,12 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"a profile without mcp preserves the full mcp config via symlink",
+		"materializes the merged snapshot when no mcp allowlist is declared",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ plain: { extensions: ["pi-mcp-adapter"] } });
+			await writeCatalog({ plain: {} });
 
 			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -126,8 +102,9 @@ describe("launcher integration: mcp coordination", () => {
 				await rpc.close();
 			}
 
-			// The instance mcp.json preserves the unrestricted config.
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			const stat = await (await import("node:fs/promises")).lstat(instanceMcpPath);
+			expect(stat.isSymbolicLink()).toBe(false);
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: globalConfig,
 			});
@@ -135,50 +112,42 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"a profile declaring mcp_tools fails before spawn when the adapter is absent",
+		"fails before spawn when an explicitly selected server uses SSE",
 		{ timeout: 30_000 },
 		async () => {
-			await writeMcpConfig({ github: { url: "https://x" } });
-			await writeCatalog({ review: { mcp_tools: { github: ["search"] } } });
+			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
+			await writeCatalog({ review: { mcps: ["github"] } });
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain("pi-mcp-adapter is not active");
+			expect(failure.stderr).toContain('selected MCP server "github" uses the legacy SSE transport');
 		},
 	);
 
 	it(
-		"an mcp_tools reference with unknown server fails before spawn",
-		{ timeout: 30_000 },
+		"passes an unselected SSE server through and lets Pi report its own config error",
+		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
-			await writeMcpConfig({ github: {} });
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { typo_server: ["search"] } } });
+			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
+			await writeCatalog({ plain: {} });
 
-			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
-			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain('unknown MCP server "typo_server"');
-		},
-	);
-
-	it(
-		"fails before creating runtime files when an existing selector collides by hyphen/underscore alias",
-		{ timeout: 30_000 },
-		async () => {
-			await installFakeAdapter();
-			const originalMcpJson = '{"mcpServers":{"github":{"url":"https://x","includeTools":["foo-bar"]}}}';
-			await writeFile(path.join(fixture.agentDir, "mcp.json"), originalMcpJson);
-			await writeCatalog({
-				review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["foo_bar"] } },
+			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
 			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
 
-			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
-
-			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain('unsafe MCP tool filter intersection for server "github"');
-			expect(failure.stderr).toContain('"foo_bar"');
-			expect(await launchInstanceDirs(fixture)).toEqual([]);
-			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcpJson);
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: {
+					github: { type: "sse", url: "http://localhost:3000/sse" },
+				},
+			});
 		},
 	);
 
@@ -186,10 +155,9 @@ describe("launcher integration: mcp coordination", () => {
 		"materializes tool restriction without a server whitelist and keeps original files byte-identical",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } } });
+			await writeCatalog({ review: { mcp_tools: { github: ["search"] } } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -205,7 +173,7 @@ describe("launcher integration: mcp coordination", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
-					github: { url: "https://x", includeTools: ["search"] },
+					github: { url: "https://x", toolExposure: { "*": "hidden", search: "direct" } },
 					linear: { command: "mcp-linear" },
 				},
 			});
@@ -217,13 +185,12 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"empty mcp_tools list denies all tools with adapter excludeTools wildcard",
+		"empty mcp_tools list denies all tools via toolExposure",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } } });
+			await writeCatalog({ review: { mcp_tools: { github: [] } } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -239,7 +206,7 @@ describe("launcher integration: mcp coordination", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
-					github: { url: "https://x", excludeTools: ["*"] },
+					github: { url: "https://x", toolExposure: { "*": "hidden" } },
 				},
 			});
 		},
@@ -249,7 +216,6 @@ describe("launcher integration: mcp coordination", () => {
 		"empty mcps selection disables discovered shared user servers and leaves source files unchanged",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 			const sharedConfig = { shared: { url: "https://shared" } };
 			await writeFile(
@@ -259,7 +225,7 @@ describe("launcher integration: mcp coordination", () => {
 			const agentConfig = { agentonly: { url: "https://agent" } };
 			await writeMcpConfig(agentConfig);
 			const originalMcp = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
-			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+			await writeCatalog({ denyall: { mcps: [] } });
 
 			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -275,7 +241,8 @@ describe("launcher integration: mcp coordination", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			const instanceMcp = JSON.parse(await readFile(instanceMcpPath, "utf8"));
 			expect(instanceMcp.mcpServers).toEqual({
-				shared: { disabled: true },
+				shared: { enabled: false },
+				agentonly: { enabled: false },
 			});
 
 			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
@@ -286,22 +253,9 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"empty mcps selection does not fail when the adapter is absent and the MCP config is malformed",
-		{ timeout: 30_000 },
-		async () => {
-			await writeMcpConfig("{ not valid json" as unknown as Record<string, unknown>);
-			await writeCatalog({ inert: { mcps: [] } });
-
-			const res = await runLauncher(fixture, ["inert", "--", "--mode", "rpc"]);
-			expect(res.code).toBe(0);
-		},
-	);
-
-	it(
 		"project-sourced MCP server is not disabled by an empty mcps selection",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			await writeMcpConfig({});
 			await mkdir(path.join(fixture.cwd, ".pi"), { recursive: true });
 			await writeFile(
@@ -309,7 +263,7 @@ describe("launcher integration: mcp coordination", () => {
 				JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }),
 			);
 			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
-			await writeCatalog({ denyall: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+			await writeCatalog({ denyall: { mcps: [] } });
 
 			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -329,12 +283,11 @@ describe("launcher integration: mcp coordination", () => {
 	);
 
 	it(
-		"empty mcps selection with active adapter and no discovered servers generates an empty instance mcp.json",
+		"empty mcps selection with no discovered servers generates an empty instance mcp.json",
 		{ timeout: 45_000 },
 		async () => {
-			await installFakeAdapter();
 			await writeMcpConfig({});
-			await writeCatalog({ empty: { extensions: ["pi-mcp-adapter"], mcps: [] } });
+			await writeCatalog({ empty: { mcps: [] } });
 
 			const rpc = new RpcDriver("node", [BIN, "empty", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -349,6 +302,38 @@ describe("launcher integration: mcp coordination", () => {
 
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({ mcpServers: {} });
+		},
+	);
+
+	it(
+		"merged user-level sources override earlier ones per server name",
+		{ timeout: 45_000 },
+		async () => {
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(
+				path.join(fixture.root, ".agents", "mcp.json"),
+				JSON.stringify({ mcpServers: { shared: { url: "https://agents" } } }),
+			);
+			await writeMcpConfig({ shared: { url: "https://agentdir" } });
+			await writeCatalog({ plain: {} });
+
+			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const response = await rpc.send({ type: "get_state" });
+				expect(response.success).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+
+			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
+			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
+				mcpServers: {
+					shared: { url: "https://agentdir" },
+				},
+			});
 		},
 	);
 });

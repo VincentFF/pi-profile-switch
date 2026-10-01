@@ -49,7 +49,7 @@ Validation failures SHALL be actionable: the error SHALL identify the file at fa
 
 A profile definition SHALL be an object and SHALL contain only these fields: `label`, `description`, `skills`, `extensions`, `mcps`, `tools`, `mcp_tools`, `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `instructions`.
 
-`skills`, `extensions`, `mcps`, and `tools` SHALL be arrays of strings. `mcp_tools` SHALL be an object whose keys are literal MCP server names and whose values are arrays of literal tool selectors passed to the active MCP adapter; glob patterns SHALL be rejected for this profile field. The remaining fields SHALL be strings.
+`skills`, `extensions`, `mcps`, and `tools` SHALL be arrays of strings. `mcp_tools` SHALL be an object whose keys are literal MCP server names and whose values are arrays of literal MCP tool names as registered by Pi's built-in MCP extension; glob patterns SHALL be rejected for this profile field. The remaining fields SHALL be strings.
 
 All fields are optional. Undeclared fields SHALL NOT produce any behavior change. An empty `mcp_tools` object SHALL have the same effect as an undeclared one; an empty list for a server SHALL remain distinct from an omitted server key. An explicitly empty `mcps` array SHALL be retained as an empty server selection and SHALL remain distinct from an undeclared `mcps` field.
 
@@ -83,7 +83,7 @@ On read, unlisted keys SHALL be ignored. On write, only the fields listed above 
 #### Scenario: Glob is not a literal MCP tool selector
 
 - **WHEN** an `mcp_tools` entry contains a glob pattern
-- **THEN** the definition is rejected with an actionable field error explaining that literal adapter tool selectors are required
+- **THEN** the definition is rejected with an actionable field error explaining that literal MCP tool names are required
 
 #### Scenario: Special-looking server keys remain data
 

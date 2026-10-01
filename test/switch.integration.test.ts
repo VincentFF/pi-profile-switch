@@ -34,12 +34,6 @@ async function trustProject(): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
 }
 
-async function installFakeAdapter(): Promise<void> {
-	const extDir = path.join(fixture.agentDir, "extensions");
-	await mkdir(extDir, { recursive: true });
-	await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
-}
-
 async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
 }
@@ -77,8 +71,6 @@ describe("launcher integration: in-session switching", () => {
 			});
 			try {
 				const before = await getState(rpc);
-				// Already visible under the named profile: project scope is Pi's,
-				// so the profile's selection neither adds nor hides it.
 				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
 					"skill:proj-skill",
 					"skill:proj-unselected",
@@ -87,9 +79,6 @@ describe("launcher integration: in-session switching", () => {
 				const switched = await rpc.send({ type: "prompt", message: "/profile use default" }, 60_000);
 				expect(switched.success).toBe(true);
 
-				// No restart, same session, unchanged project-level visibility. Default
-				// is unfiltered, so it additionally exposes the launcher-distributed
-				// profile-config skill (spec: Distributing the profile-config skill).
 				const after = await getState(rpc);
 				expect(after.sessionId).toBe(before.sessionId);
 				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
@@ -102,6 +91,7 @@ describe("launcher integration: in-session switching", () => {
 			}
 		},
 	);
+
 	it(
 		"/profile use switches without restarting: same session, new resources, state persisted",
 		{ timeout: 60_000 },
@@ -124,17 +114,14 @@ describe("launcher integration: in-session switching", () => {
 				const switched = await rpc.send({ type: "prompt", message: "/profile use beta" }, 60_000);
 				expect(switched.success).toBe(true);
 
-				// Same session, unchanged history, new resource set.
 				const after = await getState(rpc);
 				expect(after.sessionId).toBe(before.sessionId);
 				expect(after.sessionFile).toBe(before.sessionFile);
-				// Session is stored in the project's native encoded subdirectory, not flat under sessions
 				expect(before.sessionFile).toBeDefined();
 				expect(path.basename(path.dirname(before.sessionFile!))).toMatch(/^--.+--$/);
 				expect(after.messageCount).toBe(before.messageCount);
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
 
-				// Selection persisted to the global state file.
 				const state = JSON.parse(
 					await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"),
 				);
@@ -159,7 +146,6 @@ describe("launcher integration: in-session switching", () => {
 			try {
 				expect((await skillCommands(rpc))[0]?.description).toContain("alpha-skill");
 
-				// Edit the shared SKILL.md after activation; the profile file is untouched.
 				const skillFile = path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md");
 				await writeFile(
 					skillFile,
@@ -189,7 +175,7 @@ describe("launcher integration: in-session switching", () => {
 			});
 			try {
 				const failed = await rpc.send({ type: "prompt", message: "/profile use ghost" }, 60_000);
-				expect(failed.success).toBe(true); // the command handled the error itself
+				expect(failed.success).toBe(true);
 
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
 				const { existsSync } = await import("node:fs");
@@ -201,20 +187,16 @@ describe("launcher integration: in-session switching", () => {
 	);
 
 	it(
-		"profile switch changes per-server MCP tool policy (Task 3.3)",
+		"profile switch changes per-server MCP tool policy",
 		{ timeout: 60_000 },
 		async () => {
-			const extDir = path.join(fixture.agentDir, "extensions");
-			await mkdir(extDir, { recursive: true });
-			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
-
 			await writeFile(
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
 			);
 			await writeCatalog({
-				broad: { extensions: ["pi-mcp-adapter"] },
-				narrow: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
+				broad: {},
+				narrow: { mcp_tools: { github: ["search"] } },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "broad", "--", "--mode", "rpc"], {
@@ -225,7 +207,7 @@ describe("launcher integration: in-session switching", () => {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.includeTools).toBeUndefined();
+				expect(instanceMcp.mcpServers.github.toolExposure).toBeUndefined();
 
 				const switched = await rpc.send({ type: "prompt", message: "/profile use narrow" }, 60_000);
 				expect(switched.success).toBe(true);
@@ -234,7 +216,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(after.sessionId).toBe(before.sessionId);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 			} finally {
 				await rpc.close();
 			}
@@ -242,19 +224,15 @@ describe("launcher integration: in-session switching", () => {
 	);
 
 	it(
-		"empty MCP list survives reload (Task 3.3)",
+		"empty MCP list survives reload",
 		{ timeout: 60_000 },
 		async () => {
-			const extDir = path.join(fixture.agentDir, "extensions");
-			await mkdir(extDir, { recursive: true });
-			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
-
 			await writeFile(
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
 			);
 			await writeCatalog({
-				denied: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: [] } },
+				denied: { mcp_tools: { github: [] } },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "denied", "--", "--mode", "rpc"], {
@@ -265,7 +243,7 @@ describe("launcher integration: in-session switching", () => {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden" });
 
 				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
 				expect(reloaded.success).toBe(true);
@@ -274,7 +252,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(after.sessionId).toBe(before.sessionId);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.excludeTools).toEqual(["*"]);
+				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden" });
 			} finally {
 				await rpc.close();
 			}
@@ -282,20 +260,16 @@ describe("launcher integration: in-session switching", () => {
 	);
 
 	it(
-		"failed switch restores previous MCP tool policy (Task 3.3)",
+		"failed switch restores previous MCP tool policy",
 		{ timeout: 60_000 },
 		async () => {
-			const extDir = path.join(fixture.agentDir, "extensions");
-			await mkdir(extDir, { recursive: true });
-			await writeFile(path.join(extDir, "pi-mcp-adapter.ts"), "export default function () {}\n");
-
 			await writeFile(
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: { url: "https://gh" } } }),
 			);
 			await writeCatalog({
-				initial: { extensions: ["pi-mcp-adapter"], mcp_tools: { github: ["search"] } },
-				failing: { extensions: ["pi-mcp-adapter"], mcp_tools: { unknown_srv: ["search"] } },
+				initial: { mcp_tools: { github: ["search"] } },
+				failing: { mcp_tools: { unknown_srv: ["search"] } },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "initial", "--", "--mode", "rpc"], {
@@ -306,13 +280,13 @@ describe("launcher integration: in-session switching", () => {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 
 				const failed = await rpc.send({ type: "prompt", message: "/profile use failing" }, 60_000);
-				expect(failed.success).toBe(true); // handled by command handler
+				expect(failed.success).toBe(true);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github.includeTools).toEqual(["search"]);
+				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 			} finally {
 				await rpc.close();
 			}
@@ -323,7 +297,6 @@ describe("launcher integration: in-session switching", () => {
 		"switching to an empty mcps selection disables discovered user-level servers",
 		{ timeout: 60_000 },
 		async () => {
-			await installFakeAdapter();
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 			await writeFile(
 				path.join(fixture.root, ".agents", "mcp.json"),
@@ -331,8 +304,8 @@ describe("launcher integration: in-session switching", () => {
 			);
 			await writeMcpConfig({});
 			await writeCatalog({
-				open: { extensions: ["pi-mcp-adapter"] },
-				closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+				open: {},
+				closed: { mcps: [] },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "open", "--", "--mode", "rpc"], {
@@ -342,13 +315,13 @@ describe("launcher integration: in-session switching", () => {
 			try {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
-				expect((await lstat(path.join(instance, "mcp.json"))).isSymbolicLink()).toBe(true);
+				expect((await lstat(path.join(instance, "mcp.json"))).isSymbolicLink()).toBe(false);
 
 				const switched = await rpc.send({ type: "prompt", message: "/profile use closed" }, 60_000);
 				expect(switched.success).toBe(true);
 
 				const instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
 			} finally {
 				await rpc.close();
 			}
@@ -359,7 +332,6 @@ describe("launcher integration: in-session switching", () => {
 		"empty mcps selection survives reload",
 		{ timeout: 60_000 },
 		async () => {
-			await installFakeAdapter();
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 			await writeFile(
 				path.join(fixture.root, ".agents", "mcp.json"),
@@ -367,7 +339,7 @@ describe("launcher integration: in-session switching", () => {
 			);
 			await writeMcpConfig({});
 			await writeCatalog({
-				closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+				closed: { mcps: [] },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "closed", "--", "--mode", "rpc"], {
@@ -378,7 +350,7 @@ describe("launcher integration: in-session switching", () => {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
 
 				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
 				expect(reloaded.success).toBe(true);
@@ -387,7 +359,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(after.sessionId).toBe(before.sessionId);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
 			} finally {
 				await rpc.close();
 			}
@@ -398,7 +370,6 @@ describe("launcher integration: in-session switching", () => {
 		"switching back to omitted mcps selection restores server availability",
 		{ timeout: 60_000 },
 		async () => {
-			await installFakeAdapter();
 			const originalMcp = JSON.stringify({ mcpServers: {} });
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
 			await writeFile(
@@ -407,8 +378,8 @@ describe("launcher integration: in-session switching", () => {
 			);
 			await writeMcpConfig({});
 			await writeCatalog({
-				open: { extensions: ["pi-mcp-adapter"] },
-				closed: { extensions: ["pi-mcp-adapter"], mcps: [] },
+				open: {},
+				closed: { mcps: [] },
 			});
 
 			const rpc = new RpcDriver("node", [BIN, "closed", "--", "--mode", "rpc"], {
@@ -419,12 +390,13 @@ describe("launcher integration: in-session switching", () => {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ disabled: true });
+				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
 
 				const switched = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
 				expect(switched.success).toBe(true);
 
-				expect((await lstat(path.join(instance, "mcp.json"))).isSymbolicLink()).toBe(true);
+				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh" });
 				expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
 			} finally {
 				await rpc.close();

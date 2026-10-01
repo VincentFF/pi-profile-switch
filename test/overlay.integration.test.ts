@@ -198,27 +198,13 @@ describe("launcher integration: runtime overlay", () => {
 	);
 
 	it(
-		"nested loose adapter entry does not own sibling tools and overlays still reapply",
+		"empty tools denies sibling extension tools and overlays still reapply",
 		{ timeout: 120_000 },
 		async () => {
 			const extensionsDir = path.join(fixture.agentDir, "extensions");
-			const adapterDir = path.join(extensionsDir, "pi-mcp-adapter");
-			await mkdir(adapterDir, { recursive: true });
+			await mkdir(extensionsDir, { recursive: true });
 			await writeFile(
-				path.join(adapterDir, "index.ts"),
-				`export default function (pi: any) {
-					pi.registerTool({
-						name: "mcp_allowed",
-						label: "Allowed MCP tool",
-						description: "Fixture adapter tool",
-						parameters: { type: "object", properties: {} },
-						execute: async () => ({ content: [{ type: "text", text: "allowed" }] }),
-					});
-				}
-				`,
-			);
-			await writeFile(
-				path.join(adapterDir, "linter.ts"),
+				path.join(extensionsDir, "linter.ts"),
 				`export default function (pi: any) {
 					pi.registerTool({
 						name: "lint_check",
@@ -241,10 +227,9 @@ describe("launcher integration: runtime overlay", () => {
 					}
 				`,
 			);
-			const linterEntry = path.join(adapterDir, "linter.ts");
 			await writeCatalog({
-				empty: { extensions: ["pi-mcp-adapter", linterEntry, "active-tool-probe"], tools: [] },
-				lint: { extensions: ["pi-mcp-adapter", linterEntry, "active-tool-probe"], tools: ["lint_check"] },
+				empty: { extensions: ["linter", "active-tool-probe"], tools: [] },
+				lint: { extensions: ["linter", "active-tool-probe"], tools: ["lint_check"] },
 			});
 
 			const readActiveTools = async (): Promise<string[]> => {
@@ -268,14 +253,12 @@ describe("launcher integration: runtime overlay", () => {
 					throw new Error(`${error instanceof Error ? error.message : String(error)}\n${rpc.stderr.join("")}`);
 				});
 				const initialTools = await readActiveTools();
-				expect(initialTools).toContain("mcp_allowed");
 				expect(initialTools).not.toContain("lint_check");
 
 				await clearActiveTools();
 				const switched = await rpc.send({ type: "prompt", message: "/profile use lint" }, 60_000);
 				expect(switched.success).toBe(true);
 				const selectedTools = await readActiveTools();
-				expect(selectedTools).toContain("mcp_allowed");
 				expect(selectedTools).toContain("lint_check");
 
 				await clearActiveTools();
