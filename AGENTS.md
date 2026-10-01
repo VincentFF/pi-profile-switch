@@ -58,13 +58,13 @@ Auxiliary flows are `/opsx-sync` and `/opsx-update`, defined in `.pi/prompts/ops
 
 Fixes that change none of the above are committed directly without opening a change: adding or removing documentation files, fixing links and typos, adjusting comments and test names, renaming files for pure restructuring. The criterion is whether it changes the reader's understanding of behavior: if it does, run the process.
 
-### Process discipline and escalation
+### Process discipline
 
 - **Archive on completion**: before starting a new change or entering apply, run `openspec list`; if a change has all tasks checked but is not yet archived, archive it first. Otherwise downstream changes pay dependency-chain lock overhead and validation noise when their deltas lack a base.
 - **Deduplicate instruction calls**: for the same change and the same artifact, call `openspec instructions` only once in the main session; reuse the first output afterwards. Repeatedly pulling the full rule template inflates context.
 - **Plan readiness**: before apply or worker dispatch, reconcile the proposal, specs, design, tasks, documentation obligations, and their verification checks using the task rule in `openspec/config.yaml`. If a required result conflicts with a check or another artifact, pause for `/opsx-update` or a user decision before editing. CLI `ready` and strict validation establish neither semantic consistency nor user acceptance.
-- **Final acceptance**: task checkboxes record implementation progress, not acceptance. An unresolved contract conflict blocks completion even if a reviewer reports `OK with notes`. After the last edit, independently run the relevant project checks on the final tree; for source changes, include `npm run check` and `npm test`. Complete `/opsx-verify` for both solo and team-workflow changes; team review and `openspec validate --strict` do not replace it. Only then suggest archive.
-- **Critical paths and team-workflow escalation**: the general escalation rules of team-workflow are in the `team-workflow` skill. In this project, apply must escalate to team-workflow for any change touching these per-session hot paths:
+- **Final acceptance**: task checkboxes record implementation progress, not acceptance. An unresolved contract conflict blocks completion even if a reviewer reports `OK with notes`. After the last edit, independently run the relevant project checks on the final tree; for source changes, include `npm run check` and `npm test`. Complete `/opsx-verify` for every change; `openspec validate --strict` does not replace it. Only then suggest archive.
+- **High-risk paths**: changes touching these per-session hot paths deserve extra care during apply and verification:
   - launcher startup flow and sequencing (`bin/pi-profile.ts`, `src/launcher/`)
   - instance runtime directory generation and sweeping (`src/settings-generator.ts`, `src/launcher/runtime-cleanup.ts`)
   - resource discovery and the filtering model (`src/profile-resolver.ts`, `src/skill-registry.ts`, `src/extension-discovery.ts`)
