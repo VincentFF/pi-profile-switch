@@ -98,7 +98,7 @@ How fields resolve:
   - Prefixed selectors (e.g. `<server>_<tool>` forms used by previous MCP integrations) no longer apply; replace them with the literal tool names from Pi's built-in MCP extension.
 - `mcps` references servers from your Pi user-level MCP configuration (`~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`); connection details stay in those files.
   - **Omitting `mcps`** leaves all discovered user-level servers at their normal availability.
-  - **`mcps: []`** disables every discovered user-level server (shared locations are explicitly marked `enabled: false` in the generated instance `mcp.json`; agentDir-only servers are omitted). Project-level servers are never narrowed.
+  - **`mcps: []`** disables every discovered user-level server, including agentDir-only servers; every unselected user-level server is explicitly marked `enabled: false` in the generated instance `mcp.json`. Project-level servers are never narrowed.
   - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
   - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
 - The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.

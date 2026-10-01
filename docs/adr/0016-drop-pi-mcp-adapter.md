@@ -38,4 +38,4 @@ Pi's built-in extension is now the only MCP backend pi-profile-switch supports.
 
 ## Related
 
-Proposal: `openspec/changes/adopt-native-mcp/proposal.md`; design: `openspec/changes/adopt-native-mcp/design.md`; spec deltas: `openspec/changes/adopt-native-mcp/specs/`; previous adapter decision: `docs/adr/0002-mcp-integration-locked-to-pi-mcp-adapter.md`.
+Behavior contracts: `openspec/specs/resource-reference/spec.md`, `openspec/specs/launcher/spec.md`, `openspec/specs/in-session-switch/spec.md`, and `openspec/specs/profile-catalog/spec.md`; mechanism ownership: `docs/architecture/overview.md`; previous adapter decision: `docs/adr/0002-mcp-integration-locked-to-pi-mcp-adapter.md`.
