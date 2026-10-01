@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.0...v0.13.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* keep user skill exclusions under named profiles ([#76](https://github.com/VincentFF/pi-profile-switch/issues/76)) ([627d450](https://github.com/VincentFF/pi-profile-switch/commit/627d45004f60fc195ff7a87e9a249a3108bc5b85))
+
 ## [0.13.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.12.2...v0.13.0) (2026-10-01)
 
 
