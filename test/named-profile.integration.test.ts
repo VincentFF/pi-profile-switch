@@ -99,6 +99,34 @@ describe("launcher integration: named global profiles", () => {
 	);
 
 	it(
+		"keeps skills hidden by the user's own settings exclusions hidden",
+		{ timeout: 45_000 },
+		async () => {
+			await addGlobalSkill(fixture, "kept-skill");
+			await addGlobalSkill(fixture, "hidden-skill");
+			await addAgentsSkill("hidden-agents-skill");
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({ skills: ["!skills/**", "+skills/kept-skill/SKILL.md"] }),
+			);
+			await writeCatalog({ review: { skills: ["*"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const names = await rpc.skillCommandNames();
+				expect(names).toContain("skill:kept-skill");
+				expect(names).not.toContain("skill:hidden-skill");
+				expect(names).not.toContain("skill:hidden-agents-skill");
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
 		"restores the saved active profile when no positional name is given",
 		{ timeout: 45_000 },
 		async () => {

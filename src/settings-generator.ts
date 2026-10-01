@@ -170,6 +170,29 @@ function homeAgentsSkillsDir(): string {
 	return path.join(process.env.HOME ?? homedir(), ".agents", "skills");
 }
 
+/** The user's own skill exclusions (`!pattern`, `-path`), carried into a
+ *  named profile's generated settings. Relative entries resolve against the
+ *  runtime dir, which mirrors the agent dir, so they pass through unchanged.
+ *  An absolute (or `~`) `-path` under the agent dir is rewritten to its
+ *  runtime mirror path: Pi matches `-` entries lexically. */
+function userSkillExclusions(userSkills: unknown, agentDir: string, runtimeDir: string): string[] {
+	if (!Array.isArray(userSkills)) return [];
+	const exclusions: string[] = [];
+	for (const entry of userSkills) {
+		if (typeof entry !== "string") continue;
+		if (entry.startsWith("!")) {
+			exclusions.push(entry);
+		} else if (entry.startsWith("-")) {
+			const target = entry.slice(1);
+			const expanded = target === "~" || target.startsWith("~/") ? path.join(process.env.HOME ?? homedir(), target.slice(1)) : target;
+			const rel = path.isAbsolute(expanded) ? path.relative(agentDir, expanded) : undefined;
+			const underAgentDir = rel !== undefined && rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+			exclusions.push(underAgentDir ? `-${path.join(runtimeDir, rel)}` : entry);
+		}
+	}
+	return exclusions;
+}
+
 function buildSelectionSettings(
 	plan: ActivationPlan,
 	userSettings: Record<string, unknown>,
@@ -213,6 +236,11 @@ function buildSelectionSettings(
 			skillEntries.push(`-${skill.filePath}`);
 		}
 	}
+	// Discovery already honored the user's own `!pattern` / `-path` skill
+	// exclusions, so the skills they hide never reach the loop above and get no
+	// `-` entry. Replacing the user's array would then drop those exclusions and
+	// let the instance's skills symlink and ~/.agents/skills reveal them.
+	skillEntries.push(...userSkillExclusions(userSettings.skills, agentDir, runtimeDir));
 	settings.skills = skillEntries;
 
 	// --- extensions ---

@@ -117,6 +117,47 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		]);
 	});
 
+	it("carries the user's own skill exclusions into the generated settings", async () => {
+		// Discovery honors these exclusions, so the skills they hide never get a
+		// `-` entry of their own; dropping the user's entries would reveal them.
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({
+				skills: [
+					"!skills/**",
+					"+skills/kept-skill",
+					"/opt/shared-skills/extra/SKILL.md",
+					`-${path.join(fixture.agentDir, "skills", "absolute-hidden", "SKILL.md")}`,
+					"-~/.pi-test-agent-hidden/SKILL.md",
+					"-skills/relative-hidden/SKILL.md",
+				],
+			}),
+		);
+		const plan = selectionPlan({ skills: [agentDirSkill("kept-skill")] });
+		const discovery: DiscoveryContext = { skills: [agentDirSkill("kept-skill")], packages: [] };
+
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery });
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "kept-skill", "SKILL.md"),
+			"!skills/**",
+			`-${path.join(result.runtimeDir, "skills", "absolute-hidden", "SKILL.md")}`,
+			"-~/.pi-test-agent-hidden/SKILL.md",
+			"-skills/relative-hidden/SKILL.md",
+		]);
+	});
+
+	it("rewrites a ~ exclusion under the agent dir to its runtime mirror path", async () => {
+		const rel = path.relative(fixture.root, path.join(fixture.agentDir, "skills", "tilde-hidden", "SKILL.md"));
+		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ skills: [`-~/${rel}`] }));
+
+		const result = await generateRuntimeDir(selectionPlan({}), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.skills).toEqual([`-${path.join(result.runtimeDir, "skills", "tilde-hidden", "SKILL.md")}`]);
+	});
+
 	it("writes selected extensions as additive entry paths", async () => {
 		const plan = selectionPlan({
 			extensions: [{ id: "review-guard", entry: "/opt/pi-resources/review-guard/index.ts" }],
