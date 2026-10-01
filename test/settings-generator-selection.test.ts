@@ -283,6 +283,88 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(bareSettings.defaultThinkingLevel).toBeUndefined();
 	});
 
+	it("adds native MCP gateways to defaultTools when tools are declared and a user server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read", "codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("adds gateways for an empty tools selection when a user server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: [] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("does not add gateways when no MCP server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x", enabled: false } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBeUndefined();
+	});
+
+	it("adds gateways when only a trusted project server is enabled", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectDir: fixture.cwd,
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read", "codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("does not add gateways when tools are undeclared", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toBeUndefined();
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBeUndefined();
+	});
+
 	it("writes the launch plan file for the in-pi extension and writes APPEND_SYSTEM.md", async () => {
 		const result = await generateRuntimeDir(selectionPlan({ instructions: "Be picky." }), {
 			agentDir: fixture.agentDir,

@@ -48,7 +48,7 @@ import path from "node:path";
 import { buildInstanceMcpConfig, type ActivationPlan } from "./profile-resolver.ts";
 import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
-import { loadMergedMcpServers } from "./mcp-config.ts";
+import { loadMergedMcpServers, type MergedMcpResult } from "./mcp-config.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
 /** A configured global package and its resolved install/local root. */
@@ -194,6 +194,32 @@ function userSkillExclusions(userSkills: unknown, agentDir: string, runtimeDir: 
 		}
 	}
 	return exclusions;
+}
+
+/** Pi's built-in MCP discovery entry points (see installed Pi
+ *  `dist/extensions/mcp/index.js`, `codemode/tool.js`, `tool-search/tool.js`).
+ *  These are the tools a narrowed `tools` profile must keep reachable when an
+ *  MCP server is enabled; their identities are Pi's, not a profile field. */
+const MCP_GATEWAY_TOOL_NAMES = ["codemode", "tool_search"] as const;
+
+/** Whether the prepared effective MCP set contains at least one enabled
+ *  server (user-level snapshot entries with `enabled !== false`, plus any
+ *  enabled trusted-project server Pi reads itself). */
+function hasEnabledMcpServer(
+	instanceMcpConfig: Record<string, unknown>,
+	discovery: MergedMcpResult,
+): boolean {
+	const snapshotServers = instanceMcpConfig.mcpServers;
+	if (isRecord(snapshotServers)) {
+		for (const def of Object.values(snapshotServers)) {
+			if (isRecord(def) && def.enabled !== false) return true;
+		}
+	}
+	for (const name of discovery.projectServers) {
+		const def = discovery.servers[name];
+		if (def !== undefined && def.enabled !== false) return true;
+	}
+	return false;
 }
 
 function buildSelectionSettings(
@@ -437,6 +463,19 @@ export async function writeRuntimeFiles(
 	warnings.push(...(discovery.diagnostics ?? []));
 	const instanceMcpConfig = buildInstanceMcpConfig(plan.profile, discovery, plan.mcps, plan.mcpTools);
 
+	// When a profile narrows `tools` and the effective MCP set still has an
+	// enabled server, keep Pi's native MCP discovery entry points reachable
+	// (D4). The marker drives the session-start preservation; the
+	// defaultTools baseline covers the boot window before session_start.
+	const mcpGateways = plan.tools !== undefined && hasEnabledMcpServer(instanceMcpConfig, discovery);
+	if (mcpGateways) {
+		const current = Array.isArray(settings.defaultTools) ? (settings.defaultTools as string[]) : [];
+		settings.defaultTools = [
+			...current,
+			...MCP_GATEWAY_TOOL_NAMES.filter((name) => !current.includes(name)),
+		];
+	}
+
 	// The launch plan feeds the in-pi extension: tool re-application after
 	// reload (the tools strict allowlist), in-session switching, status
 	// reporting, and post-reload state persistence.
@@ -452,6 +491,7 @@ export async function writeRuntimeFiles(
 		...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
 		...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
 		...(plan.mcpTools !== undefined ? { mcpTools: plan.mcpTools } : {}),
+		...(mcpGateways ? { mcpGateways: true } : {}),
 		// The resolved sets feed /profile status (absolute paths) and the
 		// glob-delta diff against the previous activation.
 		resolved: {

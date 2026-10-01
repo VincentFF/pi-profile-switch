@@ -590,6 +590,69 @@ describe("pi-profile extension", () => {
 			expect(ctx.notifications.some((entry) => /lint_check.*mcp_tools/.test(entry.message))).toBe(false);
 		});
 
+		it("session_start retains native MCP discovery entry points when the plan marks gateways", async () => {
+			await writeLaunchPlan({
+				profile: "narrow",
+				source: "global",
+				agentDir: root,
+				tools: ["read"],
+				toolReferences: ["read"],
+				mcpGateways: true,
+				resolved: { skills: [], extensions: [] },
+			});
+			const pi = fakePi();
+			pi.getAllTools = () => [
+				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "bash", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "codemode", sourceInfo: { path: "builtin:codemode", source: "builtin" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+				{ name: "fixture_tool", sourceInfo: { path: "/agent/extensions/fixture.ts", source: "extension" } },
+			];
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(pi.activeTools).toContain("read");
+			expect(pi.activeTools).toContain("codemode");
+			expect(pi.activeTools).toContain("tool_search");
+			expect(pi.activeTools).not.toContain("bash");
+			expect(pi.activeTools).not.toContain("fixture_tool");
+		});
+
+		it("session_start does not use a same-named foreign tool as an MCP gateway", async () => {
+			await writeLaunchPlan({
+				profile: "narrow",
+				source: "global",
+				agentDir: root,
+				tools: ["read"],
+				toolReferences: ["read"],
+				mcpGateways: true,
+				resolved: { skills: [], extensions: [] },
+			});
+			const pi = fakePi();
+			pi.getAllTools = () => [
+				{ name: "read", sourceInfo: { path: "pi", source: "builtin" } },
+				{ name: "codemode", sourceInfo: { path: "/agent/extensions/other.ts", source: "extension" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+			];
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(pi.activeTools).toContain("read");
+			expect(pi.activeTools).toContain("tool_search");
+			expect(pi.activeTools).not.toContain("codemode");
+			expect(
+				ctx.notifications.some(
+					(entry) =>
+						entry.level === "warning" &&
+						entry.message.includes('MCP entry point "codemode" is registered by /agent/extensions/other.ts'),
+				),
+			).toBe(true);
+		});
+
 		it("session_start warns about legacy MCP references in tools", async () => {
 			await writeLaunchPlan({
 				profile: "legacy",
