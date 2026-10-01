@@ -22,10 +22,10 @@ None.
 
 ### Modified Capabilities
 
-- `resource-reference`: MCP server reference resolution and per-server MCP tool reference resolution are rewritten against native Pi semantics (merged user-level snapshot, `enabled: false`, `toolExposure`, SSE failure tiering, project-owned boundary).
+- `resource-reference`: MCP server reference resolution, per-server MCP tool reference resolution, and selector failure tiering are rewritten against native Pi semantics (merged user-level snapshot, `enabled: false`, `toolExposure`, SSE failure tiering, project-owned boundary).
 - `profile-catalog`: field contracts for `mcps`/`mcp_tools` no longer depend on an adapter being selected.
 - `launcher`: instance generation always materializes `mcp.json` from the merged user-level snapshot instead of symlinking or adapter-filtering.
-- `in-session-switch`: switch/reload re-materialize the snapshot; MCP-owned tool classification uses the built-in MCP extension path.
+- `in-session-switch`: switch/reload re-materialize the snapshot; MCP-owned tool classification uses the built-in MCP extension path, and status reports server availability from the merged snapshot without adapter gating.
 
 ## Doc Impact
 

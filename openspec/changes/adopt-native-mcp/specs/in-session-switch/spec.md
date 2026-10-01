@@ -55,6 +55,38 @@ An explicit empty `mcps` selection SHALL have the same effect after `/profile us
 - **WHEN** a session switches from a named profile with `mcps: []` to a profile omitting `mcps`
 - **THEN** user-level servers return to their merged-snapshot availability
 
+### Requirement: Observability surface
+
+Bare `/profile` SHALL open the interactive selector over the visible profiles; outside TUI mode it SHALL degrade to printing the profile list, with the structured payload serving non-interactive consumers.
+
+The selector and the degraded list SHALL show only visible profiles and SHALL use the same trust gating as activation: profiles from an untrusted project MUST NOT appear.
+
+Each list entry SHALL report the winning definition's source and be marked when the project definition shadows a same-named global definition.
+
+`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners. For a named profile declaring `mcps: []`, the discovered user-level servers in the merged snapshot SHALL be reported as disabled, not enabled, while trusted project-owned servers SHALL remain reported as enabled.
+
+The degraded list and `status` SHALL be emitted as messages carrying structured payloads for non-interactive consumers.
+
+#### Scenario: Untrusted project's profiles are invisible
+
+- **WHEN** the project is untrusted and profiles exist in the project catalog
+- **THEN** neither the selector nor the list shows those profiles
+
+#### Scenario: Same-named project definition shadows the global one
+
+- **WHEN** the project and global catalogs define the same-named profile
+- **THEN** the list entry reports its source as project and is marked as shadowing the global definition
+
+#### Scenario: Empty MCP selection is visible in status
+
+- **WHEN** a named profile declares `mcps: []` and user-level servers have been discovered in the merged snapshot
+- **THEN** `/profile status` reports no selected user-level servers and reports the discovered user-level servers as disabled
+
+#### Scenario: Project-owned server remains enabled in status
+
+- **WHEN** a named profile declares `mcps: []` and a trusted project defines an enabled server
+- **THEN** `/profile status` reports the project-owned server as enabled rather than disabled
+
 ## REMOVED Requirements
 
 ### Requirement: Plan application and change summary at session start

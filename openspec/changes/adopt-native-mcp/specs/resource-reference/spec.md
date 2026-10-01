@@ -1,5 +1,20 @@
 # Spec Delta
 
+## MODIFIED Requirements
+
+### Requirement: Unified failure tiering for references
+
+Reference resolution SHALL be tiered by error certainty and MUST NOT silently drop any reference.
+
+An unmatched literal SHALL fail activation. A zero-match glob SHALL be collected as a warning item, visible in launch output and status queries, without blocking activation.
+
+Pi tool references are the exception: they are unknowable before spawn, so they neither fail on a pre-spawn miss nor get recorded as warning items. After session start, missing Pi tool literals SHALL be reported. Literal MCP tool selectors in `mcp_tools` are restrictive policy inputs rather than pre-spawn-resolvable references; they SHALL remain in the policy without a missing-name diagnostic, as specified in "Per-server MCP tool selection".
+
+#### Scenario: Different outcomes for literals and globs
+
+- **WHEN** a profile references both a nonexistent literal skill name and a zero-match skill glob
+- **THEN** activation fails because of the literal, while the glob itself only produces a warning item
+
 ## REMOVED Requirements
 
 ### Requirement: MCP server reference resolution and the adapter dependency
