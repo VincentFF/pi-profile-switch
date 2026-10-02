@@ -48,7 +48,7 @@ export class ActivationError extends Error {
 	}
 }
 
-/** Pi's built-in tool names (pi 0.85.1 `allToolNames`; not exported by the
+/** Pi's built-in tool names (pi 0.99.2 `allToolNames`; not exported by the
  *  SDK). The integration suite guards drift. Literal tool names pass through
  *  regardless — extension-provided tools are unknowable before spawn. */
 export const BUILTIN_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"] as const;

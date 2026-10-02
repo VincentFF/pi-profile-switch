@@ -3,8 +3,8 @@
  *
  * The spawned pi gets: the pi-profile extension via `-e` and the user's
  * arguments verbatim. stdio is inherited so interactive
- * TUI, RPC, and print modes all behave natively; exit codes and signals
- * propagate.
+ * TUI, text, JSON, and RPC modes all behave natively; exit codes and
+ * signals propagate.
  */
 
 import { spawn } from "node:child_process";

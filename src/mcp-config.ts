@@ -13,8 +13,10 @@
  * (read for ownership classification only — Pi reads the file itself).
  * The legacy project-root `.mcp.json` source is not read.
  *
- * Malformed config files fail loudly — a broken mcp.json must not silently
- * read as "no servers" and reject every reference.
+ * Malformed config files follow the discovery tier: strict mode throws
+ * `McpConfigError` (a broken mcp.json must not silently read as "no servers"
+ * under an explicit MCP policy); diagnostic mode skips the malformed source
+ * with a path-bearing diagnostic so valid sources still merge.
  */
 
 import { homedir } from "node:os";
