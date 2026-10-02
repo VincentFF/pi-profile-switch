@@ -43,7 +43,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain('unknown MCP server: "typo-server"');
+			expect(failure.stderr).toContain('unknown MCP server: "typo-server" (usable candidates: github)');
 		},
 	);
 

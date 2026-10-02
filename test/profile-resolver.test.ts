@@ -217,7 +217,47 @@ describe("resolveProfile", () => {
 				extensions: await extensionsWith(),
 				discoveredMcpServers: ["github"],
 			}),
-		).rejects.toThrow(/unknown MCP server: "github-ro"/);
+		).rejects.toThrow(/unknown MCP server: "github-ro" \(usable candidates: github\)/);
+	});
+
+	it("names usable user-level candidates when an mcps reference is unknown", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: {
+				github: { url: "https://gh" },
+				linear: { command: "linear", enabled: false },
+				"proj-srv": { url: "https://proj" },
+			},
+			sharedServers: new Set(["github", "linear"]),
+			projectServers: new Set(["proj-srv"]),
+			serverOwners: { github: "user", linear: "user", "proj-srv": "project" },
+		};
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcps: ["typo"] }),
+				skills: [],
+				extensions: await extensionsWith(),
+				mcpDiscovery,
+			}),
+		).rejects.toThrow(/unknown MCP server: "typo" \(usable candidates: github\)/);
+	});
+
+	it("states no user-level servers when an unknown mcps reference has no candidates", async () => {
+		const mcpDiscovery: MergedMcpResult = {
+			servers: { "proj-srv": { url: "https://proj" } },
+			sharedServers: new Set(),
+			projectServers: new Set(["proj-srv"]),
+			serverOwners: { "proj-srv": "project" },
+		};
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcps: ["typo"] }),
+				skills: [],
+				extensions: await extensionsWith(),
+				mcpDiscovery,
+			}),
+		).rejects.toThrow(/unknown MCP server: "typo" \(no user-level servers are discovered\)/);
 	});
 
 	it("fails activation when mcp is declared without server discovery", async () => {
