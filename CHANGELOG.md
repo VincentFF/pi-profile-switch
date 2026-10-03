@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.2...v0.14.0) (2026-10-03)
+
+
+### Features
+
+* valid native MCP snapshots and gateway access ([#82](https://github.com/VincentFF/pi-profile-switch/issues/82)) ([7f2943f](https://github.com/VincentFF/pi-profile-switch/commit/7f2943f12ae87985a20f58af5564251f7bddcf87))
+
 ## [0.13.2](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.1...v0.13.2) (2026-10-01)
 
 
