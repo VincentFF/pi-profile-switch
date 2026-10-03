@@ -83,7 +83,7 @@ An explicit empty `mcps` selection SHALL have the same effect after `/profile us
 
 ### Requirement: Rollback on switch failure
 
-When reload fails, the runtime files from the snapshot SHALL be restored and reloaded again, then the failure cause reported. The runtime MUST NOT remain in a half-switched state.
+When rewriting runtime files or reloading fails, the runtime files from the snapshot SHALL be restored and the failure cause reported. If a reload was attempted or Pi might have observed rewritten files, the restored files SHALL be reloaded. The runtime MUST NOT remain in a half-switched state.
 
 Pi's interactive mode may swallow a reload rejection or failure without reporting it. A switch SHALL therefore verify after reload that it actually executed; when that cannot be proven, it SHALL be treated as a failure and rolled back.
 
@@ -101,9 +101,14 @@ Persistence of selection and overlay SHALL happen in the post-reload extension i
 - **WHEN** reload neither errors nor actually re-executes the extension
 - **THEN** it is treated as a failure and rolled back, reporting that reload did not execute
 
+#### Scenario: Write fails after one managed file changes
+
+- **WHEN** switching a profile changes a managed runtime file and a later write fails before reload
+- **THEN** every managed runtime file is restored to its exact pre-switch state, selection and overlay remain unchanged, and the failed profile is not reported as active
+
 ### Requirement: Session-start plan application and change summary
 
-Every session start (launch, reload, new, resume, fork) SHALL apply the plan in the current runtime directory. When `tools` is declared, the active tool set SHALL combine its original references expanded against Pi's live non-MCP registry with the MCP-owned tools available under the server and per-server tool selections. When `tools` is absent, Pi's current non-MCP tool availability SHALL stay unchanged; overlay disabled tool entries still narrow their established base. An absent or empty `mcp_tools` object MUST NOT by itself change Pi's tool state.
+Every session start (launch, reload, new, resume, fork) SHALL apply the plan in the current runtime directory. When `tools` is declared, the active tool set SHALL combine its original references expanded against Pi's live non-MCP registry with the MCP-owned tools available under the server and per-server tool selections, plus the native entry points needed to reach enabled MCP tools. When `tools` is absent, Pi's current tool availability SHALL stay unchanged; overlay disabled tool entries still narrow their established base. An absent or empty `mcp_tools` object MUST NOT by itself change Pi's tool state.
 
 When the plan carries disabled tool entries from the overlay, the active tool set SHALL subtract their matches at that moment. The base for overlay resolution SHALL remain the profile's resolved Pi tool references when `tools` is declared, or the runtime's available tool set when it is not; per-server MCP tool filtering SHALL be governed by `mcp_tools` and server selection.
 
@@ -116,12 +121,17 @@ The change summary produced by a switch SHALL be injected into the next agent tu
 #### Scenario: Tools whitelist re-applied after reload
 
 - **WHEN** the new extension instance executes session start after reload
-- **THEN** the active non-MCP tool set is reset to the original references expanded against the live registry, while available MCP-owned tools remain independent of those references
+- **THEN** the active non-MCP tool set is reset to the original references expanded against the live registry, while available MCP-owned tools and their native discovery entry points remain independent of those references
 
 #### Scenario: Built-in MCP extension does not own sibling extension tools
 
 - **WHEN** a profile declares `tools: []`, MCP servers provide tools through Pi's built-in MCP extension, and an unrelated extension registers a tool
-- **THEN** the unrelated extension's tool is not active after session start or reload, while MCP tools permitted by MCP policy remain available
+- **THEN** the unrelated extension's tool is not active after session start or reload, while MCP tools permitted by MCP policy and their native discovery entry points remain available
+
+#### Scenario: Codemode and deferred access after switch
+
+- **WHEN** the session switches to a profile with `tools: ["read"]` and an enabled server has tools reachable through Pi's codemode or deferred discovery entry points
+- **THEN** the model can use both kinds of MCP tool after reload without `tools` explicitly listing either entry point
 
 #### Scenario: Disabled tools stay disabled across reload
 
