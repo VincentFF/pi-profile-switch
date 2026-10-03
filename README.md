@@ -10,15 +10,15 @@ Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a nam
 npm install -g pi-profile-switch
 ```
 
-Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (installed automatically as a peer dependency).
+Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 0.99.1 or newer (installed automatically as a peer dependency). Use `npm install -g`, not `pi install` — this package provides the `pi-profile` launcher.
 
 ## Quick start
 
 ```bash
-# Launch with the built-in default profile (all resources, plain Pi behavior)
+# Built-in default profile: all resources, plain Pi behavior
 pi-profile
 
-# Launch with the seeded read-only ask profile
+# Starter read-only ask profile
 pi-profile ask
 
 # Anything after -- is passed to pi verbatim
@@ -27,58 +27,28 @@ pi-profile ask -- --model openai/gpt-5.4
 
 ## Define your own profiles
 
-Profiles live in two directories, with one JSON file per profile:
+Profiles live in two directories, one JSON file per profile:
 
 | Path | Scope |
 | --- | --- |
-| `~/.pi-profile-switch/profiles/<name>.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the workspace root. |
-| `<project>/.pi/profiles/<name>.json` | Project-level, trusted projects only. |
+| `~/.pi-profile-switch/profiles/<name>.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the root directory. |
+| `<project>/.pi/profiles/<name>.json` | Project-level, trusted projects only. Completely replaces a global profile with the same name. |
 
-Create or change a profile by editing or creating a `<name>.json` file directly — schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
+Write the JSON directly (schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json)), or configure profiles conversationally: the package ships a [`profile-config`](skills/profile-config/SKILL.md) skill that creates, edits, and deletes profiles. Profiles created with a `skills` list include `"profile-config"` by default (unless you opt out or cover it with a wildcard like `"*"`), keeping configuration available after switching.
 
-You can also configure profiles conversationally: the package ships a **`profile-config`** skill (distributed to `<agentDir>/skills/profile-config/` — best-effort on install, and guaranteed in place at every launcher startup) that guides the agent to clarify requirements, discover resources, and write or remove profile files. Profiles created with a `skills` list include `"profile-config"` by default (unless explicitly opted out or covered by a wildcard like `"*"`), keeping configuration available after switching. Details: [`skills/profile-config/SKILL.md`](skills/profile-config/SKILL.md).
+When the global profiles directory has no profile yet, pi-profile-switch writes a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely. See [`examples/ask.json`](examples/ask.json).
 
-pi-profile-switch seeds the global `profiles/` directory with a starter **`ask`** profile (`ask.json`) — best-effort on install, and guaranteed in place at every launcher startup — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely:
-
-```json
-{
-  "label": "Ask & Discuss",
-  "description": "Read-only Q&A and code exploration; no file modifications or command execution",
-  "skills": [],
-  "extensions": [],
-  "tools": ["read", "grep", "find", "ls"],
-  "instructions": "You are in read-only discussion mode. Answer questions and explain code without modifying any files or running shell commands."
-}
-```
-
-One profile can use every field at once. This example `impl` profile (`impl.json`) loads the TDD skill and your internal skills; wires up two MCP servers; allows the built-in tools; restricts GitHub MCP tools while denying Linear tools; and pins the model and standing instructions:
+A profile that uses every field:
 
 ```json
 {
   "label": "Implementation",
   "description": "Full-powered implementation profile: every available field, pinned model",
-  "skills": [
-    "tdd",
-    "internal-*"
-  ],
-  "mcps": [
-    "github",
-    "linear"
-  ],
-  "tools": [
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    "edit",
-    "write"
-  ],
+  "skills": ["tdd", "internal-*"],
+  "mcps": ["github", "linear"],
+  "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"],
   "mcp_tools": {
-    "github": [
-      "search",
-      "get_issue"
-    ],
+    "github": ["search", "get_issue"],
     "linear": []
   },
   "defaultProvider": "anthropic",
@@ -88,7 +58,7 @@ One profile can use every field at once. This example `impl` profile (`impl.json
 }
 ```
 
-How fields resolve:
+How the fields behave:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
 - `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`. When a profile declares `tools` and at least one MCP server is enabled, Pi's native MCP discovery entry points (`codemode` and `tool_search`) stay active even if you did not list them; unrelated non-MCP tools excluded by `tools` stay excluded.
@@ -105,27 +75,37 @@ How fields resolve:
   - A profile that declares neither `mcps` nor `mcp_tools` treats a malformed user-level MCP source as a non-fatal diagnostic (printed on stderr with the file path) and starts with the remaining valid sources. Declaring `mcps` or a nonempty `mcp_tools` makes the same malformed source fail activation, because the allowlist cannot be trusted.
 - The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
 - Any field you omit keeps plain Pi behavior.
+- `label` and `description` are display metadata. `defaultProvider` and `defaultModel` (declared together) set the startup model; `defaultThinkingLevel` sets its thinking level; `instructions` is appended to the system prompt.
+- `skills`, `extensions`, `mcps`, and `tools` reference installed resources by name or glob; profiles never copy resources. `tools` covers non-MCP tools only (built-ins and extension tools).
+- `mcp_tools` selects tools inside MCP servers by literal server and tool name — globs are rejected. Omit a server to leave it unchanged, use `[]` to deny all of its tools while keeping the server enabled, or list names to allow only those. A literal selector that matches nothing stays restrictive without warning; a server that is unknown, disabled, or project-only fails activation with candidates.
+- `mcps` names user-level servers from `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`. Omit it to leave all servers as configured; use `[]` to disable every user-level server. Project-level servers (`.pi/mcp.json`) are read by Pi itself and are never narrowed. Legacy SSE servers cannot be selected.
+- Older profiles expressed MCP tool access through `mcp__*` or `<server>_*` entries in `tools`; use `mcp_tools` instead.
+- Every omitted field keeps plain Pi behavior.
 
-The files in [`examples/`](examples/) mirror the two profiles above: `ask.json` is the seeded starter, `example.json` the full-field demo.
+The instance's `mcp.json` is generated by the launcher. Running `pi mcp add` inside a session only edits that generated copy, and the next profile switch or reload overwrites it — edit your real MCP configuration instead.
+
+[`examples/`](examples/) contains the full example above and the starter `ask`.
 
 ## Commands
 
-The `/profile` command family manages everything in-session:
-
 | Command | What it does |
 | --- | --- |
-| `/profile` | Interactive profile picker; without interactive UI it prints the profile list instead |
-| `/profile use <name>` / `/profile reload` | Switch / reload without restarting (rollback on failure) |
-| `/profile status` | Active profile details: resolved resources and paths, stored overlay, MCP server tri-state |
-| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Narrow / un-narrow the active profile for this session only; `disable` entries accept names or globs |
-| `/profile overlay clear` | Discard the overlay and reactivate the profile exactly as declared |
+| `/profile` | Show the available profiles and pick one (interactive selector; prints the list outside the TUI). |
+| `/profile use <name>` | Switch profiles now. The session reloads with the new resources; a failed switch rolls back. The choice is remembered for the next launch. |
+| `/profile reload` | Re-read the active profile file after editing it. |
+| `/profile status` | Report the active profile, resolved resources and paths, overlay, MCP server state, and conflicts. |
+| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Narrow or restore resources for this session only. |
+| `/profile overlay clear` | Drop the overlay and use the profile as written. |
 
 All forms work in every mode, including non-interactive ones (`--mode rpc|text|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
+All of these work in every mode, including non-interactive ones (`--mode text`, `--mode json`, `--mode rpc`). An overlay lives only in the current runtime: it is never written to your profile files and is gone after a restart. Disabling MCP servers with an overlay is not possible on the built-in `default` profile — it has no server list to narrow.
 
 ## Docs
 
-- [Architecture](docs/architecture/overview.md) · [ADRs](docs/adr/) · [Glossary](CONTEXT.md)
-- JSON Schemas: [`schemas/`](schemas/)
+- Field reference: [`schemas/profiles.schema.json`](schemas/profiles.schema.json)
+- Architecture and terminology: [`docs/architecture/overview.md`](docs/architecture/overview.md) and [`CONTEXT.md`](CONTEXT.md)
+- Decisions: [`docs/adr/`](docs/adr/)
+- Authoring guide: [`skills/profile-config/SKILL.md`](skills/profile-config/SKILL.md)
 
 ## License
 
