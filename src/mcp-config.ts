@@ -13,8 +13,10 @@
  * (read for ownership classification only — Pi reads the file itself).
  * The legacy project-root `.mcp.json` source is not read.
  *
- * Malformed config files fail loudly — a broken mcp.json must not silently
- * read as "no servers" and reject every reference.
+ * Malformed config files follow the discovery tier: strict mode throws
+ * `McpConfigError` (a broken mcp.json must not silently read as "no servers"
+ * under an explicit MCP policy); diagnostic mode skips the malformed source
+ * with a path-bearing diagnostic so valid sources still merge.
  */
 
 import { homedir } from "node:os";
@@ -34,6 +36,10 @@ export class McpConfigError extends Error {
 
 export interface McpDiscoveryOptions {
 	homeDir?: string;
+	/** How an unreadable or malformed source is handled. "throw" (default)
+	 *  fails discovery with `McpConfigError`; "diagnose" skips the source and
+	 *  records a path-bearing diagnostic so valid sources still merge. */
+	invalidSource?: "throw" | "diagnose";
 }
 
 export interface MergedMcpResult {
@@ -48,6 +54,10 @@ export interface MergedMcpResult {
 	/** The merged user-level configuration object, with later sources
 	 *  overriding earlier ones per server name. */
 	baseConfig?: Record<string, unknown>;
+	/** Path-bearing diagnostics for sources skipped in "diagnose" mode.
+	 *  Always populated by `loadMergedMcpServers`; absent from hand-built
+	 *  discovery fixtures. */
+	diagnostics?: string[];
 }
 
 function setOwnRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
@@ -98,13 +108,18 @@ export async function loadMergedMcpServers(
 	projectDir?: string,
 	options?: McpDiscoveryOptions,
 ): Promise<MergedMcpResult> {
+	const invalidSource = options?.invalidSource ?? "throw";
 	const sources = getStandardMcpConfigSources(agentDir, projectDir, options);
 	const seenPaths = new Set<string>();
 	const servers: Record<string, Record<string, unknown>> = {};
 	const sharedServers = new Set<string>();
 	const projectServers = new Set<string>();
 	const serverOwners: Record<string, "user" | "project"> = {};
+	const diagnostics: string[] = [];
 	let baseConfig: Record<string, unknown> | undefined;
+
+	/** Strict mode fails discovery; diagnostic mode records the path and
+	 *  skips only that source, leaving valid sources available. */
 
 	for (const source of sources) {
 		const resolvedPath = path.resolve(source.path);
@@ -114,10 +129,25 @@ export async function loadMergedMcpServers(
 		const result = await readJsonFile(resolvedPath);
 		if (!result.ok) {
 			if (result.reason === "missing") continue;
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`MCP config is not valid JSON: ${resolvedPath}`);
+				continue;
+			}
 			throw new McpConfigError(`MCP config is not valid JSON: ${resolvedPath}`, resolvedPath);
 		}
 		if (!isRecord(result.value)) {
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`MCP config must be a JSON object: ${resolvedPath}`);
+				continue;
+			}
 			throw new McpConfigError(`MCP config must be a JSON object: ${resolvedPath}`, resolvedPath);
+		}
+		if (result.value.mcpServers !== undefined && !isRecord(result.value.mcpServers)) {
+			if (invalidSource === "diagnose") {
+				diagnostics.push(`"mcpServers" must be a JSON object: ${resolvedPath}`);
+				continue;
+			}
+			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
 		}
 
 		if (!source.isProject) {
@@ -128,9 +158,6 @@ export async function loadMergedMcpServers(
 		}
 
 		if (result.value.mcpServers === undefined) continue;
-		if (!isRecord(result.value.mcpServers)) {
-			throw new McpConfigError(`"mcpServers" must be a JSON object: ${resolvedPath}`, resolvedPath);
-		}
 		for (const [name, def] of Object.entries(result.value.mcpServers)) {
 			// Align discovery with JSON semantics: inherited prototype keys are
 			// never treated as discoverable server names.
@@ -140,11 +167,13 @@ export async function loadMergedMcpServers(
 			}
 			if (source.isProject === true) projectServers.add(name);
 			setOwnRecordValue(serverOwners, name, source.isProject === true ? "project" : "user");
-			const previous = Object.hasOwn(servers, name) ? servers[name] : undefined;
-			const merged = isRecord(def) ? { ...(previous ?? {}), ...def } : { ...(previous ?? {}) };
-			setOwnRecordValue(servers, name, merged);
+			// Whole-definition precedence: a later definition replaces the same-named
+			// server entirely. Connection, credential, and exposure fields are never
+			// inherited from an earlier source, so a later URL cannot pick up an
+			// earlier authorization header (D1).
+			setOwnRecordValue(servers, name, isRecord(def) ? { ...def } : {});
 		}
 	}
 
-	return { servers, sharedServers, projectServers, serverOwners, baseConfig };
+	return { servers, sharedServers, projectServers, serverOwners, baseConfig, diagnostics };
 }

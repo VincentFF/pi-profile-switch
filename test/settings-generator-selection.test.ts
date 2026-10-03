@@ -283,6 +283,88 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(bareSettings.defaultThinkingLevel).toBeUndefined();
 	});
 
+	it("adds native MCP gateways to defaultTools when tools are declared and a user server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read", "codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("adds gateways for an empty tools selection when a user server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: [] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("does not add gateways when no MCP server is enabled", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x", enabled: false } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBeUndefined();
+	});
+
+	it("adds gateways when only a trusted project server is enabled", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { proj: { url: "https://proj" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({ tools: ["read"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectDir: fixture.cwd,
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toEqual(["read", "codemode", "tool_search"]);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBe(true);
+	});
+
+	it("does not add gateways when tools are undeclared", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).defaultTools).toBeUndefined();
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcpGateways).toBeUndefined();
+	});
+
 	it("writes the launch plan file for the in-pi extension and writes APPEND_SYSTEM.md", async () => {
 		const result = await generateRuntimeDir(selectionPlan({ instructions: "Be picky." }), {
 			agentDir: fixture.agentDir,
@@ -332,8 +414,8 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
 		expect(mcpInstance.mcpServers).toEqual({
 			"mcp-atlassian": { url: "http://127.0.0.1:10801/mcp", lifecycle: "keep-alive" },
-			"mcp-grafana": { enabled: false },
-			"agent-only": { enabled: false },
+			"mcp-grafana": { url: "http://127.0.0.1:10802/mcp", enabled: false },
+			"agent-only": { url: "http://x", enabled: false },
 		});
 	});
 
@@ -349,6 +431,46 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(mcpStat.isSymbolicLink()).toBe(false);
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
 		expect(mcpInstance.mcpServers).toEqual({ github: {} });
+	});
+
+	it("reports warnings when a malformed MCP source is skipped under an undeclared policy", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const malformedPath = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(malformedPath, "{ invalid");
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: { url: "https://x" } } }),
+		);
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(result.warnings).toEqual([`MCP config is not valid JSON: ${path.resolve(malformedPath)}`]);
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({ github: { url: "https://x" } });
+	});
+
+	it("fails generation under an explicit MCP policy when a required source is malformed", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid");
+
+		await expect(
+			generateRuntimeDir(selectionPlan({ mcps: ["github"] }), {
+				agentDir: fixture.agentDir,
+				discovery: { skills: [], packages: [] },
+			}),
+		).rejects.toThrow(/not valid JSON/);
+	});
+
+	it("returns an empty warnings list when every MCP source is valid", async () => {
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(result.warnings).toEqual([]);
 	});
 
 	it("generates an empty mcps selection that disables discovered shared user servers", async () => {
@@ -369,7 +491,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		});
 
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
-		expect(mcpInstance.mcpServers).toEqual({ shared: { enabled: false } });
+		expect(mcpInstance.mcpServers).toEqual({ shared: { url: "http://shared", enabled: false } });
 		expect((await lstat(path.join(result.runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);
 	});
 

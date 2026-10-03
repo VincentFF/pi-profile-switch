@@ -204,22 +204,7 @@ export async function switchProfile(
 					...(previousPlan.mcps !== undefined ? { mcps: previousPlan.mcps } : {}),
 				}
 			: undefined;
-	await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {
-		agentDir: deps.realAgentDir,
-		projectDir: resolved.projectDir,
-		discovery: resolved.discovery,
-		planExtras: {
-			...(isSwitch && current.profile !== undefined ? { switchedFrom: current.profile } : {}),
-			// `/profile use` persists; `/profile reload` keeps the current
-			// profile's existing persistence (launch selections stay transient).
-			persistSelection: options?.reloadCurrent === true ? current.persistSelection : true,
-			// A switch discards the previous profile's overlay; the post-reload
-			// instance drops it from the state file. Customize/reset manage the
-			// overlay directly and never set this.
-			...(options?.clearOverlay === true ? { clearOverlay: true } : {}),
-			...(previousResolved !== undefined ? { previousResolved } : {}),
-		},
-	});
+	const warnings = [...resolved.warnings];
 
 	const rollback = async (cause: string): Promise<never> => {
 		// Restore the verified snapshot and reload again — the runtime must
@@ -236,7 +221,26 @@ export async function switchProfile(
 		);
 	};
 
+	// The write-and-reload interval is one rollback boundary: a failure in any
+	// write after the first, or in reload, restores every managed file (D3).
 	try {
+		const written = await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {
+			agentDir: deps.realAgentDir,
+			projectDir: resolved.projectDir,
+			discovery: resolved.discovery,
+			planExtras: {
+				...(isSwitch && current.profile !== undefined ? { switchedFrom: current.profile } : {}),
+				// `/profile use` persists; `/profile reload` keeps the current
+				// profile's existing persistence (launch selections stay transient).
+				persistSelection: options?.reloadCurrent === true ? current.persistSelection : true,
+				// A switch discards the previous profile's overlay; the post-reload
+				// instance drops it from the state file. Customize/reset manage the
+				// overlay directly and never set this.
+				...(options?.clearOverlay === true ? { clearOverlay: true } : {}),
+				...(previousResolved !== undefined ? { previousResolved } : {}),
+			},
+		});
+		warnings.push(...written.warnings);
 		await deps.reload();
 	} catch (error) {
 		await rollback(error instanceof Error ? error.message : String(error));
@@ -257,5 +261,5 @@ export async function switchProfile(
 		}
 	}
 
-	return { profile: resolved.plan.profile, warnings: resolved.warnings };
+	return { profile: resolved.plan.profile, warnings };
 }

@@ -321,7 +321,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(switched.success).toBe(true);
 
 				const instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
+				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 			} finally {
 				await rpc.close();
 			}
@@ -350,7 +350,7 @@ describe("launcher integration: in-session switching", () => {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
+				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 
 				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
 				expect(reloaded.success).toBe(true);
@@ -359,7 +359,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(after.sessionId).toBe(before.sessionId);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
+				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 			} finally {
 				await rpc.close();
 			}
@@ -390,7 +390,7 @@ describe("launcher integration: in-session switching", () => {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
-				expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
+				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 
 				const switched = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
 				expect(switched.success).toBe(true);

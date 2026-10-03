@@ -224,7 +224,17 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					const mcpDiscovery = await loadMergedMcpServers(
 						plan.agentDir,
 						projectTrusted ? ctx.cwd : undefined,
+						{
+							invalidSource:
+								plan.mcps !== undefined ||
+								(plan.mcpTools !== undefined && Object.keys(plan.mcpTools).length > 0)
+									? "throw"
+									: "diagnose",
+						},
 					);
+					for (const diagnostic of mcpDiscovery.diagnostics ?? []) {
+						notify(diagnostic, "warning");
+					}
 					const discoveredMcpServers = Object.keys(mcpDiscovery.servers).sort();
 					const disabledMcpServers = discoveredMcpServers.filter(
 						(server) => mcpDiscovery.servers[server]?.enabled === false,

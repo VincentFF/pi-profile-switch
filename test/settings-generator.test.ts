@@ -38,6 +38,11 @@ describe("generateRuntimeDir (default profile)", () => {
 		expect(JSON.parse(await readFile(path.join(result.runtimeDir, "settings.json"), "utf8"))).toEqual({});
 	});
 
+	it("returns an empty warnings list for valid sources", async () => {
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		expect(result.warnings).toEqual([]);
+	});
+
 	it("does not set defaultProjectTrust for the default profile", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		const settings = JSON.parse(await readFile(path.join(result.runtimeDir, "settings.json"), "utf8"));

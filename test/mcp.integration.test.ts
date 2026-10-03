@@ -43,7 +43,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain('unknown MCP server: "typo-server"');
+			expect(failure.stderr).toContain('unknown MCP server: "typo-server" (usable candidates: github)');
 		},
 	);
 
@@ -72,7 +72,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			expect(JSON.parse(await readFile(instanceMcpPath, "utf8"))).toEqual({
 				mcpServers: {
 					github: { url: "https://x" },
-					linear: { enabled: false },
+					linear: { command: "mcp-linear", enabled: false },
 				},
 			});
 
@@ -241,8 +241,8 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			const instanceMcpPath = path.join(await soleInstanceDir(fixture), "mcp.json");
 			const instanceMcp = JSON.parse(await readFile(instanceMcpPath, "utf8"));
 			expect(instanceMcp.mcpServers).toEqual({
-				shared: { enabled: false },
-				agentonly: { enabled: false },
+				shared: { url: "https://shared", enabled: false },
+				agentonly: { url: "https://agent", enabled: false },
 			});
 
 			expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
@@ -306,6 +306,45 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 	);
 
 	it(
+		"mcps: [] disables discovered stdio servers without connecting them or warning about missing transports",
+		{ timeout: 45_000 },
+		async () => {
+			const marker = path.join(fixture.root, "mcp-server-started.marker");
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(
+				path.join(fixture.root, ".agents", "mcp.json"),
+				JSON.stringify({
+					mcpServers: {
+						shared: {
+							command: "node",
+							args: [path.resolve("test/fixtures/fixture-mcp-server.mjs")],
+							env: { FIXTURE_MCP_START_MARKER: marker },
+						},
+					},
+				}),
+			);
+			await writeMcpConfig({});
+			await writeCatalog({ denyall: { mcps: [] } });
+
+			const result = await runLauncher(fixture, ["denyall", "--", "--mode", "rpc"]);
+
+			expect(result.code).toBe(0);
+			expect(result.stderr).not.toContain('needs either "command"');
+			// The disabled stdio server must never be spawned.
+			expect(existsSync(marker)).toBe(false);
+			const instanceMcp = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+			expect(instanceMcp.mcpServers).toEqual({
+				shared: {
+					command: "node",
+					args: [path.resolve("test/fixtures/fixture-mcp-server.mjs")],
+					env: { FIXTURE_MCP_START_MARKER: marker },
+					enabled: false,
+				},
+			});
+		},
+	);
+
+	it(
 		"merged user-level sources override earlier ones per server name",
 		{ timeout: 45_000 },
 		async () => {
@@ -334,6 +373,41 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 					shared: { url: "https://agentdir" },
 				},
 			});
+		},
+	);
+
+	it(
+		"an explicit MCP policy fails before spawn when a required source is malformed",
+		{ timeout: 30_000 },
+		async () => {
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid");
+			await writeMcpConfig({ github: { url: "https://x" } });
+			await writeCatalog({ review: { mcps: ["github"] } });
+
+			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
+
+			expect(failure.code).toBe(2);
+			expect(failure.stderr).toContain(path.join(fixture.root, ".agents", "mcp.json"));
+			expect(failure.stderr).toContain("not valid JSON");
+		},
+	);
+
+	it(
+		"no MCP policy diagnoses a malformed source and still starts Pi with valid sources",
+		{ timeout: 45_000 },
+		async () => {
+			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+			await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid");
+			await writeMcpConfig({ github: { url: "https://x" } });
+			await writeCatalog({ plain: {} });
+
+			const result = await runLauncher(fixture, ["plain", "--", "--mode", "rpc"]);
+
+			expect(result.code).toBe(0);
+			expect(result.stderr).toContain(path.join(fixture.root, ".agents", "mcp.json"));
+			const instanceMcp = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+			expect(instanceMcp.mcpServers).toEqual({ github: { url: "https://x" } });
 		},
 	);
 });

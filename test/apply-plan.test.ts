@@ -148,6 +148,104 @@ describe("applyLaunchPlan", () => {
 		expect(surface.activeTools).toEqual(["read", "mcp", "search"]);
 	});
 
+	it("retains native MCP discovery entry points when the plan marks gateways", async () => {
+		await writePlan({
+			profile: "review",
+			source: "global",
+			tools: ["read"],
+			toolReferences: ["read"],
+			mcpGateways: true,
+			resolved: { skills: [], extensions: [] },
+		});
+		const surface = fakeSurface({
+			liveTools: [
+				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
+				{ name: "bash", sourceInfo: { path: "<builtin:bash>", source: "builtin" } },
+				{ name: "codemode", sourceInfo: { path: "builtin:codemode", source: "builtin" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+				{ name: "lint_check", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } },
+			],
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "codemode", "tool_search"]);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it("warns when a native MCP entry point did not register", async () => {
+		await writePlan({
+			profile: "review",
+			source: "global",
+			tools: ["read"],
+			toolReferences: ["read"],
+			mcpGateways: true,
+			resolved: { skills: [], extensions: [] },
+		});
+		const surface = fakeSurface({
+			liveTools: [
+				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+			],
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "tool_search"]);
+		expect(result.warnings.some((warning) => warning.includes('MCP entry point "codemode" is unavailable'))).toBe(true);
+	});
+
+	it("does not use a same-named foreign tool as an MCP gateway", async () => {
+		await writePlan({
+			profile: "review",
+			source: "global",
+			tools: ["read"],
+			toolReferences: ["read"],
+			mcpGateways: true,
+			resolved: { skills: [], extensions: [] },
+		});
+		const surface = fakeSurface({
+			liveTools: [
+				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
+				{ name: "codemode", sourceInfo: { path: "/agent/extensions/other.ts", source: "extension" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+			],
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "tool_search"]);
+		expect(
+			result.warnings.some(
+				(warning) => warning.includes('MCP entry point "codemode" is registered by /agent/extensions/other.ts'),
+			),
+		).toBe(true);
+	});
+
+	it("an overlay disable of a gateway still wins", async () => {
+		await writePlan({
+			profile: "review",
+			source: "global",
+			tools: ["read"],
+			toolReferences: ["read"],
+			mcpGateways: true,
+			disabledTools: ["codemode"],
+			resolved: { skills: [], extensions: [] },
+		});
+		const surface = fakeSurface({
+			liveTools: [
+				{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
+				{ name: "codemode", sourceInfo: { path: "builtin:codemode", source: "builtin" } },
+				{ name: "tool_search", sourceInfo: { path: "builtin:tool-search", source: "builtin" } },
+			],
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(surface.activeTools).toEqual(["read", "tool_search"]);
+		expect(result.warnings).toEqual([]);
+	});
+
 	it("warns about legacy MCP references and directs user to mcp_tools", async () => {
 		await writePlan({
 			profile: "review",

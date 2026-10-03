@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
 import { defaultPlan } from "../src/profile-resolver.ts";
@@ -10,6 +10,29 @@ import { addGlobalExtension, addGlobalSkill, createPiFixture, type PiFixture } f
 let fixture: PiFixture;
 let savedHome: string | undefined;
 let runtimeDir: string;
+
+/** Write-stage injection: fail the next pi-profile.json write so a switch
+ *  fails after settings.json has already changed, exercising rollback. */
+const fsFailure = vi.hoisted(() => ({ failNextPlanWrite: false }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	const actualWriteFile = actual.writeFile as unknown as (
+		file: string | Buffer | URL,
+		data: string | Uint8Array,
+		options?: unknown,
+	) => Promise<void>;
+	return {
+		...actual,
+		writeFile: async (file: string | Buffer | URL, data: string | Uint8Array, options?: unknown) => {
+			if (fsFailure.failNextPlanWrite && String(file).endsWith("pi-profile.json")) {
+				fsFailure.failNextPlanWrite = false;
+				throw new Error("injected write failure");
+			}
+			return actualWriteFile(file, data, options);
+		},
+	};
+});
 
 beforeEach(async () => {
 	fixture = await createPiFixture();
@@ -94,6 +117,33 @@ describe("switchProfile", () => {
 
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
 		expect(await readPlanFile()).toEqual(originalPlan);
+	});
+
+	it("rolls back every managed file when a write fails after settings.json changed", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ impl: { skills: ["alpha-skill"], instructions: "Be terse." } });
+		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const originalPlan = await readPlanFile();
+		let reloads = 0;
+
+		fsFailure.failNextPlanWrite = true;
+		await expect(
+			switchProfile(
+				"impl",
+				deps({
+					reload: async () => {
+						reloads += 1;
+					},
+				}),
+			),
+		).rejects.toThrow(/restored the previous settings.*injected write failure/);
+
+		// The write failed after settings.json was already rewritten; the
+		// rollback must restore the pre-switch state of every managed file.
+		expect(reloads).toBe(1); // the restore reload only
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
+		expect(await readPlanFile()).toEqual(originalPlan);
+		await expect(lstat(path.join(runtimeDir, "APPEND_SYSTEM.md"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("restores the snapshot and reloads again when reload fails", async () => {
@@ -342,7 +392,7 @@ describe("switchProfile", () => {
 		const plan = await readPlanFile();
 		expect(plan.mcps).toEqual([]);
 		const instanceMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(instanceMcp.mcpServers.github).toEqual({ enabled: false });
+		expect(instanceMcp.mcpServers.github).toEqual({ url: "https://x", enabled: false });
 	});
 
 	it("empty mcps selection survives reload", async () => {
@@ -354,11 +404,11 @@ describe("switchProfile", () => {
 
 		await switchProfile("closed", deps());
 		const before = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(before.mcpServers.github).toEqual({ enabled: false });
+		expect(before.mcpServers.github).toEqual({ url: "https://x", enabled: false });
 
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 		const after = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(after.mcpServers.github).toEqual({ enabled: false });
+		expect(after.mcpServers.github).toEqual({ url: "https://x", enabled: false });
 	});
 
 	it("switching back to omitted mcps selection restores server availability", async () => {
@@ -372,7 +422,7 @@ describe("switchProfile", () => {
 
 		await switchProfile("closed", deps());
 		const closedMcp = JSON.parse(await readFile(path.join(runtimeDir, "mcp.json"), "utf8"));
-		expect(closedMcp.mcpServers.github).toEqual({ enabled: false });
+		expect(closedMcp.mcpServers.github).toEqual({ url: "https://x", enabled: false });
 
 		await switchProfile("open", deps());
 		expect((await lstat(path.join(runtimeDir, "mcp.json"))).isSymbolicLink()).toBe(false);

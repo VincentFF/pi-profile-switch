@@ -112,6 +112,24 @@ describe("observability surface against a real spawned pi", () => {
 		await messageContaining("delta: +[skill:impl] -[skill:review]");
 	}, 90_000);
 
+	it("/profile status stays available when a user-level MCP source is malformed under no policy", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			JSON.stringify({ mcpServers: { github: {} } }),
+		);
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const malformedPath = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(malformedPath, "{ invalid");
+		await start("shared");
+
+		await command("profile status");
+		await messageContaining("mcp: enabled=[github]");
+
+		const seen = driver.messages.map((message) => JSON.stringify(message)).join("\n");
+		expect(seen).toContain(malformedPath);
+		expect(seen).not.toContain('"success":false');
+	}, 90_000);
+
 	it("/profile status keeps project-owned servers enabled with an empty mcps selection", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),

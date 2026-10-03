@@ -169,7 +169,7 @@ export async function resolveInitialProfile(
 		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
 	);
 	const mcpDiscovery = needsMcp
-		? await loadMergedMcpServers(context.agentDir, projectDir)
+		? await loadMergedMcpServers(context.agentDir, projectDir, { invalidSource: "throw" })
 		: undefined;
 
 	const plan = await resolveProfile({

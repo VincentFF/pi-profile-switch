@@ -48,10 +48,26 @@ export class ActivationError extends Error {
 	}
 }
 
-/** Pi's built-in tool names (pi 0.85.1 `allToolNames`; not exported by the
+/** Pi's built-in tool names (pi 0.99.2 `allToolNames`; not exported by the
  *  SDK). The integration suite guards drift. Literal tool names pass through
  *  regardless — extension-provided tools are unknowable before spawn. */
 export const BUILTIN_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"] as const;
+
+/** User-level, enabled MCP server names, sorted — the set a profile can
+ *  actually select via `mcps` or narrow via `mcp_tools`. Project-owned and
+ *  source-disabled servers are not usable candidates. */
+function userLevelMcpCandidates(mcpDiscovery: MergedMcpResult): string[] {
+	return Object.keys(mcpDiscovery.servers)
+		.filter((s) => {
+			const isUser =
+				Object.hasOwn(mcpDiscovery.serverOwners, s) &&
+				mcpDiscovery.serverOwners[s] === "user" &&
+				!mcpDiscovery.projectServers.has(s);
+			const isEnabled = mcpDiscovery.servers[s]?.enabled !== false;
+			return isUser && isEnabled;
+		})
+		.sort();
+}
 
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -182,7 +198,12 @@ function expandReferences<T>(
 	universe: readonly T[],
 	nameOf: (item: T) => string,
 	kind: string,
-	options?: { literalMustExist?: boolean; onZeroMatch?: (reference: string) => void },
+	options?: {
+		literalMustExist?: boolean;
+		onZeroMatch?: (reference: string) => void;
+		/** Custom literal-miss failure (e.g. with near-miss candidates). Throws. */
+		literalMissError?: (reference: string) => never;
+	},
 ): T[] {
 	const selected = new Map<string, T>();
 	for (const reference of references) {
@@ -203,6 +224,10 @@ function expandReferences<T>(
 				// Pass-through (e.g. extension-provided tool names).
 				selected.set(reference, reference as T);
 				continue;
+			}
+			const missError = options?.literalMissError;
+			if (missError !== undefined) {
+				missError(reference);
 			}
 			throw new ActivationError(`unknown ${kind}: "${reference}" does not match any discovered ${kind}`);
 		}
@@ -250,6 +275,17 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			}
 			mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
 				onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
+				literalMissError: (reference) => {
+					const candidates =
+						input.mcpDiscovery !== undefined
+							? userLevelMcpCandidates(input.mcpDiscovery)
+							: [...(input.discoveredMcpServers ?? [])].sort();
+					const suffix =
+						candidates.length > 0
+							? ` (usable candidates: ${candidates.join(", ")})`
+							: " (no user-level servers are discovered)";
+					throw new ActivationError(`unknown MCP server: "${reference}"${suffix}`);
+				},
 			});
 			if (input.mcpDiscovery !== undefined) {
 				const discovery = input.mcpDiscovery;
@@ -327,17 +363,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}
 
 		const mcpDiscovery = input.mcpDiscovery;
-		const usableCandidates = Object.keys(mcpDiscovery.servers)
-			.filter((s) => {
-				const isUser =
-					Object.hasOwn(mcpDiscovery.serverOwners, s) &&
-					mcpDiscovery.serverOwners[s] === "user" &&
-					!mcpDiscovery.projectServers.has(s);
-				const isEnabled = mcpDiscovery.servers[s]?.enabled !== false;
-				const isAllowedByMcps = mcps === undefined || mcps.includes(s);
-				return isUser && isEnabled && isAllowedByMcps;
-			})
-			.sort();
+		const usableCandidates = userLevelMcpCandidates(mcpDiscovery).filter(
+			(s) => mcps === undefined || mcps.includes(s),
+		);
 		const candidateMsg = usableCandidates.length > 0 ? ` (usable candidates: ${usableCandidates.join(", ")})` : "";
 
 		for (const serverKey of mcpToolKeys) {
@@ -479,6 +507,14 @@ export function buildInstanceMcpConfig(
 			mcpDiscovery.serverOwners[serverName] === "project" || mcpDiscovery.projectServers.has(serverName);
 		if (isProjectOwned) continue;
 
+		// A selected server the winning source explicitly disables fails with a
+		// fix, never a silent enablement override (D1).
+		if (mcps?.includes(serverName) === true && originalDef.enabled === false) {
+			throw new ActivationError(
+				`profile "${profileName}": selected MCP server "${serverName}" is disabled in its source configuration; enable it there or remove it from "mcps"`,
+			);
+		}
+
 		// A server explicitly selected by mcps whose definition uses a
 		// transport Pi's built-in MCP extension cannot use fails activation.
 		if (mcps?.includes(serverName) === true && originalDef.type === "sse") {
@@ -502,11 +538,14 @@ export function buildInstanceMcpConfig(
 		setOwnRecordValue(filteredServers, serverName, def);
 	}
 
-	// Unselected user-level servers are explicitly disabled.
+	// Unselected user-level servers keep their complete winning definition and
+	// are explicitly disabled. Pi validates the transport before `enabled`, so
+	// a transport-less placeholder would warn on every valid disabled server.
 	if (mcps !== undefined) {
 		for (const userName of userServers) {
 			if (mcps.includes(userName)) continue;
-			setOwnRecordValue(filteredServers, userName, { enabled: false });
+			const unselectedDef = mcpDiscovery.servers[userName] ?? {};
+			setOwnRecordValue(filteredServers, userName, { ...unselectedDef, enabled: false });
 		}
 	}
 

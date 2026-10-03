@@ -49,6 +49,11 @@ export interface LaunchPlanFile {
 	disabledTools?: string[];
 	mcps?: string[];
 	mcpTools?: Record<string, string[]>;
+	/** Marks a narrowed `tools` profile whose effective MCP set still has an
+	 *  enabled server; session start must retain Pi's native MCP discovery
+	 *  entry points (codemode / tool_search) if they were natively
+	 *  registered (D4). */
+	mcpGateways?: boolean;
 	switchedFrom?: string;
 	persistSelection?: boolean;
 	clearOverlay?: boolean;
@@ -99,6 +104,14 @@ export function isMcpOwnedTool(tool: {
 	return info.path === "builtin:mcp";
 }
 
+/** Pi's native MCP discovery entry points and their built-in source paths
+ *  (see installed Pi `dist/extensions/index.js`). A same-named tool from any
+ *  other source is never treated as an MCP gateway. */
+const MCP_GATEWAYS = [
+	{ name: "codemode", sourcePath: "builtin:codemode" },
+	{ name: "tool_search", sourcePath: "builtin:tool-search" },
+] as const;
+
 /** Applies the plan carried by the runtime dir's pi-profile.json. */
 export async function applyLaunchPlan(input: {
 	runtimeDir: string;
@@ -116,7 +129,7 @@ export async function applyLaunchPlan(input: {
 
 	// --- tools ---
 	const hasOverlayDisables = plan.disabledTools !== undefined && plan.disabledTools.length > 0;
-	if (plan.toolReferences !== undefined || hasOverlayDisables) {
+	if (plan.toolReferences !== undefined || hasOverlayDisables || plan.mcpGateways === true) {
 		const allTools = surface.getAllTools();
 		const mcpToolNames: string[] = [];
 		const nonMcpToolNames: string[] = [];
@@ -155,6 +168,7 @@ export async function applyLaunchPlan(input: {
 			active = allTools.map((tool) => tool.name);
 		}
 
+		const disabledSet = new Set<string>();
 		if (hasOverlayDisables) {
 			const allLiveNames = allTools.map((tool) => tool.name);
 			const { expanded: disabled, droppedLiterals: vanishedEntries } = expandToolReferences(
@@ -167,9 +181,33 @@ export async function applyLaunchPlan(input: {
 					`profile "${plan.profile}": overlay tool entries ${vanishedEntries.map((name) => JSON.stringify(name)).join(", ")} match nothing in Pi's live registry`,
 				);
 			}
-			const disabledSet = new Set(disabled);
+			for (const name of disabled) disabledSet.add(name);
 			active = active.filter((name) => !disabledSet.has(name));
 		}
+
+		// Native MCP discovery entry points stay reachable for narrowed `tools`
+		// profiles when the plan marked them (D4). Only the built-in
+		// registration counts; an explicit overlay disable still wins.
+		if (plan.mcpGateways === true) {
+			for (const gateway of MCP_GATEWAYS) {
+				if (disabledSet.has(gateway.name)) continue;
+				const registered = allTools.find((tool) => tool.name === gateway.name);
+				if (registered === undefined) {
+					warnings.push(
+						`profile "${plan.profile}": MCP entry point ${JSON.stringify(gateway.name)} is unavailable because its built-in extension did not register it`,
+					);
+					continue;
+				}
+				if (registered.sourceInfo?.path === gateway.sourcePath) {
+					if (!active.includes(gateway.name)) active.push(gateway.name);
+				} else {
+					warnings.push(
+						`profile "${plan.profile}": MCP entry point ${JSON.stringify(gateway.name)} is registered by ${registered.sourceInfo?.path ?? "an unknown source"}, not the built-in extension; it was not used as an MCP gateway`,
+					);
+				}
+			}
+		}
+
 		surface.setActiveTools(active);
 	}
 
