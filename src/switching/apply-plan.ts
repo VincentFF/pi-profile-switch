@@ -37,6 +37,7 @@ import { isRecord, readJsonFile } from "../json-file.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { expandToolReferences } from "./tool-references.ts";
+import type { ProfileSubagentSettings } from "../subagent-settings.ts";
 
 export interface LaunchPlanFile {
 	profile: string;
@@ -49,6 +50,7 @@ export interface LaunchPlanFile {
 	disabledTools?: string[];
 	mcps?: string[];
 	mcpTools?: Record<string, string[]>;
+	subagents?: ProfileSubagentSettings;
 	/** Marks a narrowed `tools` profile whose effective MCP set still has an
 	 *  enabled server; session start must retain Pi's native MCP discovery
 	 *  entry points (codemode / tool_search) if they were natively

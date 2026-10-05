@@ -9,7 +9,7 @@ import path from "node:path";
 import Ajv2020Module from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { ProfileCatalog } from "../src/profile-catalog.ts";
+import { parseProfileDefinition, ProfileCatalog } from "../src/profile-catalog.ts";
 import { createPiFixture } from "./helpers/pi-fixture.ts";
 
 const Ajv2020 = Ajv2020Module.default;
@@ -63,6 +63,30 @@ describe("shipped JSON schemas", () => {
 		expect(validate({ mcp_tools: {} })).toBe(true);
 		expect(validate({ mcp_tools: { github: [] } })).toBe(true);
 		expect(validate({ mcp_tools: { github: ["search", "github_search", "create_issue"], linear: [] } })).toBe(true);
+	});
+
+	it("the profiles schema and catalog parser agree on managed subagent declarations", async () => {
+		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
+		const valid = [
+			{}, { subagents: {} }, { subagents: { agentOverrides: { reviewer: {} } } },
+			JSON.parse('{"subagents":{"defaultModel":"inherit","defaultThinking":"high","agentOverrides":{"reviewer":{"model":false,"thinking":false,"description":"Review","advertise":false},"toString":{"advertise":true},"__proto__":{"model":"native"}}}}'),
+		];
+		const invalid = [
+			{ subagents: null }, { subagents: { tools: [] } },
+			{ subagents: { defaultModel: " " } }, { subagents: { defaultThinking: "invalid" } },
+			{ subagents: { agentOverrides: { " reviewer": { model: "x" } } } },
+			{ subagents: { agentOverrides: { "review*": { model: "x" } } } },
+			{ subagents: { agentOverrides: { reviewer: { tools: [] } } } },
+			{ subagents: { agentOverrides: { reviewer: { advertise: "false" } } } },
+		];
+		for (const candidate of valid) {
+			expect(validate(candidate), JSON.stringify(validate.errors)).toBe(true);
+			expect(() => parseProfileDefinition("schema-case", candidate)).not.toThrow();
+		}
+		for (const candidate of invalid) {
+			expect(validate(candidate)).toBe(false);
+			expect(() => parseProfileDefinition("schema-case", candidate)).toThrow();
+		}
 	});
 
 	it("the profiles schema accepts an empty mcps array", async () => {

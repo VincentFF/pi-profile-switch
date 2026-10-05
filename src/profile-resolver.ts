@@ -28,6 +28,7 @@ import type { DiscoveredExtensions } from "./extension-discovery.ts";
 import { isRecord } from "./json-file.ts";
 import type { MergedMcpResult } from "./mcp-config.ts";
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
+import type { ProfileSubagentSettings } from "./subagent-settings.ts";
 
 /** Extracts a ProfileModel from flat definition keys, if declared. */
 function extractModel(definition: ProfileDefinition): ProfileModel | undefined {
@@ -96,6 +97,8 @@ export interface ActivationPlan {
 	/** Declared instructions; written to the generated APPEND_SYSTEM.md,
 	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
+	/** Bounded native subagent settings declaration, passed through untouched. */
+	subagents?: ProfileSubagentSettings;
 	/** Expanded MCP server allowlist: written by SettingsGenerator into the
 	 *  instance `mcp.json` snapshot and surfaced in `/profile status`;
 	 *  undefined when the profile declares no `mcps` (no restriction). */
@@ -469,6 +472,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		...(disabledTools !== undefined ? { disabledTools } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
+		...(definition.subagents !== undefined ? { subagents: definition.subagents } : {}),
 		...(mcps !== undefined ? { mcps } : {}),
 		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(instanceMcpConfig !== undefined ? { instanceMcpConfig } : {}),

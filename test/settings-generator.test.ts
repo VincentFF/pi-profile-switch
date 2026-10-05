@@ -171,4 +171,41 @@ describe("generateRuntimeDir (default profile)", () => {
 		await writeRuntimeFiles(result.runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
 		await expect(lstat(linkedPath)).rejects.toThrow();
 	});
+
+	it("materializes sparse native overrides and carries only the declaration in the launch plan", async () => {
+		const settingsPath = path.join(fixture.agentDir, "settings.json");
+		const nativeText = JSON.stringify({ subagents: { defaultModel: "base", agentOverrides: {
+			reviewer: { model: "old", inheritedContext: true }, scout: { model: "scout" },
+		} } });
+		await writeFile(settingsPath, nativeText);
+		const agentsDir = path.join(fixture.agentDir, "agents");
+		await mkdir(agentsDir, { recursive: true });
+		const agentFile = path.join(agentsDir, "reviewer.md");
+		await writeFile(agentFile, "native agent bytes\n");
+		const declaration = { agentOverrides: { reviewer: { model: "new", advertise: false } } };
+		const result = await generateRuntimeDir({ ...defaultPlan(), subagents: declaration }, { agentDir: fixture.agentDir });
+		const generated = JSON.parse(await readFile(path.join(result.runtimeDir, "settings.json"), "utf8"));
+		const launchPlan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(generated.subagents.agentOverrides).toEqual({
+			reviewer: { model: "new", inheritedContext: true, advertise: false }, scout: { model: "scout" },
+		});
+		expect(launchPlan.subagents).toEqual(declaration);
+		expect(Object.keys(launchPlan).filter((key) => key.includes("subagent"))).toEqual(["subagents"]);
+		expect(await readFile(settingsPath, "utf8")).toBe(nativeText);
+		expect(await readFile(agentFile, "utf8")).toBe("native agent bytes\n");
+	});
+
+	it("prepares subagent shape failures before changing managed runtime files", async () => {
+		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: false } } }));
+		const runtimeDir = path.join(fixture.root, "runtime");
+		await mkdir(runtimeDir, { recursive: true });
+		const sentinelSettings = "settings sentinel";
+		const sentinelPlan = "plan sentinel";
+		await writeFile(path.join(runtimeDir, "settings.json"), sentinelSettings);
+		await writeFile(path.join(runtimeDir, "pi-profile.json"), sentinelPlan);
+		await expect(writeRuntimeFiles(runtimeDir, { ...defaultPlan(), subagents: { agentOverrides: { reviewer: { model: "x" } } } }, { agentDir: fixture.agentDir }))
+			.rejects.toThrow(/settings\.json.*subagents\.agentOverrides\.reviewer.*correct/);
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(sentinelPlan);
+	});
 });

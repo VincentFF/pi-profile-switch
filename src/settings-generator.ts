@@ -45,7 +45,8 @@ import { mkdir, mkdtemp, lstat, readdir, readFile, readlink, rm, stat, symlink, 
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { buildInstanceMcpConfig, type ActivationPlan } from "./profile-resolver.ts";
+import { ActivationError, buildInstanceMcpConfig, type ActivationPlan } from "./profile-resolver.ts";
+import { applySubagentSettings, SubagentSettingsError } from "./subagent-settings.ts";
 import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
 import { loadMergedMcpServers, type MergedMcpResult } from "./mcp-config.ts";
@@ -377,6 +378,19 @@ export interface RuntimeFileOptions {
 	};
 }
 
+function applyDeclaredSubagents(
+	settings: Record<string, unknown>,
+	plan: ActivationPlan,
+	settingsPath: string,
+): Record<string, unknown> {
+	try {
+		return applySubagentSettings(settings, plan.subagents, { profile: plan.profile, settingsPath });
+	} catch (error) {
+		if (error instanceof SubagentSettingsError) throw new ActivationError(error.message);
+		throw error;
+	}
+}
+
 /** Computes the generated settings for a plan (pure-ish: reads the user's
  *  real settings + unmanaged dir existence, writes nothing). */
 async function computeSettings(
@@ -404,7 +418,7 @@ async function computeSettings(
 				settings[kind] = [...entries, resourceDir];
 			}
 		}
-		return settings;
+		return applyDeclaredSubagents(settings, plan, userSettingsPath);
 	}
 
 	// Selection plans: only user-scope encoding is layered onto the user's own
@@ -413,7 +427,7 @@ async function computeSettings(
 	// process's Pi applies, and merging it would turn the project's `packages`
 	// into global-scope packages (installing them into the real agent dir's npm
 	// root as a launch side effect).
-	return buildSelectionSettings(
+	const settings = buildSelectionSettings(
 		plan,
 		{ ...userSettings },
 		agentDir,
@@ -421,6 +435,7 @@ async function computeSettings(
 		runtimeDir,
 		options.projectDir,
 	);
+	return applyDeclaredSubagents(settings, plan, userSettingsPath);
 }
 
 /** Resolved name sets, carried in the launch plan for glob-delta reporting. */
@@ -486,6 +501,7 @@ export async function writeRuntimeFiles(
 		profile: plan.profile,
 		source: plan.source,
 		agentDir: options.agentDir,
+		...(plan.subagents !== undefined ? { subagents: plan.subagents } : {}),
 		...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 		...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
 		...(plan.disabledTools !== undefined ? { disabledTools: plan.disabledTools } : {}),
