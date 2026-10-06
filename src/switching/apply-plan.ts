@@ -36,8 +36,9 @@ import path from "node:path";
 import { isRecord, readJsonFile } from "../json-file.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
-import { expandToolReferences } from "./tool-references.ts";
 import type { ProfileSubagentSettings } from "../subagent-settings.ts";
+import { expandToolReferences } from "./tool-references.ts";
+import { observeSubagentExtension, type SubagentExtensionObservation, type SubagentRegistrationSource } from "./subagent-observation.ts";
 
 export interface LaunchPlanFile {
 	profile: string;
@@ -77,10 +78,16 @@ export interface LaunchPlanFile {
 export interface PlanApplicationSurface {
 	getAllTools(): Array<{
 		name: string;
-		sourceInfo?: { path?: string; source?: string };
+		sourceInfo?: { path?: string; source?: string; origin?: string; baseDir?: string };
+	}>;
+	getCommands?(): Array<{
+		name: string;
+		sourceInfo?: { path?: string; source?: string; origin?: string; baseDir?: string };
 	}>;
 	setActiveTools(names: string[]): void;
 	notify?(message: string, level: "info" | "warning" | "error"): void;
+	observeSubagents?(): Promise<SubagentExtensionObservation>;
+	notifySubagentWarning?(message: string): void;
 }
 
 export interface ApplyResult {
@@ -128,6 +135,31 @@ export async function applyLaunchPlan(input: {
 		return { warnings: [] };
 	}
 	const warnings: string[] = [];
+	const subagentWarnings = new Set<string>();
+
+	if (plan.subagents !== undefined) {
+		let observation: SubagentExtensionObservation = "unconfirmed";
+		try {
+			observation = surface.observeSubagents
+				? await surface.observeSubagents()
+				: await observeSubagentExtension([
+						...surface.getAllTools(),
+						...(surface.getCommands?.() ?? []),
+					] as SubagentRegistrationSource[]);
+		} catch {
+			observation = "unconfirmed";
+		}
+		if (observation === "unconfirmed") {
+			const warning = `profile "${plan.profile}": pi-subagents registration could not be confirmed, so declared subagent overrides might be inactive; check that the native extension is loaded and inspect live roles with /subagents-models`;
+			warnings.push(warning);
+			subagentWarnings.add(warning);
+			try {
+				surface.notifySubagentWarning?.(warning);
+			} catch {
+				// The optional diagnostic surface must not block activation.
+			}
+		}
+	}
 
 	// --- tools ---
 	const hasOverlayDisables = plan.disabledTools !== undefined && plan.disabledTools.length > 0;
@@ -233,7 +265,7 @@ export async function applyLaunchPlan(input: {
 	}
 
 	for (const warning of warnings) {
-		surface.notify?.(warning, "warning");
+		if (!subagentWarnings.has(warning)) surface.notify?.(warning, "warning");
 	}
 	return { summary, warnings };
 }

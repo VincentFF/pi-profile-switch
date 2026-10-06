@@ -15,7 +15,9 @@
  */
 
 import type { RuntimeOverlay } from "../runtime-state-store.ts";
+import type { ProfileSubagentSettings } from "../subagent-settings.ts";
 import type { LaunchPlanFile } from "./apply-plan.ts";
+import type { SubagentExtensionObservation } from "./subagent-observation.ts";
 
 export interface StatusConflict {
 	/** Command name as registered (e.g. `skill:review`). */
@@ -46,6 +48,10 @@ export interface StatusReport {
 	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
 	conflicts: StatusConflict[];
+	subagents?: {
+		declared: ProfileSubagentSettings;
+		extension: SubagentExtensionObservation;
+	};
 }
 
 interface RegisteredCommand {
@@ -78,6 +84,7 @@ export function buildStatusReport(input: {
 	projectMcpServers?: string[];
 	commands: RegisteredCommand[];
 	tools: RegisteredTool[];
+	subagentObservation?: SubagentExtensionObservation;
 }): StatusReport {
 	const { plan } = input;
 
@@ -188,6 +195,14 @@ export function buildStatusReport(input: {
 		...(delta !== undefined ? { delta } : {}),
 		...(plan.unmatched !== undefined && plan.unmatched.length > 0 ? { unmatched: plan.unmatched } : {}),
 		conflicts,
+		...(plan.subagents !== undefined
+			? {
+					subagents: {
+						declared: plan.subagents,
+						extension: input.subagentObservation ?? "unconfirmed",
+					},
+				}
+			: {}),
 	};
 }
 
@@ -218,6 +233,12 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	}
 	if (report.tools !== undefined) {
 		lines.push(`tools: [${report.tools.join(", ")}]`);
+	}
+	if (report.subagents !== undefined) {
+		lines.push("subagents (profile-declared overrides; not effective runtime mappings):");
+		lines.push(`  extension registration: ${report.subagents.extension}`);
+		lines.push(`  ${JSON.stringify(report.subagents.declared)}`);
+		lines.push("  inspect the live mapping with /subagents-models");
 	}
 	lines.push(
 		`mcp: enabled=[${report.mcp.enabled.join(", ")}] disabled=[${report.mcp.disabled.join(", ")}] missing=[${report.mcp.missing.join(", ")}]`,

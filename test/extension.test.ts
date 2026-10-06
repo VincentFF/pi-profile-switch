@@ -470,6 +470,53 @@ describe("pi-profile extension", () => {
 			expect(content).toContain("mcp: enabled=[github]");
 		});
 
+		it("reports declared subagent inputs separately from live extension ownership", async () => {
+			await writeLaunchPlan({
+				profile: "review",
+				source: "global",
+				agentDir: root,
+				resolved: { skills: [], extensions: [] },
+				subagents: { defaultModel: "provider/model", agentOverrides: { reviewer: { description: "Review code" } } },
+			});
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("status" as never, fakeCtx() as never);
+
+			const message = pi.sentMessages[0];
+			const report = (message?.details as { report: { subagents?: unknown } }).report;
+			expect(report.subagents).toEqual({
+				declared: { defaultModel: "provider/model", agentOverrides: { reviewer: { description: "Review code" } } },
+				extension: "unconfirmed",
+			});
+			expect(String(message?.content)).toContain("not effective runtime mappings");
+			expect(String(message?.content)).toContain("/subagents-models");
+		});
+
+		it("warns through the mode-safe notice surface only when declarations exist", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global", subagents: { defaultModel: "provider/model" } });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(ctx.notifications.filter((entry) => entry.level === "warning" && entry.message.includes("pi-subagents"))).toHaveLength(1);
+			expect(ctx.notifications.find((entry) => entry.message.includes("pi-subagents"))?.message).toContain("/subagents-models");
+			expect(pi.activeTools).toEqual([]);
+		});
+
+		it("does not add subagent warning on session start without a declaration", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global" });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(ctx.notifications.some((entry) => entry.message.includes("pi-subagents registration"))).toBe(false);
+		});
+
 		it("bare /profile falls back to the list without dialog-capable UI", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 			const pi = fakePi();

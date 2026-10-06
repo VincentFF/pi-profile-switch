@@ -453,6 +453,64 @@ describe("applyLaunchPlan", () => {
 		expect(existsSync(path.join(agentDir, "pi-profile-state.json"))).toBe(false);
 	});
 
+	it("observes extension ownership only for declared subagent settings and warns non-fatally", async () => {
+		await writePlan({ profile: "review", source: "global", subagents: { defaultModel: "provider/model" } });
+		const surface = fakeSurface();
+		const observations: string[] = [];
+		const warnings: string[] = [];
+		Object.assign(surface, {
+			observeSubagents: async () => {
+				observations.push("observed");
+				return "unconfirmed";
+			},
+			notifySubagentWarning: (message: string) => warnings.push(message),
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(observations).toEqual(["observed"]);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain('profile "review"');
+		expect(warnings[0]).toContain("/subagents-models");
+		expect(result.warnings).toEqual(warnings);
+		expect(surface.activeTools).toEqual([]);
+	});
+
+	it("does not observe or warn about subagents without effective declarations", async () => {
+		await writePlan({ profile: "review", source: "global" });
+		const surface = fakeSurface();
+		let observations = 0;
+		const warnings: string[] = [];
+		Object.assign(surface, {
+			observeSubagents: async () => {
+				observations += 1;
+				return "unconfirmed";
+			},
+			notifySubagentWarning: (message: string) => warnings.push(message),
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(observations).toBe(0);
+		expect(warnings).toEqual([]);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it("treats a failed ownership observation as unconfirmed and continues", async () => {
+		await writePlan({ profile: "review", source: "global", subagents: { defaultModel: "provider/model" } });
+		const surface = fakeSurface();
+		const warnings: string[] = [];
+		Object.assign(surface, {
+			observeSubagents: async () => { throw new Error("metadata unavailable"); },
+			notifySubagentWarning: (message: string) => warnings.push(message),
+		});
+
+		const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+
+		expect(result.warnings).toHaveLength(1);
+		expect(warnings).toEqual(result.warnings);
+	});
+
 	it("returns a one-shot change summary and clears the marker", async () => {
 		const agentDir = path.join(root, "agent");
 		await mkdir(agentDir, { recursive: true });

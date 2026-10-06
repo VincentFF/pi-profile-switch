@@ -331,6 +331,76 @@ describe("switchProfile", () => {
 		]);
 	});
 
+	it("switching and reloading rebuild subagent settings from the current native base", async () => {
+		const nativePath = path.join(fixture.agentDir, "settings.json");
+		const native = {
+			subagents: {
+				defaultModel: "base/model",
+				agentOverrides: { reviewer: { model: "native/model", description: "native description", inheritedContext: true } },
+			},
+		};
+		await writeFile(nativePath, JSON.stringify(native));
+		await writeCatalog({
+			review: { subagents: { agentOverrides: { reviewer: { model: "profile/model", description: "profile description" } } } },
+			plain: {},
+		});
+
+		await switchProfile("review", deps());
+		const overridden = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(overridden.subagents.agentOverrides.reviewer).toEqual({
+			model: "profile/model", description: "profile description", inheritedContext: true,
+		});
+
+		await switchProfile("plain", deps());
+		let restored = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(restored.subagents).toEqual(native.subagents);
+		expect((await readPlanFile()).subagents).toBeUndefined();
+
+		await switchProfile("review", deps());
+		const editedNative = {
+			subagents: {
+				defaultModel: "edited/base",
+				agentOverrides: { reviewer: { model: "native/edited", description: "edited native description", inheritedContext: false } },
+			},
+		};
+		await writeFile(nativePath, JSON.stringify(editedNative));
+		await writeCatalog({ review: { subagents: { agentOverrides: { reviewer: { model: "profile/model" } } } } });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+
+		restored = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(restored.subagents).toEqual({
+			defaultModel: "edited/base",
+			agentOverrides: { reviewer: { model: "profile/model", description: "edited native description", inheritedContext: false } },
+		});
+		expect((await readPlanFile()).subagents).toEqual({ agentOverrides: { reviewer: { model: "profile/model" } } });
+	});
+
+	it("restores exact subagent settings and declaration on failed reload", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ subagents: { defaultModel: "native", agentOverrides: { reviewer: { model: "native/model", description: "native" } } } }),
+		);
+		await writeCatalog({
+			review: { subagents: { agentOverrides: { reviewer: { model: "profile/model", description: "profile" } } } },
+			plain: {},
+		});
+		await switchProfile("review", deps());
+		const previousSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const previousPlan = await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8");
+		let reloads = 0;
+
+		await expect(switchProfile("plain", deps({
+			reload: async () => {
+				reloads += 1;
+				if (reloads === 1) throw new Error("reload failed");
+			},
+		}))).rejects.toThrow(/restored the previous settings/);
+
+		expect(reloads).toBe(2);
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(previousSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(previousPlan);
+	});
+
 	it("profile switch changes per-server MCP tool policy", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),

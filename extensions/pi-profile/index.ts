@@ -13,6 +13,7 @@ import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-p
 import { OVERLAY_USAGE, applyOverlayMutation, clearOverlay, parseOverlayArgs } from "../../src/switching/overlay.ts";
 import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
+import { observeSubagentExtension } from "../../src/switching/subagent-observation.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 import { getGlobalStateDir, getProfileSwitchDir } from "../../src/workspace.ts";
 
@@ -95,6 +96,14 @@ async function startStartupNotices(surface: NoticeSurface): Promise<void> {
 	}
 }
 
+async function observeRegisteredSubagents(pi: ExtensionAPI): Promise<"detected" | "unconfirmed"> {
+	try {
+		return await observeSubagentExtension([...pi.getAllTools(), ...pi.getCommands()]);
+	} catch {
+		return "unconfirmed";
+	}
+}
+
 function setProfileStatus(ui: unknown, profile: string | undefined): void {
 	if (profile && typeof (ui as { setStatus?: (k: string, v: string) => void })?.setStatus === "function") {
 		(ui as { setStatus: (k: string, v: string) => void }).setStatus("profile", `profile: ${profile}`);
@@ -122,6 +131,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				getAllTools: () => pi.getAllTools(),
 				setActiveTools: (names) => pi.setActiveTools(names),
 				notify: (message, level) => ctx.ui?.notify(message, level),
+				getCommands: () => pi.getCommands(),
+				observeSubagents: () => observeRegisteredSubagents(pi),
+				notifySubagentWarning: (message) => noticeSurface.display(message, "warning"),
 			},
 		});
 		pendingSummary = result.summary;
@@ -241,6 +253,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					);
 					const report = buildStatusReport({
 						plan,
+						...(plan.subagents !== undefined
+							? { subagentObservation: await observeRegisteredSubagents(pi) }
+							: {}),
 						overlay: state.overlay,
 						discoveredMcpServers,
 						disabledMcpServers,
