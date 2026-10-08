@@ -38,6 +38,11 @@ The existing session-preservation, rollback, and selection-persistence contracts
 - **WHEN** an extension-path transition or subsequent reload fails while switching between declared and omitted selections
 - **THEN** prior settings, plan, extension-path absence or raw link target, and loaded resources are restored without changing real extension files or persisting the failed selection
 
+#### Scenario: Failed activation reports its actionable cause across rollback reload
+
+- **WHEN** activation fails after managed writes or refuses unsafe instance extension-path content and rolls back through a reload
+- **THEN** the user receives a diagnostic identifying the failed activation and its cause, including the unsafe path and corrective action for a content refusal; invalidating the old command context does not discard the diagnostic, and reporting does not prevent restoration
+
 ### Requirement: Native resource bases for overlays
 
 For a skill or extension kind omitted by the profile, overlay disables SHALL resolve against its native, referenceable discovery result and SHALL remove only matching user-level resources. Native resources outside the overlay's reference vocabulary MUST retain their native visibility. A kind declared by the profile SHALL continue to use its selected reference set as the overlay base.
@@ -48,6 +53,11 @@ An overlay for one resource kind MUST NOT turn an undeclared different kind into
 
 - **WHEN** a profile omits a skill or extension field and the overlay disables a discovered user-level resource of that kind
 - **THEN** only the matching resource is disabled; the remaining native resources, package filters, and settings-only resources remain effective
+
+#### Scenario: Overlay disables a skill loaded through a native plain include
+
+- **WHEN** a profile omits skills, native settings directly include a referenceable user-level skill inside the real agent directory, and an overlay disables that skill
+- **THEN** the skill is no longer visible through either its direct include or runtime discovery path while unrelated skills retain native visibility
 
 #### Scenario: Overlay does not narrow an unrelated kind
 

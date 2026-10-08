@@ -68,6 +68,8 @@ Prepare settings and validate the extension-path transition before writes. Chang
 
 Include the instance extension path in the switch snapshot as absent or symlink, recording the raw target. Restore that representation before rollback reload after any write, link-transition, or reload failure. No change to the real resource directory is part of rollback. The sweep continues to skip symlinks without traversing their targets and keeps the existing warning-only treatment of content in real instance extension directories under ADR-0012.
 
+Report the rollback failure cause through an optional `SwitchDeps.reportFailure(message)` callback before the rollback reload. The extension owns presentation: use the current UI when available and fall back to stderr if the UI is unavailable or the context is already stale. A reporting failure must not interrupt restoration or reload. Callers without the callback retain the rejected `SwitchError` result. No persisted failure marker is introduced.
+
 This is a reversible internal representation change. It introduces no durable settings format, new process architecture, dependency, or new sweep disposition; no ADR is required.
 
 ### Export surface
@@ -90,6 +92,8 @@ disabledExtensions?: ActivationPlan["extensions"];
 | `src/settings-generator.ts` | `generateRuntimeDir(plan: ActivationPlan, options: GenerateOptions): Promise<GeneratedRuntime>` | Consume per-kind control; signature and existing error propagation remain. |
 | `src/settings-generator.ts` | `writeRuntimeFiles(runtimeDir: string, plan: ActivationPlan, options: RuntimeFileOptions): Promise<{ warnings: string[] }>` | Consume per-kind control and transition the conditional extension mirror; prepare content and validate the transition before writes. Unsafe pre-existing extension-path content raises the existing `ActivationError` with its path and a fix. |
 | `src/switching/switch-profile.ts` | `switchProfile(name: string \| undefined, deps: SwitchDeps, options?: { reloadCurrent?: boolean; overlay?: RuntimeOverlay \| null; clearOverlay?: boolean }): Promise<SwitchResult>` | Signature unchanged; snapshot and restore extension-path absence or raw symlink target within the existing `SwitchError` rollback boundary. |
+| `src/switching/switch-profile.ts` | `SwitchDeps.reportFailure?: (message: string) => void` | Optional presentation callback for the actionable rollback cause before reloading. Reporting failures cannot prevent rollback; `SwitchError` still rejects activation. |
+| `extensions/pi-profile/index.ts` | existing profile command handler | Supply the failure callback and retain an error fallback that survives stale command contexts; no new command or exported API. |
 | `src/launcher/initial-profile.ts` | `resolveInitialProfile(name: string \| undefined, context: LauncherContext, options?: { overlay?: RuntimeOverlay; liveToolNames?: string[] }): Promise<InitialProfile>` | Change only the synthetic default-overlay definition; existing activation errors remain. |
 
 Declaration metadata and concrete exclusions are internal resolver-to-generator data. They need not be serialized into `pi-profile.json`; retain its existing resolved snapshots, tool fields, and switch markers. No durable format or new error class is introduced.
@@ -101,6 +105,8 @@ Declaration metadata and concrete exclusions are internal resolver-to-generator 
 - Conditional extension mirrors and native additive resource paths have different lexical paths --> test relative, absolute, basename, and marker-less patterns against true native Pi, including symlinked resources and explicit plain includes.
 - Switching can change extension-directory representation --> test both transition directions, link-write and reload failure rollback, absent source directories, and cleanup that never traverses the real directory.
 - Native-base overlays can unintentionally become global allowlists --> exercise settings-only extension paths, unresolved package declarations, and unrelated kinds under tool-only overlays.
+- A skill's native plain include can use the real agentDir path while automatic discovery uses the mirror path --> concrete overlay exclusions must cover both lexical routes without excluding unrelated skills.
+- Rollback reload invalidates the command context --> assert the actionable failure cause at the real Pi notification or stderr boundary, not only as a unit-level rejected error.
 - A required internal field affects hand-built test plans --> update `selectionPlan` in `test/settings-generator-selection.test.ts` and let TypeScript identify any other constructors; never infer declaration intent from array length.
 - Project resources or sibling native settings can be affected by path/source changes --> retain the existing trust boundary and verify unmanaged settings and real source files are unchanged.
 

@@ -30,7 +30,7 @@ None.
 
 ## Impact
 
-Resolution and instance generation change in `src/profile-resolver.ts`, `src/settings-generator.ts`, and the default-overlay branch of `src/launcher/initial-profile.ts`. The internal activation-plan interface must retain declaration intent across the resolver/generator boundary; its exact surface belongs in the design. `src/switching/switch-profile.ts` also extends rollback to the conditional extension-directory representation. Existing sweep dispositions remain unchanged; cleanup safety is verified in `test/runtime-cleanup.test.ts`.
+Resolution and instance generation change in `src/profile-resolver.ts`, `src/settings-generator.ts`, and the default-overlay branch of `src/launcher/initial-profile.ts`. The internal activation-plan interface must retain declaration intent across the resolver/generator boundary; its exact surface belongs in the design. `src/switching/switch-profile.ts` also extends rollback to the conditional extension-directory representation. `extensions/pi-profile/index.ts` presents activation failures through a reload-safe channel without storing a new failure marker. Existing sweep dispositions remain unchanged; cleanup safety is verified in `test/runtime-cleanup.test.ts`.
 
 Regression coverage spans resolver and settings tests, named-profile launch, profile switching, overlays, and project trust. Existing MCP/tool omission tests remain compatibility guards. Resource discovery stays delegated to Pi; the change adds no registration layer, dependency graph, or resource copies.
 
