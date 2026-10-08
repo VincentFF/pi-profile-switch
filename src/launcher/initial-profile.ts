@@ -168,17 +168,9 @@ export async function resolveInitialProfile(
 	warnings.push(...(profile.warnings ?? []));
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 
-	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;
-	const hasMcpTools = mcpToolsDef !== undefined && Object.keys(mcpToolsDef).length > 0;
-	const declaredMcps = profile.definition.mcps;
-	const needsMcp = Boolean(
-		declaredMcps !== undefined ||
-		hasMcpTools ||
-		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
-	);
-	const mcpDiscovery = needsMcp
-		? await loadMergedMcpServers(context.agentDir, projectDir, { invalidSource: "throw" })
-		: undefined;
+	// Diagnose source content regardless of whether the profile declares an
+	// MCP policy; unexpected filesystem failures still propagate.
+	const mcpDiscovery = await loadMergedMcpServers(context.agentDir, projectDir, { invalidSource: "diagnose" });
 
 	const plan = await resolveProfile({
 		profile,

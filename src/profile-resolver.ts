@@ -13,8 +13,8 @@
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
  * - MCP references (`mcps`) expand against the merged user-level MCP
- *   configuration snapshot: literal misses fail loudly; globs expand to zero
- *   or more matches (consistent with skills/extensions).
+ *   configuration snapshot: misses are diagnosed and usable selections
+ *   remain restrictive (consistent with skills/extensions).
  * - Tool globs expand against Pi's built-in tool names for settings
  *   `defaultTools`; raw tool references are also carried into the launch
  *   plan so the in-session extension can expand them against Pi's live
@@ -331,48 +331,43 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}));
 	}
 
+	const mcpDiscovery = input.mcpDiscovery;
+	for (const message of mcpDiscovery?.diagnostics ?? []) {
+		const separator = message.indexOf(": ");
+		diagnostics.push({ kind: "mcp-source", code: "invalid-source", message: `profile "${profile.name}": ${message}; source skipped; fix the configuration at that path`, ...(separator >= 0 ? { filePath: message.slice(separator + 2) } : {}) });
+	}
+
+	const candidates = mcpDiscovery !== undefined
+		? userLevelMcpCandidates(mcpDiscovery)
+		: [...(input.discoveredMcpServers ?? [])].sort();
+	const candidateMessage = (usable: string[]): string => usable.length > 0
+		? ` (usable candidates: ${usable.join(", ")})`
+		: " (no user-level servers are discovered)";
+	const diagnoseMcp = (kind: string, code: string, reference: string, message: string): void => {
+		diagnostics.push({ kind, code, reference, message: `profile "${profile.name}": ${message}` });
+	};
+
 	let mcps: string[] | undefined;
 	if (definition.mcps !== undefined) {
-		if (definition.mcps.length > 0) {
-			if (input.discoveredMcpServers === undefined) {
-				throw new ActivationError(
-					`profile "${profile.name}" declares MCP servers but no MCP server discovery is available`,
-				);
-			}
-			mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
-				onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
-				literalMissError: (reference) => {
-					const candidates =
-						input.mcpDiscovery !== undefined
-							? userLevelMcpCandidates(input.mcpDiscovery)
-							: [...(input.discoveredMcpServers ?? [])].sort();
-					const suffix =
-						candidates.length > 0
-							? ` (usable candidates: ${candidates.join(", ")})`
-							: " (no user-level servers are discovered)";
-					throw new ActivationError(`unknown MCP server: "${reference}"${suffix}`);
-				},
-			});
-			if (input.mcpDiscovery !== undefined) {
-				const discovery = input.mcpDiscovery;
-				const projectNamed = mcps.find(
-					(name) => discovery.serverOwners[name] === "project" || discovery.projectServers.has(name),
-				);
-				if (projectNamed !== undefined) {
-					throw new ActivationError(
-						`profile "${profile.name}": cannot select project-level MCP server "${projectNamed}" (project-level servers are outside profile selection)`,
-					);
+		if (input.discoveredMcpServers === undefined && (definition.mcps.length > 0 || mcpDiscovery === undefined)) {
+			throw new ActivationError(`profile "${profile.name}" declares ${definition.mcps.length === 0 ? "an empty MCP server selection" : "MCP servers"} but no MCP server discovery is available`);
+		}
+		mcps = expandReferences(definition.mcps, input.discoveredMcpServers ?? [], (name) => name, "MCP server", {
+			onZeroMatch: (reference) => zeroMatch("mcp", reference),
+			onLiteralMiss: (reference) => diagnoseMcp("mcp", "unknown-reference", reference, `unknown MCP server: "${reference}"${candidateMessage(candidates)}; not loaded; correct the reference or configure the server`),
+		});
+		if (mcpDiscovery !== undefined) {
+			mcps = mcps.filter((name) => {
+				if (mcpDiscovery.serverOwners[name] === "project" || mcpDiscovery.projectServers.has(name)) {
+					diagnoseMcp("mcp", "project-boundary", name, `cannot select project-level MCP server "${name}"; not loaded through user-level selection; project-level servers are outside profile selection and remain governed by Pi`);
+					return false;
 				}
-			}
-		} else {
-			// Explicitly empty mcps: requires discovery so the empty selection
-			// disables every discovered user-level server.
-			if (input.mcpDiscovery === undefined) {
-				throw new ActivationError(
-					`profile "${profile.name}" declares an empty MCP server selection but no MCP server discovery is available`,
-				);
-			}
-			mcps = [];
+				if (mcpDiscovery.servers[name]?.enabled === false) {
+					diagnoseMcp("mcp", "source-disabled", name, `selected MCP server "${name}" is disabled in its source configuration; remains disabled; enable it there or remove it from "mcps"`);
+					return false;
+				}
+				return true;
+			});
 		}
 	}
 
@@ -439,27 +434,20 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}
 
 		const mcpDiscovery = input.mcpDiscovery;
-		const usableCandidates = userLevelMcpCandidates(mcpDiscovery).filter(
-			(s) => mcps === undefined || mcps.includes(s),
-		);
-		const candidateMsg = usableCandidates.length > 0 ? ` (usable candidates: ${usableCandidates.join(", ")})` : "";
+		const usableCandidates = userLevelMcpCandidates(mcpDiscovery).filter((name) => mcps === undefined || mcps.includes(name));
+		const candidateMsg = candidateMessage(usableCandidates);
 
 		for (const serverKey of mcpToolKeys) {
 			if (!Object.hasOwn(mcpDiscovery.servers, serverKey)) {
-				throw new ActivationError(`profile "${profile.name}": unknown MCP server "${serverKey}"${candidateMsg}`);
+				diagnoseMcp("mcp-tools", "unknown-reference", serverKey, `unknown MCP server "${serverKey}"${candidateMsg}; policy retained without creating a connection; correct the server name or configure it`);
+				continue;
 			}
-			const isProject =
-				mcpDiscovery.serverOwners[serverKey] === "project" || mcpDiscovery.projectServers.has(serverKey);
-			if (isProject) {
-				throw new ActivationError(
-					`profile "${profile.name}": cannot narrow project-level MCP server "${serverKey}" (project-level servers are outside profile narrowing)`,
-				);
+			if (mcpDiscovery.serverOwners[serverKey] === "project" || mcpDiscovery.projectServers.has(serverKey)) {
+				diagnoseMcp("mcp-tools", "project-boundary", serverKey, `cannot narrow project-level MCP server "${serverKey}"; policy retained but not applied; project-level servers are outside profile narrowing and remain governed by Pi`);
+				continue;
 			}
-			const isDisabled =
-				mcpDiscovery.servers[serverKey]?.enabled === false ||
-				(mcps !== undefined && !mcps.includes(serverKey));
-			if (isDisabled) {
-				throw new ActivationError(`profile "${profile.name}": MCP server "${serverKey}" is disabled${candidateMsg}`);
+			if (mcpDiscovery.servers[serverKey]?.enabled === false || (mcps !== undefined && !mcps.includes(serverKey))) {
+				diagnoseMcp("mcp-tools", "disabled-server", serverKey, `MCP server "${serverKey}" is disabled${candidateMsg}; remains disabled with policy retained; enable it in its source and select it through "mcps", or remove the policy`);
 			}
 		}
 
@@ -588,25 +576,10 @@ export function buildInstanceMcpConfig(
 			mcpDiscovery.serverOwners[serverName] === "project" || mcpDiscovery.projectServers.has(serverName);
 		if (isProjectOwned) continue;
 
-		// A selected server the winning source explicitly disables fails with a
-		// fix, never a silent enablement override (D1).
-		if (mcps?.includes(serverName) === true && originalDef.enabled === false) {
-			throw new ActivationError(
-				`profile "${profileName}": selected MCP server "${serverName}" is disabled in its source configuration; enable it there or remove it from "mcps"`,
-			);
-		}
-
-		// A server explicitly selected by mcps whose definition uses a
-		// transport Pi's built-in MCP extension cannot use fails activation.
-		if (mcps?.includes(serverName) === true && originalDef.type === "sse") {
-			throw new ActivationError(
-				`profile "${profileName}": selected MCP server "${serverName}" uses the legacy SSE transport, which Pi does not support; switch to the server's streamable HTTP URL or remove it from "mcps"`,
-			);
-		}
 
 		const def = { ...originalDef };
 
-		if (mcpTools && Object.hasOwn(mcpTools, serverName)) {
+		if (originalDef.enabled !== false && mcpTools && Object.hasOwn(mcpTools, serverName)) {
 			// Profile policy replaces the merged toolExposure wholesale.
 			const requested = mcpTools[serverName];
 			const exposure: Record<string, string> = { "*": "hidden" };

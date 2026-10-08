@@ -328,11 +328,14 @@ describe("resolveInitialProfile", () => {
 			expect(plan.mcps).toEqual(["github"]);
 		});
 
-		it("fails before spawn on an mcp reference the snapshot never discovered", async () => {
+		it("warns and retains empty MCP selection for an unknown server", async () => {
 			await writeMcpConfig({ github: {} });
 			await writeCatalog({ review: { mcps: ["typo-server"] } });
 
-			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
+			const { plan, warnings } = await resolveInitialProfile("review", context());
+			expect(plan.mcps).toEqual([]);
+			expect(warnings.join("\n")).toMatch(/unknown MCP server: "typo-server"/);
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { enabled: false } });
 		});
 
 		it("does not require an adapter extension for nonempty mcps", async () => {
@@ -344,11 +347,13 @@ describe("resolveInitialProfile", () => {
 			expect(plan.mcps).toEqual(["github"]);
 		});
 
-		it("fails for empty mcps when the MCP config is malformed", async () => {
+		it("diagnoses malformed configuration under explicit empty MCP selection", async () => {
 			await writeFile(path.join(fixture.agentDir, "mcp.json"), "{ not valid json");
 			await writeCatalog({ inert: { mcps: [] } });
 
-			await expect(resolveInitialProfile("inert", context())).rejects.toThrow(/MCP config is not valid JSON/);
+			const { plan, warnings } = await resolveInitialProfile("inert", context());
+			expect(plan.mcps).toEqual([]);
+			expect(warnings.join("\n")).toContain("MCP config is not valid JSON");
 		});
 
 		it("requests MCP discovery for empty mcps and marks discovered servers enabled: false", async () => {
@@ -378,11 +383,14 @@ describe("resolveInitialProfile", () => {
 			expect(plan.instanceMcpConfig?.mcpServers).toEqual({});
 		});
 
-		it("fails before spawn when an explicitly selected server uses SSE", async () => {
+		it("delegates selected SSE transport usability to Pi", async () => {
 			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
 			await writeCatalog({ review: { mcps: ["github"] } });
 
-			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/legacy SSE transport/);
+			const { plan, warnings } = await resolveInitialProfile("review", context());
+			expect(plan.mcps).toEqual(["github"]);
+			expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: { type: "sse", url: "http://localhost:3000/sse" } });
+			expect(warnings).toEqual([]);
 		});
 
 		it("passes an unselected SSE server through without failing activation", async () => {
@@ -393,5 +401,55 @@ describe("resolveInitialProfile", () => {
 
 			expect(plan.mcps).toBeUndefined();
 		});
+	});
+});
+
+
+describe("diagnostic MCP discovery during initial resolution", () => {
+	it.each([{}, { mcp_tools: {} }, { mcps: [] }, { mcps: ["kept", "missing"] }, { mcp_tools: { kept: [] } }])("skips malformed user sources and retains declared policy %j", async (definition) => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const valid = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(valid, JSON.stringify({ mcpServers: { kept: { command: "fixture" }, unselected: { command: "other" } } }));
+		const invalid = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(invalid, "{ broken");
+		await writeCatalog({ review: definition });
+		const { plan, warnings } = await resolveInitialProfile("review", context());
+		expect(warnings.filter((warning) => warning.includes(invalid))).toHaveLength(1);
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "mcp-source", filePath: invalid, message: expect.stringContaining("source skipped") }));
+		if ("mcps" in definition) expect(plan.mcps).toEqual(definition.mcps?.length ? ["kept"] : []);
+		else expect(plan.mcps).toBeUndefined();
+		if ("mcp_tools" in definition && Object.keys(definition.mcp_tools ?? {}).length > 0) expect(plan.mcpTools).toEqual(definition.mcp_tools);
+		expect(await readFile(invalid, "utf8")).toBe("{ broken");
+	});
+
+	it.each([{}, { mcps: ["kept"] }, { mcp_tools: { kept: [] } }])("diagnoses malformed trusted-project classification without controlling that file %j", async (definition) => {
+		await writeMcpConfig({ kept: { command: "fixture" } });
+		const file = path.join(fixture.cwd, ".pi", "mcp.json");
+		await writeFile(file, '{"mcpServers":[]}');
+		await writeCatalog({ review: definition });
+		const { plan, warnings } = await resolveInitialProfile("review", { ...context(), trustOverride: true });
+		expect(warnings.join("\n")).toContain(file);
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ filePath: file }));
+		expect(await readFile(file, "utf8")).toBe('{"mcpServers":[]}');
+	});
+
+	it("does not read untrusted project MCP classification", async () => {
+		await writeCatalog({ review: { mcps: [] } });
+		const file = path.join(fixture.cwd, ".pi", "mcp.json");
+		await writeFile(file, "{ malformed");
+		const read = vi.spyOn(jsonFile, "readJsonFile");
+		const { warnings } = await resolveInitialProfile("review", { ...context(), trustOverride: false });
+		expect(read.mock.calls.map(([source]) => source)).not.toContain(file);
+		expect(warnings.join("\n")).not.toContain(file);
+	});
+
+	it("retains source-disabled servers without enabling them", async () => {
+		await writeMcpConfig({ disabled: { command: "fixture", enabled: false } });
+		await writeCatalog({ review: { mcps: ["disabled"], mcp_tools: { disabled: [] } } });
+		const { plan, warnings } = await resolveInitialProfile("review", context());
+		expect(plan.mcps).toEqual([]);
+		expect(plan.mcpTools).toEqual({ disabled: [] });
+		expect(plan.instanceMcpConfig?.mcpServers).toEqual({ disabled: { command: "fixture", enabled: false } });
+		expect(warnings.join("\n")).toContain("enable it");
 	});
 });
