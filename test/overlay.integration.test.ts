@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
+import { LAUNCHER_BIN as BIN, launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
 import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
@@ -365,6 +365,216 @@ describe("launcher integration: runtime overlay", () => {
 				// (an emptied overlay may persist as {}).
 				const afterEnable = (await readState()).overlay as Record<string, unknown> | undefined;
 				expect(afterEnable === undefined || Object.keys(afterEnable).length === 0).toBe(true);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+});
+
+describe("in-session native resource bases for overlays (fix-undeclared-resource-filtering)", () => {
+	async function extensionNames(rpc: RpcDriver): Promise<string[]> {
+		const commands = await rpc.commandNames();
+		return commands.filter((command) => command.source === "extension").map((command) => command.name).sort();
+	}
+
+	/** A loose agentDir extension registering one observable command. */
+	async function addExtension(name: string): Promise<string> {
+		const dir = path.join(fixture.agentDir, "extensions");
+		await mkdir(dir, { recursive: true });
+		const file = path.join(dir, `${name}.ts`);
+		await writeFile(
+			file,
+			[
+				`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+				`export default function (pi: ExtensionAPI) {`,
+				`\tpi.registerCommand(${JSON.stringify(name)}, { description: "fixture ${name}", handler: async () => {} });`,
+				`}`,
+				"",
+			].join("\n"),
+		);
+		return file;
+	}
+
+	/** Skill command names excluding the distributed profile-config skill, so
+	 *  native-base comparisons isolate the fixture skills. */
+	async function nativeSkillNames(rpc: RpcDriver): Promise<string[]> {
+		return (await skillNames(rpc)).filter((name) => name !== "skill:profile-config");
+	}
+
+	it(
+		"a named profile's native-base overlay narrows an omitted skill kind only",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addExtension("ext-a");
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
+				expect(await extensionNames(rpc)).toContain("ext-a");
+
+				const narrowed = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable skill beta-skill" },
+					60_000,
+				);
+				expect(narrowed.success).toBe(true);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				// The unrelated extension kind keeps native visibility.
+				expect(await extensionNames(rpc)).toContain("ext-a");
+				expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
+
+				const enabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay enable skill beta-skill" },
+					60_000,
+				);
+				expect(enabled.success).toBe(true);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
+				expect(await extensionNames(rpc)).toContain("ext-a");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"the default profile narrows each resource kind from its native base independently",
+		{ timeout: 120_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addExtension("ext-a");
+			await addExtension("ext-b");
+
+			const rpc = runLauncherRpc(fixture, ["--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const fixtureExtensions = (names: string[]) => names.filter((name) => name === "ext-a" || name === "ext-b");
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
+				expect(fixtureExtensions(await extensionNames(rpc))).toEqual(["ext-a", "ext-b"]);
+
+				// Skill-only narrowing leaves the extension kind untouched.
+				await rpc.send({ type: "prompt", message: "/profile overlay disable skill beta-skill" }, 60_000);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				expect(fixtureExtensions(await extensionNames(rpc))).toEqual(["ext-a", "ext-b"]);
+
+				// Extension-only narrowing leaves the skill kind's current state.
+				await rpc.send({ type: "prompt", message: "/profile overlay disable extension ext-a" }, 60_000);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				expect(fixtureExtensions(await extensionNames(rpc))).toEqual(["ext-b"]);
+				expect((await readState()).overlay).toEqual({
+					disabledSkills: ["beta-skill"],
+					disabledExtensions: ["ext-a"],
+				});
+
+				// clear restores native visibility for both kinds.
+				await rpc.send({ type: "prompt", message: "/profile overlay clear" }, 60_000);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
+				expect(fixtureExtensions(await extensionNames(rpc))).toEqual(["ext-a", "ext-b"]);
+				expect((await readState()).overlay).toBeUndefined();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"a tool-only overlay on the default profile leaves skills and extensions untouched",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addExtension("ext-a");
+			await writeCatalog({ review: { tools: ["read", "bash"] } });
+
+			const rpc = runLauncherRpc(fixture, ["--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const skillsBefore = await nativeSkillNames(rpc);
+				const extensionsBefore = await extensionNames(rpc);
+				expect(skillsBefore).toEqual(["skill:alpha-skill"]);
+
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable tool bash" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+
+				// Unrelated resource kinds retain exactly their prior visibility.
+				expect(await nativeSkillNames(rpc)).toEqual(skillsBefore);
+				expect(await extensionNames(rpc)).toEqual(extensionsBefore);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"a native-base overlay glob is re-expanded for an omitted kind after a new resource appears",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "git-commit");
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill", "skill:git-commit"]);
+
+				const disabled = await rpc.send(
+					{ type: "prompt", message: "/profile overlay disable skill git-*" },
+					60_000,
+				);
+				expect(disabled.success).toBe(true);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+
+				await addGlobalSkill(fixture, "git-rebase");
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				// The stored glob matches the newly discovered skill; the
+				// nonmatching native resource stays visible.
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"a native-base skill overlay leaves settings-only extension paths visible",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			const settingsOnly = path.join(fixture.root, "outside", "one-off.ts");
+			await mkdir(path.dirname(settingsOnly), { recursive: true });
+			await writeFile(
+				settingsOnly,
+				[
+					`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+					`export default function (pi: ExtensionAPI) {`,
+					`\tpi.registerCommand("one-off", { description: "settings-only", handler: async () => {} });`,
+					`}`,
+					"",
+				].join("\n"),
+			);
+			await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ extensions: [settingsOnly] }));
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				expect(await extensionNames(rpc)).toContain("one-off");
+
+				await rpc.send({ type: "prompt", message: "/profile overlay disable skill beta-skill" }, 60_000);
+				expect(await nativeSkillNames(rpc)).toEqual(["skill:alpha-skill"]);
+				// The settings-only extension is outside the overlay vocabulary and
+				// must not be converted into an allowlist or dropped.
+				expect(await extensionNames(rpc)).toContain("one-off");
 			} finally {
 				await rpc.close();
 			}

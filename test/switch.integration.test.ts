@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
-import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
@@ -398,6 +398,140 @@ describe("launcher integration: in-session switching", () => {
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
 				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh" });
 				expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+});
+
+describe("in-session sparse resource selection (fix-undeclared-resource-filtering)", () => {
+	async function extensionCommandNames(rpc: RpcDriver): Promise<string[]> {
+		const response = await rpc.send({ type: "get_commands" });
+		const commands = (response.data?.commands ?? []) as Array<{ name: string; source?: string }>;
+		return commands.filter((command) => command.source === "extension").map((command) => command.name).sort();
+	}
+
+	it(
+		"switching from declared kinds to a profile omitting them restores native visibility without a restart",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({
+				declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+				open: {},
+			});
+
+			const rpc = new RpcDriver("node", [BIN, "declared", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const before = await getState(rpc);
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.sessionFile).toBe(before.sessionFile);
+				const skills = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skills).toContain("skill:alpha-skill");
+				expect(skills).toContain("skill:beta-skill");
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reload after deleting a resource field restores native visibility",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await writeCatalog({ impl: { skills: ["beta-skill"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "impl", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
+
+				await writeCatalog({ impl: {} });
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				const skills = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skills).toContain("skill:alpha-skill");
+				expect(skills).toContain("skill:beta-skill");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reload reflects real user settings edits for an omitted kind",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await writeCatalog({ open: {} });
+
+			const rpc = new RpcDriver("node", [BIN, "open", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsBefore).toContain("skill:alpha-skill");
+
+				await writeFile(
+					path.join(fixture.agentDir, "settings.json"),
+					JSON.stringify({ skills: ["-skills/alpha-skill/SKILL.md"] }),
+				);
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				const skillsAfter = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsAfter).toContain("skill:beta-skill");
+				expect(skillsAfter).not.toContain("skill:alpha-skill");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"a failed transition leaves the prior resource visibility intact",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await writeCatalog({ declared: { skills: ["alpha-skill"] } });
+
+			const rpc = new RpcDriver("node", [BIN, "declared", "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(fixture),
+			});
+			try {
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
+
+				const failed = await rpc.send({ type: "prompt", message: "/profile use ghost" }, 60_000);
+				expect(failed.success).toBe(true);
+
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
+				const { existsSync } = await import("node:fs");
+				expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
 			} finally {
 				await rpc.close();
 			}

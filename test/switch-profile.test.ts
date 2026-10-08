@@ -527,3 +527,89 @@ describe("switchProfile", () => {
 		expect(await readPlanFile()).toEqual(initialPlan);
 	});
 });
+
+describe("sparse resource selection across activation (fix-undeclared-resource-filtering)", () => {
+	it("switching to a profile omitting a kind removes the previous restriction for that kind", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await addGlobalExtension(fixture, "ext-a");
+		await addGlobalExtension(fixture, "ext-b");
+		await writeCatalog({
+			declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+			open: {},
+		});
+
+		await switchProfile("declared", deps());
+		let settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
+			`-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+		]);
+		expect(settings.extensions).toEqual([path.join(fixture.agentDir, "extensions", "ext-a.ts")]);
+
+		await switchProfile("open", deps());
+		settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		// Both restrictions are gone: skills return to native visibility (no
+		// selection key) and extensions include the real discovery directory.
+		expect(settings.skills).toBeUndefined();
+		expect(settings.extensions).toEqual([path.join(fixture.agentDir, "extensions")]);
+		const plan = await readPlanFile();
+		const resolved = plan.resolved as { skills: Array<{ name: string }> };
+		expect(resolved.skills.map((skill) => skill.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
+	});
+
+	it("reloading after deleting a resource field restores native visibility for that kind only", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await writeCatalog({ impl: { skills: ["beta-skill"] } });
+		await switchProfile("impl", deps());
+		let settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
+			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+		]);
+
+		await writeCatalog({ impl: {} });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toBeUndefined();
+	});
+
+	it("reloading an omitted kind reflects edits to the current real user settings", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ open: {} });
+		await switchProfile("open", deps());
+
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ skills: ["-skills/alpha-skill/SKILL.md"] }),
+		);
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual(["-skills/alpha-skill/SKILL.md"]);
+	});
+
+	it("a failed transition restores the exact prior runtime content and resource policy", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await writeCatalog({
+			declared: { skills: ["alpha-skill"] },
+			open: {},
+		});
+		await switchProfile("declared", deps());
+		const previousSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const previousPlan = await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8");
+
+		let reloads = 0;
+		const reload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("reload failed");
+		};
+		await expect(switchProfile("open", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
+
+		expect(reloads).toBe(2);
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(previousSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(previousPlan);
+	});
+});

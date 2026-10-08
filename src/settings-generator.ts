@@ -174,11 +174,13 @@ function homeAgentsSkillsDir(): string {
 	return path.join(process.env.HOME ?? homedir(), ".agents", "skills");
 }
 
-/** The user's own skill exclusions (`!pattern`, `-path`), carried into a
- *  named profile's generated settings. Relative entries resolve against the
- *  runtime dir, which mirrors the agent dir, so they pass through unchanged.
- *  An absolute (or `~`) `-path` under the agent dir is rewritten to its
- *  runtime mirror path: Pi matches `-` entries lexically. */
+/** The user's own skill exclusions and force-inclusions (`!pattern`, `+path`,
+ *  `-path`), carried into a named profile's generated settings. Relative
+ *  entries resolve against the runtime dir, which mirrors the agent dir, so
+ *  they pass through unchanged. An absolute (or `~`) `+`/`-` path under the
+ *  agent dir is rewritten to its runtime mirror path: Pi matches `+`/`-`
+ *  entries lexically. Plain additive includes are NOT carried: a declared
+ *  selection must not re-add unrelated native paths. */
 function userSkillExclusions(userSkills: unknown, agentDir: string, runtimeDir: string): string[] {
 	if (!Array.isArray(userSkills)) return [];
 	const exclusions: string[] = [];
@@ -186,15 +188,51 @@ function userSkillExclusions(userSkills: unknown, agentDir: string, runtimeDir: 
 		if (typeof entry !== "string") continue;
 		if (entry.startsWith("!")) {
 			exclusions.push(entry);
-		} else if (entry.startsWith("-")) {
+		} else if (entry.startsWith("+") || entry.startsWith("-")) {
+			const marker = entry[0];
 			const target = entry.slice(1);
 			const expanded = target === "~" || target.startsWith("~/") ? path.join(process.env.HOME ?? homedir(), target.slice(1)) : target;
 			const rel = path.isAbsolute(expanded) ? path.relative(agentDir, expanded) : undefined;
 			const underAgentDir = rel !== undefined && rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-			exclusions.push(underAgentDir ? `-${path.join(runtimeDir, rel)}` : entry);
+			exclusions.push(underAgentDir ? `${marker}${path.join(runtimeDir, rel)}` : entry);
 		}
 	}
 	return exclusions;
+}
+
+/** The `-<path>` force-exclusion for one resolved skill entry, matching the
+ *  path Pi discovers at runtime: agentDir skills surface through the
+ *  instance's runtime-mirror symlink, everything else keeps its absolute
+ *  path. Package skills are encoded in their package's filter instead. */
+function skillExclusionEntry(skill: SkillEntry, agentDir: string, runtimeDir: string): string {
+	if (isUnderPath(skill.filePath, agentDir)) {
+		return `-${path.join(runtimeDir, path.relative(agentDir, skill.filePath))}`;
+	}
+	return `-${skill.filePath}`;
+}
+
+/** The user's native built-in extension controls (`!builtin:*`,
+ *  `+builtin:<name>`, `-builtin:<name>`), as written. Their identities and
+ *  syntax are Pi's, so they are carried verbatim rather than reconstructed. */
+function nativeBuiltinControls(userExtensions: unknown): string[] {
+	if (!Array.isArray(userExtensions)) return [];
+	return userExtensions.filter(
+		(entry): entry is string => typeof entry === "string" && /^[!+-]builtin:/.test(entry),
+	);
+}
+
+/** Appends overlay force-exclusions to a package kind's native filter. An
+ *  absent native filter becomes just the exclusions; an existing explicitly
+ *  empty filter stays empty (nothing was loadable to exclude). */
+function appendPackageExclusions(native: unknown, excludes: string[] | undefined): unknown[] | undefined {
+	if (excludes === undefined || excludes.length === 0) {
+		return Array.isArray(native) ? native : undefined;
+	}
+	const forceExcludes = excludes.map((rel) => `-${rel}`);
+	if (native === undefined) return forceExcludes;
+	if (!Array.isArray(native)) return undefined;
+	if (native.length === 0) return native;
+	return [...native, ...forceExcludes];
 }
 
 /** Pi's built-in MCP discovery entry points (see installed Pi
@@ -232,95 +270,160 @@ function buildSelectionSettings(
 	projectDir?: string,
 ): Record<string, unknown> {
 	const settings = { ...userSettings };
+	const skillsDeclared = plan.resourceSelection.skills;
+	const extensionsDeclared = plan.resourceSelection.extensions;
+
+	const packageRoots = discovery.packages
+		.filter((pkg): pkg is ConfiguredPackageRoot & { root: string } => pkg.root !== undefined)
+		.map((pkg) => ({ ...pkg, root: pkg.root }));
+	const projectExtensionsDir =
+		projectDir !== undefined ? path.join(projectDir, ".pi", "extensions") : undefined;
 
 	// --- skills ---
-	// Only user-scope entries are encoded. Project-scope selections are
-	// skipped below: their visibility is Pi's, so the order they would have
-	// been emitted in carries no meaning.
-	const selectedPaths = new Set(plan.skills.map((skill) => skill.filePath));
-	const skillEntries: string[] = [];
-	for (const skill of plan.skills) {
-		if (skill.origin === "package") continue; // encoded in the packages allowlist
-		// Project scope belongs to Pi: a trusted project's skills are discovered
-		// natively, so selecting one here would duplicate it and excluding one
-		// would contradict the profile's boundary.
-		if (skill.scope === "project") continue;
-		if (isUnderPath(skill.filePath, homeAgentsSkillsDir())) continue; // auto-discovered anyway
-		skillEntries.push(skill.filePath);
-	}
-	for (const skill of discovery.skills) {
-		if (skill.origin === "package") continue;
-		if (skill.scope === "project") continue;
-		if (selectedPaths.has(skill.filePath)) continue;
-		
-		// If the skill is in the real agentDir, Pi will discover it via the symlink.
-		// We must exclude the symlink path so Pi actually excludes it.
-		// Lexical paths only: Pi matches `-` exclusions against the raw
-		// discovered path without resolving symlinks. Resolving realpaths here
-		// escapes runtimeDir whenever an agentDir skill is a symlink to outside
-		// the agent dir, and the exclusion then silently matches nothing.
-		if (isUnderPath(skill.filePath, agentDir)) {
-			const rel = path.relative(agentDir, skill.filePath);
-			skillEntries.push(`-${path.join(runtimeDir, rel)}`);
-		} else {
-			skillEntries.push(`-${skill.filePath}`);
+	// A declared kind is an allowlist over the user-level reference set. An
+	// undeclared kind preserves native settings and the agentDir mirror, adding
+	// only the overlay's concrete force-exclusions (no explicit agentDir/skills
+	// re-include, which would defeat the user's own `!`/`-` exclusions).
+	if (skillsDeclared) {
+		const selectedPaths = new Set(plan.skills.map((skill) => skill.filePath));
+		const skillEntries: string[] = [];
+		for (const skill of plan.skills) {
+			if (skill.origin === "package") continue; // encoded in the packages allowlist
+			// Project scope belongs to Pi: a trusted project's skills are discovered
+			// natively, so selecting one here would duplicate it and excluding one
+			// would contradict the profile's boundary.
+			if (skill.scope === "project") continue;
+			if (isUnderPath(skill.filePath, homeAgentsSkillsDir())) continue; // auto-discovered anyway
+			skillEntries.push(skill.filePath);
+		}
+		for (const skill of discovery.skills) {
+			if (skill.origin === "package") continue;
+			if (skill.scope === "project") continue;
+			if (selectedPaths.has(skill.filePath)) continue;
+			// Lexical paths only: Pi matches `-` exclusions against the raw
+			// discovered path without resolving symlinks. Resolving realpaths here
+			// escapes runtimeDir whenever an agentDir skill is a symlink to outside
+			// the agent dir, and the exclusion then silently matches nothing.
+			skillEntries.push(skillExclusionEntry(skill, agentDir, runtimeDir));
+		}
+		// Discovery already honored the user's own `!pattern` / `+path` / `-path`
+		// skill entries, so the skills they hide never reach the loop above and
+		// get no `-` entry. Replacing the user's array would then drop those
+		// exclusions and let the instance's skills symlink and ~/.agents/skills
+		// reveal them; dropping a `+` force-inclusion would hide a selected skill
+		// the user explicitly kept.
+		skillEntries.push(...userSkillExclusions(userSettings.skills, agentDir, runtimeDir));
+		settings.skills = skillEntries;
+	} else {
+		const exclusions = (plan.disabledSkills ?? [])
+			.filter((skill) => skill.origin !== "package")
+			.map((skill) => skillExclusionEntry(skill, agentDir, runtimeDir));
+		if (exclusions.length > 0) {
+			const native = Array.isArray(settings.skills) ? settings.skills : [];
+			settings.skills = [...native, ...exclusions];
 		}
 	}
-	// Discovery already honored the user's own `!pattern` / `-path` skill
-	// exclusions, so the skills they hide never reach the loop above and get no
-	// `-` entry. Replacing the user's array would then drop those exclusions and
-	// let the instance's skills symlink and ~/.agents/skills reveal them.
-	skillEntries.push(...userSkillExclusions(userSettings.skills, agentDir, runtimeDir));
-	settings.skills = skillEntries;
 
 	// --- extensions ---
 	// Entries under a package root are encoded in that package's allowlist;
 	// everything else becomes an additive absolute path.
-	const packageRoots = discovery.packages
-		.filter((pkg): pkg is ConfiguredPackageRoot & { root: string } => pkg.root !== undefined)
-		.map((pkg) => ({ ...pkg, root: pkg.root }));
 	const packageExtensions = new Map<string, string[]>();
 	const extensionEntries: string[] = [];
-	const projectExtensionsDir =
-		projectDir !== undefined ? path.join(projectDir, ".pi", "extensions") : undefined;
-	for (const extension of plan.extensions) {
-		// Loose project extensions are discovered natively by Pi; an explicit
-		// path reference inside the project (outside `.pi/extensions`) is the
-		// profile's own selection and stays.
-		if (projectExtensionsDir !== undefined && isUnderPath(extension.entry, projectExtensionsDir)) continue;
-		const owner = packageRoots.find((pkg) => isUnderPath(extension.entry, pkg.root));
-		if (owner === undefined) {
-			extensionEntries.push(extension.entry);
-		} else {
-			const list = packageExtensions.get(owner.source) ?? [];
-			list.push(toPosix(path.relative(owner.root, extension.entry)));
-			packageExtensions.set(owner.source, list);
+	if (extensionsDeclared) {
+		for (const extension of plan.extensions) {
+			// Loose project extensions are discovered natively by Pi; an explicit
+			// path reference inside the project (outside `.pi/extensions`) is the
+			// profile's own selection and stays.
+			if (projectExtensionsDir !== undefined && isUnderPath(extension.entry, projectExtensionsDir)) continue;
+			const owner = packageRoots.find((pkg) => isUnderPath(extension.entry, pkg.root));
+			if (owner === undefined) {
+				extensionEntries.push(extension.entry);
+			} else {
+				const list = packageExtensions.get(owner.source) ?? [];
+				list.push(toPosix(path.relative(owner.root, extension.entry)));
+				packageExtensions.set(owner.source, list);
+			}
 		}
+		// Pi's built-in extension enable/disable controls are native settings,
+		// not profile references: retain them so a declared extension selection
+		// does not silently re-enable a built-in the user disabled.
+		extensionEntries.push(...nativeBuiltinControls(userSettings.extensions));
+		settings.extensions = extensionEntries;
+	} else {
+		const native = Array.isArray(settings.extensions) ? settings.extensions : [];
+		// The instance's extensions directory is profile-managed (not mirrored),
+		// so the real discovery directory is restored additively to keep loose
+		// agentDir extensions visible under an omitted extension field.
+		const realExtensionsDir = path.join(agentDir, "extensions");
+		const addDir = existsSync(realExtensionsDir) ? [realExtensionsDir] : [];
+		const exclusions = (plan.disabledExtensions ?? [])
+			.filter((extension) => extension.origin !== "package")
+			.filter(
+				(extension) =>
+					projectExtensionsDir === undefined || !isUnderPath(extension.entry, projectExtensionsDir),
+			)
+			.map((extension) => `-${extension.entry}`);
+		const next = [...native, ...addDir, ...exclusions];
+		if (next.length > 0) settings.extensions = next;
 	}
-	settings.extensions = extensionEntries;
 
 	// --- packages ---
 	const userPackages = Array.isArray(userSettings.packages) ? userSettings.packages : [];
 	if (userPackages.length > 0) {
 		const packageSkills = new Map<string, string[]>();
-		for (const skill of plan.skills) {
-			if (skill.origin !== "package" || skill.baseDir === undefined) continue;
-			const list = packageSkills.get(skill.source) ?? [];
-			list.push(toPosix(path.relative(skill.baseDir, skill.filePath)));
-			packageSkills.set(skill.source, list);
+		if (skillsDeclared) {
+			for (const skill of plan.skills) {
+				if (skill.origin !== "package" || skill.baseDir === undefined) continue;
+				const list = packageSkills.get(skill.source) ?? [];
+				list.push(toPosix(path.relative(skill.baseDir, skill.filePath)));
+				packageSkills.set(skill.source, list);
+			}
+		}
+		// Overlay exclusions on an undeclared kind join this package's native
+		// filter as package-relative force-exclusions.
+		const disabledPackageSkills = new Map<string, string[]>();
+		if (!skillsDeclared) {
+			for (const skill of plan.disabledSkills ?? []) {
+				if (skill.origin !== "package" || skill.baseDir === undefined) continue;
+				const list = disabledPackageSkills.get(skill.source) ?? [];
+				list.push(toPosix(path.relative(skill.baseDir, skill.filePath)));
+				disabledPackageSkills.set(skill.source, list);
+			}
+		}
+		const disabledPackageExtensions = new Map<string, string[]>();
+		if (!extensionsDeclared) {
+			for (const extension of plan.disabledExtensions ?? []) {
+				if (extension.origin !== "package") continue;
+				const owner = packageRoots.find((pkg) => isUnderPath(extension.entry, pkg.root));
+				if (owner === undefined) continue;
+				const list = disabledPackageExtensions.get(owner.source) ?? [];
+				list.push(toPosix(path.relative(owner.root, extension.entry)));
+				disabledPackageExtensions.set(owner.source, list);
+			}
 		}
 		settings.packages = userPackages.map((pkg) => {
 			const source = typeof pkg === "string" ? pkg : (pkg as { source: string }).source;
 			const base: Record<string, unknown> =
 				typeof pkg === "object" && pkg !== null ? { ...(pkg as Record<string, unknown>) } : { source };
-			delete base.extensions;
-			delete base.skills;
-			const rewritten: Record<string, unknown> = {
-				source,
-				...base,
-				skills: packageSkills.get(source) ?? [],
-				extensions: packageExtensions.get(source) ?? [],
-			};
+			const rewritten: Record<string, unknown> = { source, ...base };
+			// A declared kind replaces the package's filter with its allowlist; an
+			// undeclared kind keeps the native filter (or its absence), with an
+			// existing empty native filter staying empty. The two kinds are always
+			// rewritten independently.
+			if (skillsDeclared) {
+				rewritten.skills = packageSkills.get(source) ?? [];
+			} else {
+				const next = appendPackageExclusions(base.skills, disabledPackageSkills.get(source));
+				if (next === undefined) delete rewritten.skills;
+				else rewritten.skills = next;
+			}
+			if (extensionsDeclared) {
+				rewritten.extensions = packageExtensions.get(source) ?? [];
+			} else {
+				const next = appendPackageExclusions(base.extensions, disabledPackageExtensions.get(source));
+				if (next === undefined) delete rewritten.extensions;
+				else rewritten.extensions = next;
+			}
 			return rewritten;
 		});
 	}

@@ -141,10 +141,13 @@ export async function resolveInitialProfile(
 				"the default profile has no MCP allowlist to narrow",
 			);
 		}
+		// The synthetic definition declares no skills/extensions so the shared
+		// resolver supplies each kind's native referenceable base and concrete
+		// overlay exclusions, instead of inventing cross-kind wildcards.
 		const synthetic: ResolvedProfile = {
 			name: "default",
 			source: "builtin",
-			definition: { skills: ["*"], extensions: ["*"] },
+			definition: {},
 		};
 		const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 		const plan = await resolveProfile({

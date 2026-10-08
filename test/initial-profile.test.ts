@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
 let savedHome: string | undefined;
@@ -186,6 +186,62 @@ describe("resolveInitialProfile", () => {
 			const { plan } = await resolveInitialProfile(undefined, context());
 
 			expect(plan.profile).toBe("default");
+		});
+	});
+
+	describe("default-profile overlays use the shared native bases", () => {
+		it("a skill-only overlay on default narrows only skills and keeps both kinds undeclared", async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addGlobalExtension(fixture, "linter");
+
+			const { plan } = await resolveInitialProfile("default", context(), {
+				overlay: { disabledSkills: ["beta-skill"] },
+			});
+
+			expect(plan.profile).toBe("default");
+			expect(plan.resourceSelection).toEqual({ skills: false, extensions: false });
+			expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+			expect((plan.disabledSkills ?? []).map((entry) => entry.name)).toEqual(["beta-skill"]);
+			expect(plan.disabledExtensions).toBeUndefined();
+			expect(plan.extensions.map((entry) => entry.id)).toContain("linter");
+		});
+
+		it("an extension-only overlay on default narrows only extensions", async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalExtension(fixture, "linter");
+			await addGlobalExtension(fixture, "helper");
+
+			const { plan } = await resolveInitialProfile("default", context(), {
+				overlay: { disabledExtensions: ["helper"] },
+			});
+
+			expect(plan.resourceSelection).toEqual({ skills: false, extensions: false });
+			expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+			expect((plan.disabledExtensions ?? []).map((entry) => entry.id)).toEqual(["helper"]);
+			expect(plan.disabledSkills).toBeUndefined();
+		});
+
+		it("a tool-only overlay on default declares neither resource kind", async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalExtension(fixture, "linter");
+
+			const { plan } = await resolveInitialProfile("default", context(), {
+				overlay: { disabledTools: ["bash"] },
+				liveToolNames: ["read", "bash", "grep"],
+			});
+
+			expect(plan.resourceSelection).toEqual({ skills: false, extensions: false });
+			expect(plan.disabledSkills).toBeUndefined();
+			expect(plan.disabledExtensions).toBeUndefined();
+			expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+			expect(plan.extensions.map((entry) => entry.id)).toContain("linter");
+		});
+
+		it("keeps rejecting an MCP disable on default", async () => {
+			await expect(
+				resolveInitialProfile("default", context(), { overlay: { disabledMcps: ["github"] } }),
+			).rejects.toThrow(/no MCP allowlist to narrow/);
 		});
 	});
 

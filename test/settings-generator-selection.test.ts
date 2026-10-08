@@ -55,7 +55,17 @@ function packageSkill(name: string, pkg: { source: string; root: string }): Skil
 }
 
 function selectionPlan(overrides: Partial<ActivationPlan>): ActivationPlan {
-	return { profile: "review", source: "global", filter: "selection", skills: [], extensions: [], ...overrides };
+	return {
+		profile: "review",
+		source: "global",
+		filter: "selection",
+		skills: [],
+		extensions: [],
+		// Typed plan fixture for the existing explicit-selection tests: both
+		// kinds are declared so their allowlist encoding keeps its meaning.
+		resourceSelection: { skills: true, extensions: true },
+		...overrides,
+	};
 }
 
 async function generatedSettings(runtimeDir: string): Promise<Record<string, unknown>> {
@@ -142,6 +152,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "kept-skill", "SKILL.md"),
 			"!skills/**",
+			"+skills/kept-skill",
 			`-${path.join(result.runtimeDir, "skills", "absolute-hidden", "SKILL.md")}`,
 			"-~/.pi-test-agent-hidden/SKILL.md",
 			"-skills/relative-hidden/SKILL.md",
@@ -765,5 +776,188 @@ describe("writeRuntimeFiles (in-session switch rewrite)", () => {
 		expect(await realpath(path.join(first.runtimeDir, "trust.json"))).toBe(
 			await realpath(path.join(fixture.agentDir, "trust.json")),
 		);
+	});
+});
+
+describe("independent per-kind materialization (fix-undeclared-resource-filtering)", () => {
+	async function writeUserSettings(settings: unknown): Promise<void> {
+		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify(settings));
+	}
+
+	it("omitted skills preserve native settings and native exclusion/inclusion entries", async () => {
+		await writeUserSettings({ skills: ["/opt/shared/SKILL.md", "!skills/**", "+skills/keep"] });
+
+		const plan = selectionPlan({ resourceSelection: { skills: false, extensions: true } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [agentDirSkill("ignored-snapshot")], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).skills).toEqual([
+			"/opt/shared/SKILL.md",
+			"!skills/**",
+			"+skills/keep",
+		]);
+	});
+
+	it("omitted extensions preserve native settings-only paths and re-add the real extensions dir", async () => {
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		await writeUserSettings({ extensions: ["/opt/pi-resources/review-guard/index.ts", "-builtin:mcp"] });
+
+		const plan = selectionPlan({ resourceSelection: { skills: true, extensions: false } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
+			"/opt/pi-resources/review-guard/index.ts",
+			"-builtin:mcp",
+			path.join(fixture.agentDir, "extensions"),
+		]);
+	});
+
+	it("preserves relative native resource paths for an undeclared kind", async () => {
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		await writeUserSettings({ extensions: ["./extra.ts"] });
+
+		const result = await generateRuntimeDir(selectionPlan({ resourceSelection: { skills: true, extensions: false } }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
+			"./extra.ts",
+			path.join(fixture.agentDir, "extensions"),
+		]);
+	});
+
+	it("appends targeted native-base exclusions for an overlay on an omitted skill kind", async () => {
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: true },
+			disabledSkills: [agentDirSkill("beta-skill"), agentsSkill("secret-skill")],
+		});
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).skills).toEqual([
+			`-${path.join(result.runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+			`-${agentsSkill("secret-skill").filePath}`,
+		]);
+	});
+
+	it("appends targeted native-base exclusions for an overlay on an omitted extension kind", async () => {
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		const entry = path.join(fixture.agentDir, "extensions", "beta.ts");
+		const plan = selectionPlan({
+			resourceSelection: { skills: true, extensions: false },
+			disabledExtensions: [{ id: "beta", entry, origin: "local" }],
+		});
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
+			path.join(fixture.agentDir, "extensions"),
+			`-${entry}`,
+		]);
+	});
+
+	it("carries native built-in extension controls through a declared selection", async () => {
+		await writeUserSettings({ extensions: ["-builtin:mcp", "+builtin:codemode"] });
+
+		const plan = selectionPlan({ extensions: [{ id: "review-guard", entry: "/opt/pi-resources/review-guard/index.ts" }] });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
+			"/opt/pi-resources/review-guard/index.ts",
+			"-builtin:mcp",
+			"+builtin:codemode",
+		]);
+	});
+
+	it("keeps an explicitly empty native package filter empty for the undeclared kind", async () => {
+		const pkg = { source: path.join(fixture.root, "pkg"), root: path.join(fixture.root, "pkg") };
+		await writeUserSettings({ packages: [{ source: pkg.source, skills: [] }] });
+
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: true },
+			extensions: [{ id: "pkg-ext", entry: path.join(pkg.root, "extensions", "pkg-ext.ts"), origin: "package" }],
+		});
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery: { skills: [], packages: [pkg] } });
+
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: pkg.source, skills: [], extensions: ["extensions/pkg-ext.ts"] },
+		]);
+	});
+
+	it("narrows extensions while preserving an undeclared skill-filter meaning", async () => {
+		const pkg = { source: path.join(fixture.root, "pkg"), root: path.join(fixture.root, "pkg") };
+		await writeUserSettings({ packages: [{ source: pkg.source, skills: ["skills/keep"] }] });
+
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: true },
+			extensions: [{ id: "pkg-ext", entry: path.join(pkg.root, "extensions", "pkg-ext.ts"), origin: "package" }],
+		});
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery: { skills: [], packages: [pkg] } });
+
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: pkg.source, skills: ["skills/keep"], extensions: ["extensions/pkg-ext.ts"] },
+		]);
+	});
+
+	it("narrows skills while preserving an undeclared extension-filter meaning", async () => {
+		const pkg = { source: path.join(fixture.root, "pkg"), root: path.join(fixture.root, "pkg") };
+		await writeUserSettings({ packages: [{ source: pkg.source, extensions: ["extensions/keep.ts"] }] });
+
+		const plan = selectionPlan({
+			resourceSelection: { skills: true, extensions: false },
+			skills: [packageSkill("pkg-skill", pkg)],
+		});
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [packageSkill("pkg-skill", pkg)], packages: [pkg] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: pkg.source, extensions: ["extensions/keep.ts"], skills: ["skills/pkg-skill/SKILL.md"] },
+		]);
+	});
+
+	it("appends overlay package exclusions to an undeclared kind's native filter", async () => {
+		const pkg = { source: path.join(fixture.root, "pkg"), root: path.join(fixture.root, "pkg") };
+		const disabledEntry = path.join(pkg.root, "extensions", "e1.ts");
+		await writeUserSettings({ packages: [{ source: pkg.source, extensions: ["extensions/keep.ts"] }] });
+
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: false },
+			disabledExtensions: [{ id: "pkg-ext", entry: disabledEntry, origin: "package" }],
+		});
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery: { skills: [], packages: [pkg] } });
+
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: pkg.source, extensions: ["extensions/keep.ts", "-extensions/e1.ts"] },
+		]);
+	});
+
+	it("keeps an undeclared kind's package entry untouched when the profile declares the other kind", async () => {
+		const pkg = { source: path.join(fixture.root, "pkg"), root: path.join(fixture.root, "pkg") };
+		await writeUserSettings({ packages: [{ source: pkg.source, autoload: false, prompts: ["review-*"] }] });
+
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: true },
+			extensions: [{ id: "pkg-ext", entry: path.join(pkg.root, "extensions", "pkg-ext.ts"), origin: "package" }],
+		});
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery: { skills: [], packages: [pkg] } });
+
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: pkg.source, autoload: false, prompts: ["review-*"], extensions: ["extensions/pkg-ext.ts"] },
+		]);
 	});
 });
