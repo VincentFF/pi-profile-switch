@@ -110,7 +110,7 @@ export async function resolveInitialProfile(
 		selected ??= (await new RuntimeStateStore(getGlobalStateDir(context.agentDir)).read()).activeProfile ?? "default";
 	}
 
-	const profile = catalog.resolve(selected);
+	const profile = await catalog.resolve(selected);
 	if (profile === undefined) {
 		// Explicit positional selection fails loudly; a restored selection that
 		// no longer exists falls back to default with a warning instead of

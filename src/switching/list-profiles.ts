@@ -30,13 +30,12 @@ export async function listProfiles(input: {
 	const catalog = await ProfileCatalog.load(input.realAgentDir, {
 		projectDir: projectTrusted ? input.cwd : undefined,
 	});
-	const globalOnly = projectTrusted ? await ProfileCatalog.load(input.realAgentDir) : catalog;
-	return catalog.list().map((profile) => ({
+	return (await catalog.list()).map((profile) => ({
 		name: profile.name,
 		source: profile.source,
-		...(typeof profile.definition.label === "string" ? { label: profile.definition.label } : {}),
-		...(typeof profile.definition.description === "string" ? { description: profile.definition.description } : {}),
-		shadowsGlobal: profile.source === "project" && globalOnly.resolve(profile.name) !== undefined,
+		...(typeof profile.definition?.label === "string" ? { label: profile.definition.label } : {}),
+		...(typeof profile.definition?.description === "string" ? { description: profile.definition.description } : {}),
+		shadowsGlobal: profile.shadowsGlobal,
 	}));
 }
 
