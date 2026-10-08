@@ -95,6 +95,21 @@ profile 保存在两个目录中，每个 profile 对应一个 JSON 文件：
 
 以上命令在所有模式下都可用，包括非交互模式（`--mode text`、`--mode json`、`--mode rpc`）。overlay 只作用于当前运行期：不会写入 profile 文件，重启后即消失。内建的 `default` profile 不能用 overlay 禁用 MCP server——它没有可供收窄的 MCP 白名单。
 
+## 迁移：未声明的资源字段
+
+早期版本把省略的 `skills` 或 `extensions` 字段当作空选择，从而隐藏该类别。现在省略会保留该类别在 Pi 中的原生可见性，因此依赖旧行为的 profile 升级后可能暴露更多资源。
+
+要隐藏某个类别，请显式声明空数组，而不是省略该字段：
+
+```json
+{
+  "skills": [],
+  "extensions": []
+}
+```
+
+选择行为的权威契约见[稀疏的 skill 与 extension 选择](openspec/specs/resource-reference/spec.md)。
+
 ## 文档
 
 - 字段参考：[`schemas/profiles.schema.json`](schemas/profiles.schema.json)
