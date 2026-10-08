@@ -48,6 +48,14 @@ describe("resource-selection documentation", () => {
 		expect(model).not.toMatch(/additively because the instance/i);
 	});
 
+	it("architecture overview documents the reload-safe failure presentation", async () => {
+		const overview = await read("docs/architecture/overview.md");
+		expect(overview).toContain("SwitchDeps.reportFailure");
+		expect(overview).toMatch(/stderr/);
+		expect(overview).toMatch(/stale/);
+		expect(overview).toMatch(/before the rollback reload/i);
+	});
+
 	it("PRD success criterion 1 links to the resource-reference contract", async () => {
 		const prd = await read("docs/prd.md");
 		const criteria = section(prd, /^##\s+Success criteria$/);

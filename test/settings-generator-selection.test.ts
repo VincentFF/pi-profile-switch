@@ -86,6 +86,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
 			`-${path.join(result.runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md")}`,
 		]);
 	});
 
@@ -109,6 +110,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 
 		expect(settings.skills).toEqual([
 			`-${path.join(result.runtimeDir, "skills", "linked-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "linked-skill", "SKILL.md")}`,
 		]);
 	});
 
@@ -844,6 +846,7 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 
 		expect((await generatedSettings(result.runtimeDir)).skills).toEqual([
 			`-${path.join(result.runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md")}`,
 			`-${agentsSkill("secret-skill").filePath}`,
 		]);
 	});
@@ -1169,5 +1172,35 @@ describe("conditional extension mirror (fix-undeclared-resource-filtering)", () 
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
 		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(sentinelPlan);
 		expect(await readFile(path.join(runtimeDir, "extensions", "real.ts"), "utf8")).toBe("real");
+	});
+});
+
+describe("native plain-include overlay exclusion (fix-undeclared-resource-filtering)", () => {
+	it("excludes a disabled skill through both its real and mirrored lexical routes", async () => {
+		const vendorSkill: SkillEntry = {
+			name: "vendor-x",
+			filePath: path.join(fixture.agentDir, "vendor", "x", "SKILL.md"),
+			source: "local",
+			scope: "user",
+			origin: "top-level",
+		};
+		// The native plain include loads the file at its real absolute path.
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ skills: [vendorSkill.filePath] }),
+		);
+		const plan = selectionPlan({
+			resourceSelection: { skills: false, extensions: true },
+			disabledSkills: [vendorSkill],
+		});
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const skills = (await generatedSettings(result.runtimeDir)).skills as string[];
+		expect(skills).toContain(vendorSkill.filePath); // the native include stays
+		expect(skills).toContain(`-${vendorSkill.filePath}`); // real lexical route
+		expect(skills).toContain(`-${path.join(result.runtimeDir, "vendor", "x", "SKILL.md")}`); // mirror route
 	});
 });

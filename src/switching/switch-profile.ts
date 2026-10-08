@@ -69,6 +69,11 @@ export interface SwitchDeps {
 	 *  skipped reload would be misreported as a successful switch. Optional
 	 *  for tests; always provided by the extension. */
 	assertStale?(): void;
+	/** Reports the actionable rollback cause before the rollback reload. The
+	 *  caller owns presentation; a reporter failure must not interrupt
+	 *  restoration or reload. Optional — without it the caller only sees the
+	 *  rejected `SwitchError`. */
+	reportFailure?(message: string): void;
 }
 
 export interface SwitchResult {
@@ -233,6 +238,15 @@ export async function switchProfile(
 	const warnings = [...resolved.warnings];
 
 	const rollback = async (cause: string): Promise<never> => {
+		const message = `activation of profile "${target}" failed; restored the previous settings. Cause: ${cause}`;
+		// Report the actionable cause before the rollback reload invalidates the
+		// caller's command context; a reporter failure must never prevent
+		// restoration or reload.
+		try {
+			deps.reportFailure?.(message);
+		} catch {
+			// Presentation must not block rollback.
+		}
 		// Restore the verified snapshot and reload again — the runtime must
 		// never sit half-switched. State files were not written yet (the
 		// post-reload extension instance owns them), so nothing else moved.
@@ -242,9 +256,7 @@ export async function switchProfile(
 		} catch {
 			// The restore reload failing too is reported through the original error.
 		}
-		throw new SwitchError(
-			`activation of profile "${target}" failed; restored the previous settings. Cause: ${cause}`,
-		);
+		throw new SwitchError(message);
 	};
 
 	// The write-and-reload interval is one rollback boundary: a failure in any

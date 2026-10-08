@@ -568,6 +568,39 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 	);
 
 	it(
+		"reports an actionable activation failure at the user boundary after an injected write failure",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				// Make the plan write fail after settings.json changed.
+				await chmod(path.join(instance, "pi-profile.json"), 0o444);
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// The cause is delivered to the user (RPC notification) even though the
+				// rollback reload invalidates the old command context.
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("restored the previous settings"),
+					20_000,
+				);
+				const diagnosticJson = JSON.stringify(diagnostic);
+				expect(diagnosticJson).toContain("activation of profile");
+				expect(diagnosticJson).toMatch(/EACCES|permission denied/);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
 		"transitions the extension mirror in both directions with session identity retained",
 		{ timeout: 60_000 },
 		async () => {
@@ -627,11 +660,16 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
 				expect(attempted.success).toBe(true);
 
-				// The failure is actionable and never deletes the real content; the prior
-				// representation, visibility, and selection stay intact. Actionability of
-				// the error itself is asserted at the switch boundary in
-				// test/switch-profile.test.ts (the post-reload notify is swallowed once
-				// the reload invalidates this extension context).
+				// The failure reaches the user boundary (RPC notification) before the
+				// rollback reload invalidates the command context.
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("will not delete or overwrite"),
+					20_000,
+				);
+				const diagnosticJson = JSON.stringify(diagnostic);
+				expect(diagnosticJson).toContain("activation of profile");
+				expect(diagnosticJson).toContain("restored the previous settings");
+				// Real content is never deleted; prior representation/visibility/selection intact.
 				expect(await readFile(path.join(link, "real.ts"), "utf8")).toBe("real bytes");
 				expect(JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8")).profile).toBe("declared");
 				expect(await extensionCommandNames(rpc)).toContain("ext-a");

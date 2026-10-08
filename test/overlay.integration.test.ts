@@ -703,4 +703,37 @@ describe("in-session native resource bases for overlays (fix-undeclared-resource
 			}
 		},
 	);
+
+	it(
+		"overlay disables a skill loaded through a native plain include inside the agent dir",
+		{ timeout: 90_000 },
+		async () => {
+			const vendorSkill = path.join(fixture.agentDir, "vendor", "x", "SKILL.md");
+			await mkdir(path.dirname(vendorSkill), { recursive: true });
+			await writeFile(vendorSkill, "---\nname: vendor-x\ndescription: vendor skill\n---\n");
+			await addGlobalSkill(fixture, "unrelated-skill");
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({ skills: [vendorSkill] }),
+			);
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				// The native direct include makes the skill visible under the omitted profile.
+				expect(await skillNames(rpc)).toContain("skill:vendor-x");
+				expect(await skillNames(rpc)).toContain("skill:unrelated-skill");
+
+				await rpc.send({ type: "prompt", message: "/profile overlay disable skill vendor-x" }, 60_000);
+				expect(await skillNames(rpc)).not.toContain("skill:vendor-x");
+				expect(await skillNames(rpc)).toContain("skill:unrelated-skill");
+
+				await rpc.send({ type: "prompt", message: "/profile overlay enable skill vendor-x" }, 60_000);
+				expect(await skillNames(rpc)).toContain("skill:vendor-x");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 });

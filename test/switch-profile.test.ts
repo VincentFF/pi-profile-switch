@@ -328,6 +328,7 @@ describe("switchProfile", () => {
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
 			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")}`,
 		]);
 	});
 
@@ -544,6 +545,7 @@ describe("sparse resource selection across activation (fix-undeclared-resource-f
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
 			`-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md")}`,
 		]);
 		expect(settings.extensions).toEqual([path.join(fixture.agentDir, "extensions", "ext-a.ts")]);
 
@@ -570,6 +572,7 @@ describe("sparse resource selection across activation (fix-undeclared-resource-f
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
 			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")}`,
 		]);
 
 		await writeCatalog({ impl: {} });
@@ -678,5 +681,51 @@ describe("sparse resource selection across activation (fix-undeclared-resource-f
 		await writeCatalog({ open: {} });
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+	});
+});
+
+describe("activation failure reporting (fix-undeclared-resource-filtering)", () => {
+	it("delivers the actionable cause before the rollback reload and survives a throwing reporter", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ impl: { skills: ["alpha-skill"] } });
+		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const events: string[] = [];
+		const reload = async () => {
+			events.push("reload");
+		};
+		const reportFailure = (message: string) => {
+			events.push(`report:${message}`);
+			throw new Error("reporter exploded");
+		};
+
+		fsFailure.failNextPlanWrite = true;
+		await expect(switchProfile("impl", deps({ reload, reportFailure }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+
+		const reported = events.filter((event) => event.startsWith("report:"));
+		expect(reported).toHaveLength(1);
+		expect(reported[0]).toContain('activation of profile "impl" failed');
+		expect(reported[0]).toContain("injected write failure");
+		// Reported before the rollback reload, which still ran despite the throw,
+		// and the reporter failure did not block restoration.
+		expect(events.indexOf(reported[0]!)).toBeLessThan(events.indexOf("reload"));
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
+	});
+
+	it("reports the unsafe extension-path refusal cause with its path and fix", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+		await mkdir(path.join(runtimeDir, "extensions"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "real.ts"), "real bytes");
+		const reported: string[] = [];
+
+		await expect(
+			switchProfile("open", deps({ reportFailure: (message) => reported.push(message) })),
+		).rejects.toThrow(/real directory.*will not delete or overwrite/);
+
+		expect(reported).toHaveLength(1);
+		expect(reported[0]).toContain(path.join(runtimeDir, "extensions"));
+		expect(reported[0]).toContain("will not delete or overwrite");
 	});
 });

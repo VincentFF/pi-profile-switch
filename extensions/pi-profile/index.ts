@@ -110,6 +110,26 @@ function setProfileStatus(ui: unknown, profile: string | undefined): void {
 	}
 }
 
+/** Reports an activation failure through the current UI, falling back to
+ *  stderr when the UI is absent or the command context is already stale.
+ *  Unlike the success channel, a failure must not vanish after the rollback
+ *  reload, so a stale context falls back to stderr instead of being
+ *  swallowed. */
+function reportActivationFailure(
+	ctx: { ui?: { notify?(message: string, level: "error" | "info" | "warning"): void } },
+	message: string,
+): void {
+	try {
+		if (ctx.ui?.notify !== undefined) {
+			ctx.ui.notify(message, "error");
+			return;
+		}
+	} catch {
+		// The command context was invalidated by a reload: fall through to stderr.
+	}
+	process.stderr.write(`pi-profile: ${message}\n`);
+}
+
 export default function piProfileExtension(pi: ExtensionAPI): void {
 	const runtimeDir = process.env.PI_CODING_AGENT_DIR;
 	if (runtimeDir === undefined) return;
@@ -198,6 +218,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					assertStale: () => {
 						void ctx.cwd;
 					},
+					// Deliver the actionable failure cause before the rollback
+					// reload invalidates this context; fall back to stderr otherwise.
+					reportFailure: (message) => reportActivationFailure(ctx, message),
 				};
 				if (subcommand === "use") {
 					const result = await switchProfile(rest[0], deps, { clearOverlay: true });

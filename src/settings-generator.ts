@@ -281,15 +281,18 @@ function mapNativeSkillEntryNative(entry: string, agentDir: string, runtimeDir: 
 	return mapNativeSkillEntry(entry, agentDir, runtimeDir, false);
 }
 
-/** The `-<path>` force-exclusion for one resolved skill entry, matching the
- *  path Pi discovers at runtime: agentDir skills surface through the
- *  instance's runtime-mirror symlink, everything else keeps its absolute
- *  path. Package skills are encoded in their package's filter instead. */
-function skillExclusionEntry(skill: SkillEntry, agentDir: string, runtimeDir: string): string {
+/** The `-<path>` force-exclusions for one resolved skill entry, covering both
+ *  lexical routes Pi can discover it under: agentDir skills surface through the
+ *  runtime-mirror symlink, and a native plain include may also load the file at
+ *  its real absolute path. Emitting both keeps an overlay disable effective
+ *  without hiding unrelated resources; an unmatched `-` entry is inert. Package
+ *  skills are encoded in their package's filter instead. */
+function skillExclusionEntries(skill: SkillEntry, agentDir: string, runtimeDir: string): string[] {
 	if (isUnderPath(skill.filePath, agentDir)) {
-		return `-${path.join(runtimeDir, path.relative(agentDir, skill.filePath))}`;
+		const mirror = `-${path.join(runtimeDir, path.relative(agentDir, skill.filePath))}`;
+		return [mirror, `-${skill.filePath}`];
 	}
-	return `-${skill.filePath}`;
+	return [`-${skill.filePath}`];
 }
 
 /** The user's native built-in extension controls (`!builtin:*`,
@@ -396,7 +399,7 @@ function buildSelectionSettings(
 			// discovered path without resolving symlinks. Resolving realpaths here
 			// escapes runtimeDir whenever an agentDir skill is a symlink to outside
 			// the agent dir, and the exclusion then silently matches nothing.
-			skillEntries.push(skillExclusionEntry(skill, agentDir, runtimeDir));
+			skillEntries.push(...skillExclusionEntries(skill, agentDir, runtimeDir));
 		}
 		// Discovery already honored the user's own `!pattern` / `+path` / `-path`
 		// skill entries, so the skills they hide never reach the loop above and
@@ -415,7 +418,7 @@ function buildSelectionSettings(
 		);
 		const exclusions = (plan.disabledSkills ?? [])
 			.filter((skill) => skill.origin !== "package")
-			.map((skill) => skillExclusionEntry(skill, agentDir, runtimeDir));
+			.flatMap((skill) => skillExclusionEntries(skill, agentDir, runtimeDir));
 		if (mappedNative.length > 0 || exclusions.length > 0) {
 			settings.skills = [...mappedNative, ...exclusions];
 		}
