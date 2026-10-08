@@ -39,6 +39,6 @@ Planning is based on local `main` at `851564a` in the `fix/profile-verify` workt
 - `docs/prd.md`: none: product goals and non-goals remain unchanged; native compatibility and resource narrowing remain the governing principles.
 - `docs/architecture/overview.md`: update catalog interfaces, diagnostics transport, launch ordering, and removal of standalone model preflight; link behavior contracts instead of duplicating them.
 - `CONTEXT.md`: none: existing domain terminology remains sufficient.
-- `docs/adr/`: add the next available numbered ADR for tolerant activation with restrictive partial resolution and deferred model judgment; mark ADR-0009 superseded with the required single top line. Keep historical ADR bodies intact. The next number is chosen from the authoritative directory at implementation time.
+- `docs/adr/`: add the next available numbered ADR for tolerant activation with restrictive partial resolution and deferred model judgment; mark ADR-0009 and ADR-0016 superseded with the required single top line in each file. For ADR-0016, the new ADR replaces only launcher-side transport rejection; its other MCP decisions remain in effect by reference. Keep both historical ADR bodies intact. The next number is chosen from the authoritative directory at implementation time.
 - `README.md`: link the revised validation and diagnostic contracts from profile usage guidance.
 - `skills/profile-config/SKILL.md`: update editing guidance to distinguish fatal shapes from non-fatal references and native model validation.

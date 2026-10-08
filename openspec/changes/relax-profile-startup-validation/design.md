@@ -43,7 +43,7 @@ Rejected alternatives: erase failing declarations, restore all resources, or use
 
 ADR required: tolerant-activation-with-restrictive-partial-resolution
 
-The new ADR uses the next available number from `docs/adr/` during implementation and supersedes ADR-0009. It records why startup availability no longer depends on strict literal existence while narrowing intent remains mandatory.
+The new ADR uses the next available number from `docs/adr/` during implementation and supersedes ADR-0009 and ADR-0016's launcher-side transport rejection. Prepend the required supersession line to both historical files without changing their bodies. The new ADR keeps ADR-0016's other MCP decisions in effect by reference. It records why startup availability no longer depends on strict literal existence while narrowing intent remains mandatory.
 
 ### 3. Let native Pi own model availability
 
