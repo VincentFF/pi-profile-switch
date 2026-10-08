@@ -545,8 +545,6 @@ function buildSelectionSettings(
 		settings.defaultModel = plan.model.id;
 		if (plan.model.thinkingLevel !== undefined) {
 			settings.defaultThinkingLevel = plan.model.thinkingLevel;
-		} else {
-			delete settings.defaultThinkingLevel;
 		}
 	}
 	if (plan.tools !== undefined) {

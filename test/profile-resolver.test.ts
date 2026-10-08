@@ -7,6 +7,7 @@ import { ActivationError, resolveProfile } from "../src/profile-resolver.ts";
 import { DiscoveredExtensions, discoverExtensions } from "../src/extension-discovery.ts";
 import { loadMergedMcpServers, type MergedMcpResult } from "../src/mcp-config.ts";
 import type { SkillEntry } from "../src/skill-registry.ts";
+import { resolveModelProfileInNode } from "./helpers/model-profile-runner.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -174,37 +175,29 @@ describe("resolveProfile", () => {
 		expect(plan.instructions).toBeUndefined();
 	});
 
-	it("carries a declared model after successful validation", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "high" }),
-			skills: [],
-			extensions: await extensionsWith(),
-			validateModel: async () => undefined,
-		});
-
-		expect(plan.model).toEqual({ provider: "openai", id: "gpt-5.4", thinkingLevel: "high" });
+	it("carries a declared model without standalone validation", async () => {
+		const plan = await resolveModelProfileInNode({ defaultProvider: "extension-provider", defaultModel: "local-model", defaultThinkingLevel: "high" });
+		expect(plan.model).toEqual({ provider: "extension-provider", id: "local-model", thinkingLevel: "high" });
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
-	it("fails activation when the declared model is missing or unauthenticated", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4" }),
-				skills: [],
-				extensions: await extensionsWith(),
-				validateModel: async () => "No API key found for \"openai\"",
-			}),
-		).rejects.toThrow(/No API key found/);
+	it("preserves a complete declaration even without a static registry or credentials", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { defaultProvider: "unknown-provider", defaultModel: "unknown-model" }), skills: [], extensions: await extensionsWith() });
+		expect(plan.model).toEqual({ provider: "unknown-provider", id: "unknown-model" });
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
-	it("fails activation on an invalid thinking level", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "extreme" }),
-				skills: [],
-				extensions: await extensionsWith(),
-				validateModel: async () => undefined,
-			}),
-		).rejects.toThrow(/thinkingLevel/);
+	it("warns and omits only an unsupported thinking contribution", async () => {
+		const plan = await resolveModelProfileInNode({ defaultProvider: "extension-provider", defaultModel: "local-model", defaultThinkingLevel: "extreme" });
+		expect(plan.model).toEqual({ provider: "extension-provider", id: "local-model" });
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "thinking", reference: "extreme", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("ignored");
+	});
+
+	it.each([{}, { defaultThinkingLevel: "extreme" }, { defaultProvider: "provider", defaultThinkingLevel: "extreme" }, { defaultModel: "model", defaultThinkingLevel: "extreme" }])("ignores thinking without a complete model declaration %j", async (definition) => {
+		const plan = await resolveProfile({ profile: profile("review", definition), skills: [], extensions: await extensionsWith() });
+		expect(plan.model).toBeUndefined();
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
 	it("expands mcp references against the discovered server names", async () => {

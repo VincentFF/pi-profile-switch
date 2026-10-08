@@ -4,7 +4,7 @@
  * Flow: trust check (gatekeeper for everything project-scoped) → positional
  * name or saved state (project state wins when trusted) → catalog lookup →
  * discovery (skills, extensions, MCP server names) → resolver (glob
- * expansion, overlay, model validation) → ActivationPlan + full discovery
+ * expansion, overlay, native model handoff) → ActivationPlan + full discovery
  * results for the settings generator. Normal default activation bypasses
  * the catalog; named activation reads only its winning definition.
  *
@@ -21,7 +21,6 @@ import { resolveProjectTrust } from "../project-trust.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { discoverLauncherResources, type LauncherDiscovery } from "./discovery.ts";
-import { checkDeclaredModel } from "./model-check.ts";
 
 export class UnknownProfileError extends Error {
 	constructor(name: string) {
@@ -176,7 +175,6 @@ export async function resolveInitialProfile(
 		profile,
 		skills: discovery.skills,
 		extensions: discovery.extensions,
-		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
 		discoveredMcpServers: mcpDiscovery ? Object.keys(mcpDiscovery.servers).sort() : undefined,
 		mcpDiscovery,
 		overlay: options?.overlay,

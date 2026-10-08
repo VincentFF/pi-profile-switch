@@ -78,8 +78,6 @@ function userLevelMcpCandidates(mcpDiscovery: MergedMcpResult): string[] {
 		.sort();
 }
 
-const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-
 /** Immutable, fully resolved activation set. */
 export interface ActivationPlan {
 	profile: string;
@@ -141,13 +139,6 @@ export interface ResolveInput {
 	/** The full SkillRegistry result (not just selected skills). */
 	skills: SkillEntry[];
 	extensions: DiscoveredExtensions;
-	/**
-	 * Validates a declared model (exists and is authenticated) against the
-	 * user's real model/auth state. Returns an error message or undefined.
-	 * The launcher always provides this; a declared model without a validator
-	 * fails activation rather than silently skipping the check.
-	 */
-	validateModel?: (model: ProfileModel) => Promise<string | undefined>;
 	/**
 	 * Server names discovered from the merged user-level MCP configuration
 	 * snapshot (see mcp-config.ts). Required when the profile declares `mcps`
@@ -504,23 +495,17 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}
 	}
 
-	let model: ProfileModel | undefined;
-	const declaredModel = extractModel(definition);
-	if (declaredModel !== undefined) {
-		const declared = declaredModel;
-		if (declared.thinkingLevel !== undefined && !VALID_THINKING_LEVELS.has(declared.thinkingLevel)) {
-			throw new ActivationError(
-				`profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(declared.thinkingLevel)}`,
-			);
+	const model = extractModel(definition);
+	if (model?.thinkingLevel !== undefined) {
+		// Pi does not export this predicate through its SDK. Resolve its
+		// installed CLI module rather than copy a second accepted-value set.
+		const nativeThinking: { isValidThinkingLevel: (level: string) => boolean } = await import(
+			new URL("./cli/args.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+		);
+		if (!nativeThinking.isValidThinkingLevel(model.thinkingLevel)) {
+			diagnostics.push({ kind: "thinking", code: "unsupported-thinking", reference: model.thinkingLevel, message: `profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(model.thinkingLevel)}; ignored; choose a thinking value supported by Pi or remove "defaultThinkingLevel"` });
+			delete model.thinkingLevel;
 		}
-		if (input.validateModel === undefined) {
-			throw new ActivationError(`profile "${profile.name}" declares a model but no model validator is available`);
-		}
-		const error = await input.validateModel(declared);
-		if (error !== undefined) {
-			throw new ActivationError(`profile "${profile.name}": model ${declared.provider}/${declared.id}: ${error}`);
-		}
-		model = declared;
 	}
 
 	return {
