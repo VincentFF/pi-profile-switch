@@ -177,27 +177,56 @@ function homeAgentsSkillsDir(): string {
 /** The user's own skill exclusions and force-inclusions (`!pattern`, `+path`,
  *  `-path`), carried into a named profile's generated settings. Relative
  *  entries resolve against the runtime dir, which mirrors the agent dir, so
- *  they pass through unchanged. An absolute (or `~`) `+`/`-` path under the
- *  agent dir is rewritten to its runtime mirror path: Pi matches `+`/`-`
- *  entries lexically. Plain additive includes are NOT carried: a declared
- *  selection must not re-add unrelated native paths. */
+/** Maps one native skill override entry onto the instance's discovery root.
+ *  Pi matches `!`/`+`/`-` entries lexically against the raw discovered path,
+ *  and agentDir skills surface in the instance only through the runtime-mirror
+ *  symlink; an absolute target under the real agent dir must therefore be
+ *  rewritten to its runtime mirror path or it silently matches nothing.
+ *  Relative patterns, literal names, and paths outside the agent dir keep
+ *  their meaning unchanged. `expandTilde` controls whether a `~`-anchored
+ *  target is also remapped: real Pi does not expand `~` in override entries
+ *  (it is a no-op there), so the native-base branch leaves `~` verbatim while
+ *  the declared branch keeps its historical remap. */
+function mapNativeSkillEntry(
+	entry: string,
+	agentDir: string,
+	runtimeDir: string,
+	expandTilde: boolean,
+): string {
+	if (!(entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-"))) return entry;
+	const marker = entry[0];
+	const target = entry.slice(1);
+	const isTilde = target === "~" || target.startsWith("~/");
+	if (isTilde && !expandTilde) return entry;
+	const expanded = isTilde ? path.join(process.env.HOME ?? homedir(), target.slice(1)) : target;
+	if (!path.isAbsolute(expanded)) return entry;
+	const rel = path.relative(agentDir, expanded);
+	if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return entry;
+	return `${marker}${path.join(runtimeDir, rel)}`;
+}
+
+/** The user's own skill overrides (`!pattern`, `+path`, `-path`), carried into
+ *  a declared profile's generated settings. Relative entries resolve against
+ *  the runtime dir, which mirrors the agent dir, so they pass through
+ *  unchanged. An absolute (or, per the declared branch's historical mapping,
+ *  `~`) `+`/`-`/`!` target under the agent dir is rewritten to its runtime
+ *  mirror path. Plain additive includes are NOT carried: a declared selection
+ *  must not re-add unrelated native paths. */
 function userSkillExclusions(userSkills: unknown, agentDir: string, runtimeDir: string): string[] {
 	if (!Array.isArray(userSkills)) return [];
-	const exclusions: string[] = [];
-	for (const entry of userSkills) {
-		if (typeof entry !== "string") continue;
-		if (entry.startsWith("!")) {
-			exclusions.push(entry);
-		} else if (entry.startsWith("+") || entry.startsWith("-")) {
-			const marker = entry[0];
-			const target = entry.slice(1);
-			const expanded = target === "~" || target.startsWith("~/") ? path.join(process.env.HOME ?? homedir(), target.slice(1)) : target;
-			const rel = path.isAbsolute(expanded) ? path.relative(agentDir, expanded) : undefined;
-			const underAgentDir = rel !== undefined && rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-			exclusions.push(underAgentDir ? `${marker}${path.join(runtimeDir, rel)}` : entry);
-		}
-	}
-	return exclusions;
+	return userSkills
+		.filter(
+			(entry): entry is string =>
+				typeof entry === "string" &&
+				(entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-")),
+		)
+		.map((entry) => mapNativeSkillEntry(entry, agentDir, runtimeDir, true));
+}
+
+/** Native-base (undeclared) mapping: absolute targets only. Real Pi treats a
+ *  `~` override as a no-op, so rewriting it would newly change native meaning. */
+function mapNativeSkillEntryNative(entry: string, agentDir: string, runtimeDir: string): string {
+	return mapNativeSkillEntry(entry, agentDir, runtimeDir, false);
 }
 
 /** The `-<path>` force-exclusion for one resolved skill entry, matching the
@@ -233,6 +262,17 @@ function appendPackageExclusions(native: unknown, excludes: string[] | undefined
 	if (!Array.isArray(native)) return undefined;
 	if (native.length === 0) return native;
 	return [...native, ...forceExcludes];
+}
+
+/** The package source string to emit. A user-scope relative local source
+ *  resolves from the agent dir, which the instance moves, so emit the resolved
+ *  root to keep the package's native identity and resolution meaning. Prefixed
+ *  (npm/git/github), URL, absolute, and `~` sources already carry their root. */
+function emittedPackageSource(source: string, discovery: DiscoveryContext): string {
+	if (/^(npm|git|github):/.test(source)) return source;
+	if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(source)) return source;
+	if (path.isAbsolute(source) || source === "~" || source.startsWith("~/")) return source;
+	return discovery.packages.find((pkg) => pkg.source === source)?.root ?? source;
 }
 
 /** Pi's built-in MCP discovery entry points (see installed Pi
@@ -315,12 +355,17 @@ function buildSelectionSettings(
 		skillEntries.push(...userSkillExclusions(userSettings.skills, agentDir, runtimeDir));
 		settings.skills = skillEntries;
 	} else {
+		const native = Array.isArray(settings.skills) ? settings.skills : [];
+		// A native absolute/`~` override under the agent dir must be remapped to
+		// the instance's runtime mirror path, matching the declared branch.
+		const mappedNative = native.map((entry) =>
+			typeof entry === "string" ? mapNativeSkillEntryNative(entry, agentDir, runtimeDir) : entry,
+		);
 		const exclusions = (plan.disabledSkills ?? [])
 			.filter((skill) => skill.origin !== "package")
 			.map((skill) => skillExclusionEntry(skill, agentDir, runtimeDir));
-		if (exclusions.length > 0) {
-			const native = Array.isArray(settings.skills) ? settings.skills : [];
-			settings.skills = [...native, ...exclusions];
+		if (mappedNative.length > 0 || exclusions.length > 0) {
+			settings.skills = [...mappedNative, ...exclusions];
 		}
 	}
 
@@ -405,7 +450,7 @@ function buildSelectionSettings(
 			const source = typeof pkg === "string" ? pkg : (pkg as { source: string }).source;
 			const base: Record<string, unknown> =
 				typeof pkg === "object" && pkg !== null ? { ...(pkg as Record<string, unknown>) } : { source };
-			const rewritten: Record<string, unknown> = { source, ...base };
+			const rewritten: Record<string, unknown> = { ...base, source: emittedPackageSource(source, discovery) };
 			// A declared kind replaces the package's filter with its allowlist; an
 			// undeclared kind keeps the native filter (or its absence), with an
 			// existing empty native filter staying empty. The two kinds are always

@@ -1,8 +1,8 @@
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
+import { LAUNCHER_BIN as BIN, launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
 import { addGlobalExtension, addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
@@ -425,13 +425,11 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 				open: {},
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "declared", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
-				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsBefore).toEqual(["skill:alpha-skill"]);
 				expect(await extensionCommandNames(rpc)).toContain("ext-a");
 				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
 
@@ -439,8 +437,10 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 				expect(switched.success).toBe(true);
 
 				const after = await getState(rpc);
+				// Session identity and message history are retained, not just the file.
 				expect(after.sessionId).toBe(before.sessionId);
 				expect(after.sessionFile).toBe(before.sessionFile);
+				expect(after.messageCount).toBe(before.messageCount);
 				const skills = (await skillCommands(rpc)).map((command) => command.name);
 				expect(skills).toContain("skill:alpha-skill");
 				expect(skills).toContain("skill:beta-skill");
@@ -452,27 +452,34 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 	);
 
 	it(
-		"reload after deleting a resource field restores native visibility",
+		"reload after deleting each resource field restores that kind's native visibility",
 		{ timeout: 60_000 },
 		async () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await addGlobalSkill(fixture, "beta-skill");
-			await writeCatalog({ impl: { skills: ["beta-skill"] } });
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ impl: { skills: ["beta-skill"], extensions: ["ext-a"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "impl", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["impl", "--", "--mode", "rpc"]);
 			try {
+				const before = await getState(rpc);
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
 
 				await writeCatalog({ impl: {} });
 				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
 				expect(reloaded.success).toBe(true);
 
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
 				const skills = (await skillCommands(rpc)).map((command) => command.name);
 				expect(skills).toContain("skill:alpha-skill");
 				expect(skills).toContain("skill:beta-skill");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
 			} finally {
 				await rpc.close();
 			}
@@ -487,10 +494,7 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 			await addGlobalSkill(fixture, "beta-skill");
 			await writeCatalog({ open: {} });
 
-			const rpc = new RpcDriver("node", [BIN, "open", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
 			try {
 				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
 				expect(skillsBefore).toContain("skill:alpha-skill");
@@ -512,26 +516,51 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 	);
 
 	it(
-		"a failed transition leaves the prior resource visibility intact",
+		"an injected write failure restores the exact prior runtime content and resource visibility",
 		{ timeout: 60_000 },
 		async () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await addGlobalSkill(fixture, "beta-skill");
-			await writeCatalog({ declared: { skills: ["alpha-skill"] } });
-
-			const rpc = new RpcDriver("node", [BIN, "declared", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({
+				declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+				open: {},
 			});
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
 			try {
-				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
+				const before = await getState(rpc);
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				const extensionsBefore = await extensionCommandNames(rpc);
+				expect(skillsBefore).toEqual(["skill:alpha-skill"]);
+				expect(extensionsBefore).not.toContain("ext-b");
 
-				const failed = await rpc.send({ type: "prompt", message: "/profile use ghost" }, 60_000);
-				expect(failed.success).toBe(true);
+				const instance = await soleInstanceDir(fixture);
+				const settingsPath = path.join(instance, "settings.json");
+				const planPath = path.join(instance, "pi-profile.json");
+				const settingsBefore = await readFile(settingsPath, "utf8");
+				const planBefore = await readFile(planPath, "utf8");
 
-				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
-				const { existsSync } = await import("node:fs");
-				expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+				// The switch writes settings.json first, then pi-profile.json. A
+				// read-only plan file makes the plan write fail after settings.json
+				// changed, exercising the process-level rollback boundary.
+				await chmod(planPath, 0o444);
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// Exact prior runtime content; the failed target is not active.
+				expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+				expect(await readFile(planPath, "utf8")).toBe(planBefore);
+				expect(JSON.parse(await readFile(planPath, "utf8")).profile).toBe("declared");
+
+				// Actual resource visibility after the real process reload: the
+				// failed target's extra resources are not visible and the declared
+				// restriction still applies.
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(skillsBefore);
+				expect(await extensionCommandNames(rpc)).toEqual(extensionsBefore);
 			} finally {
 				await rpc.close();
 			}

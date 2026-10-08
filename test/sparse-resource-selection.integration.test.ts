@@ -1,18 +1,22 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
-import type { RpcDriver } from "./helpers/rpc-driver.ts";
+import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 /**
  * Real-Pi coverage for the sparse skill/extension selection contract. Loaded
- * resources are compared against a native session's own observation (the
- * baseline), never against resolver-derived expectations.
+ * resources are compared against a NATIVE Pi process (the pi binary launched
+ * without the launcher or the pi-profile extension), never against the
+ * pi-profile `default` profile and never against resolver-derived expectations.
  */
 
 let fixture: PiFixture;
+
+/** The real pi binary, launched directly as the native baseline. */
+const NATIVE_PI = path.resolve("node_modules/.bin/pi");
 
 beforeEach(async () => {
 	fixture = await createPiFixture();
@@ -34,10 +38,12 @@ async function writeUserSettings(settings: unknown): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify(settings));
 }
 
-async function addGlobalSkill(name: string): Promise<void> {
+async function addGlobalSkill(name: string): Promise<string> {
 	const dir = path.join(fixture.agentDir, "skills", name);
 	await mkdir(dir, { recursive: true });
-	await writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${name}\n---\n`);
+	const file = path.join(dir, "SKILL.md");
+	await writeFile(file, `---\nname: ${name}\ndescription: ${name}\n---\n`);
+	return file;
 }
 
 async function addAgentsSkill(name: string): Promise<void> {
@@ -107,13 +113,48 @@ async function addToolReporter(name: string): Promise<string> {
 	return file;
 }
 
+/** A local package exposing one extension command and one skill. */
+async function createLocalPackage(name: string): Promise<string> {
+	const root = path.join(fixture.root, name);
+	await mkdir(path.join(root, "skills", `${name}-skill`), { recursive: true });
+	await mkdir(path.join(root, "extensions"), { recursive: true });
+	await writeFile(path.join(root, "skills", `${name}-skill`, "SKILL.md"), `---\nname: ${name}-skill\ndescription: ${name}-skill\n---\n`);
+	await writeFile(
+		path.join(root, "package.json"),
+		JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./extensions"], skills: ["./skills"] } }),
+	);
+	await writeFile(
+		path.join(root, "extensions", "pkg-ext.ts"),
+		[
+			`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+			`export default function (pi: ExtensionAPI) {`,
+			`\tpi.registerCommand("pkg-ext", { description: "package extension", handler: async () => {} });`,
+			`}`,
+			"",
+		].join("\n"),
+	);
+	return root;
+}
+
 interface Observation {
 	skills: string[];
 	commands: string[];
 }
 
-async function observe(args: string[], toolCommand?: string): Promise<Observation & { tools?: string[] }> {
-	const rpc = runLauncherRpc(fixture, args, launcherEnv(fixture));
+function extractTools(message: unknown): string[] | undefined {
+	const record = message as {
+		details?: { tools?: string[] };
+		message?: { details?: { tools?: string[] } };
+	};
+	if (Array.isArray(record.details?.tools)) return record.details.tools;
+	if (Array.isArray(record.message?.details?.tools)) return record.message?.details?.tools;
+	return undefined;
+}
+
+async function observeWith(
+	rpc: RpcDriver,
+	toolCommand?: string,
+): Promise<Observation & { tools?: string[] }> {
 	try {
 		await rpc.send({ type: "get_state" });
 		const skills = await rpc.skillCommandNames();
@@ -130,14 +171,16 @@ async function observe(args: string[], toolCommand?: string): Promise<Observatio
 	}
 }
 
-function extractTools(message: unknown): string[] | undefined {
-	const record = message as {
-		details?: { tools?: string[] };
-		message?: { details?: { tools?: string[] } };
-	};
-	if (Array.isArray(record.details?.tools)) return record.details.tools;
-	if (Array.isArray(record.message?.details?.tools)) return record.message?.details?.tools;
-	return undefined;
+function observe(args: string[], toolCommand?: string): Promise<Observation & { tools?: string[] }> {
+	return observeWith(runLauncherRpc(fixture, args, launcherEnv(fixture)), toolCommand);
+}
+
+/** The native baseline: the pi binary with the real agent dir and no launcher. */
+function observeNative(toolCommand?: string): Promise<Observation & { tools?: string[] }> {
+	return observeWith(
+		new RpcDriver("node", [NATIVE_PI, "--mode", "rpc"], { cwd: fixture.cwd, env: launcherEnv(fixture) }),
+		toolCommand,
+	);
 }
 
 function fixtureCommands(observation: Observation, names: string[]): string[] {
@@ -155,11 +198,13 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await addExtensionFile("selected-ext");
 			await writeCatalog({ review: { extensions: ["selected-ext"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"]);
+			// Launch first so the launcher's starter-asset distribution is present
+			// for the native baseline too.
 			const review = await observe(["review", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
-			expect(review.skills).toEqual(baseline.skills);
-			expect(baseline.skills).toEqual(
+			expect(review.skills).toEqual(native.skills);
+			expect(native.skills).toEqual(
 				expect.arrayContaining(["skill:alpha-skill", "skill:beta-skill", "skill:shared-skill"]),
 			);
 			expect(fixtureCommands(review, ["selected-ext"])).toEqual(["selected-ext"]);
@@ -175,10 +220,10 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await addExtensionFile("ext-b");
 			await writeCatalog({ review: { skills: ["alpha-skill"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"]);
 			const review = await observe(["review", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
-			expect(fixtureCommands(review, ["ext-a", "ext-b"])).toEqual(fixtureCommands(baseline, ["ext-a", "ext-b"]));
+			expect(fixtureCommands(review, ["ext-a", "ext-b"])).toEqual(fixtureCommands(native, ["ext-a", "ext-b"]));
 			expect(review.skills).toEqual(["skill:alpha-skill"]);
 		},
 	);
@@ -209,11 +254,11 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await addExtensionFile("ext-b");
 			await writeCatalog({ review: { skills: ["alpha-skill"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"]);
 			const review = await observe(["review", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
 			expect(review.skills).toEqual(["skill:alpha-skill"]);
-			expect(fixtureCommands(review, ["ext-a", "ext-b"])).toEqual(fixtureCommands(baseline, ["ext-a", "ext-b"]));
+			expect(fixtureCommands(review, ["ext-a", "ext-b"])).toEqual(fixtureCommands(native, ["ext-a", "ext-b"]));
 		},
 	);
 
@@ -227,16 +272,16 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await addExtensionFile("ext-b");
 			await writeCatalog({ review: { extensions: ["ext-a"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"]);
 			const review = await observe(["review", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
-			expect(review.skills).toEqual(baseline.skills);
+			expect(review.skills).toEqual(native.skills);
 			expect(fixtureCommands(review, ["ext-a", "ext-b"])).toEqual(["ext-a"]);
 		},
 	);
 
 	it(
-		"native exclusions and inclusion exceptions stay effective for an omitted and a glob selection",
+		"relative native exclusions and inclusion exceptions match a native session",
 		{ timeout: 120_000 },
 		async () => {
 			await addGlobalSkill("kept-skill");
@@ -247,11 +292,47 @@ describe("sparse resource selection against a real spawned pi", () => {
 
 			const omitted = await observe(["omitted", "--", "--mode", "rpc"]);
 			const globbed = await observe(["globbed", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
 			// The native `!skills/**` exclusion hides the agentDir skills; the native
 			// `+skills/kept-skill/SKILL.md` force-inclusion keeps the kept skill.
-			expect(omitted.skills).toEqual(["skill:kept-skill"]);
-			expect(globbed.skills).toEqual(["skill:kept-skill"]);
+			expect(native.skills).toEqual(["skill:kept-skill"]);
+			expect(omitted.skills).toEqual(native.skills);
+			expect(globbed.skills).toEqual(native.skills);
+		},
+	);
+
+	it(
+		"absolute and ~ native skill overrides stay effective for an omitted kind",
+		{ timeout: 120_000 },
+		async () => {
+			const hiddenPath = await addGlobalSkill("hidden-skill");
+			const keptPath = await addGlobalSkill("kept-skill");
+			// An absolute `-` under the agent dir: the native session matches it
+			// lexically against the real discovered path.
+			await writeUserSettings({ skills: [`-${hiddenPath}`] });
+			await writeCatalog({ omitted: {} });
+
+			const omitted = await observe(["omitted", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			expect(native.skills).not.toContain("skill:hidden-skill");
+			expect(omitted.skills).toEqual(native.skills);
+
+			// An absolute `+` force-inclusion beneath a broad `!` pattern.
+			await writeUserSettings({ skills: ["!skills/**", `+${keptPath}`] });
+			const omittedForceInclude = await observe(["omitted", "--", "--mode", "rpc"]);
+			const nativeForceInclude = await observeNative();
+			expect(nativeForceInclude.skills).toEqual(["skill:kept-skill"]);
+			expect(omittedForceInclude.skills).toEqual(nativeForceInclude.skills);
+
+			// Real pi treats `~` overrides as no-ops; the omitted branch preserves
+			// that native meaning, so the excluded skill stays visible in both.
+			const tilde = `-~/${path.relative(fixture.root, hiddenPath)}`;
+			await writeUserSettings({ skills: [tilde] });
+			const omittedTilde = await observe(["omitted", "--", "--mode", "rpc"]);
+			const nativeTilde = await observeNative();
+			expect(nativeTilde.skills).toContain("skill:hidden-skill");
+			expect(omittedTilde.skills).toEqual(nativeTilde.skills);
 		},
 	);
 
@@ -264,10 +345,10 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await addGlobalSkill("alpha-skill");
 			await writeCatalog({ review: { skills: ["alpha-skill"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"]);
 			const review = await observe(["review", "--", "--mode", "rpc"]);
+			const native = await observeNative();
 
-			expect(fixtureCommands(baseline, ["one-off"])).toEqual(["one-off"]);
+			expect(fixtureCommands(native, ["one-off"])).toEqual(["one-off"]);
 			expect(fixtureCommands(review, ["one-off"])).toEqual(["one-off"]);
 		},
 	);
@@ -280,14 +361,83 @@ describe("sparse resource selection against a real spawned pi", () => {
 			await writeUserSettings({ extensions: ["-builtin:codemode"] });
 			await writeCatalog({ omitted: {}, declared: { extensions: ["report-tools"] } });
 
-			const baseline = await observe(["--", "--mode", "rpc"], "report-tools");
+			const native = await observeNative("report-tools");
 			const omitted = await observe(["omitted", "--", "--mode", "rpc"], "report-tools");
-
-			expect(baseline.tools).not.toContain("codemode");
-			expect(omitted.tools).not.toContain("codemode");
-
 			const declared = await observe(["declared", "--", "--mode", "rpc"], "report-tools");
+
+			expect(native.tools).not.toContain("codemode");
+			expect(omitted.tools).not.toContain("codemode");
 			expect(declared.tools).not.toContain("codemode");
+		},
+	);
+
+	it(
+		"a broad native built-in exclusion with an inclusion exception matches a native session",
+		{ timeout: 120_000 },
+		async () => {
+			await addToolReporter("report-tools");
+			await writeUserSettings({ extensions: ["!builtin:*", "+builtin:codemode"] });
+			await writeCatalog({ omitted: {}, declared: { extensions: ["report-tools"] } });
+
+			const baseline = async (): Promise<string[]> => {
+				const observation = await observeNative("report-tools");
+				return (observation.tools ?? []).filter((name) => name.startsWith("builtin") || ["codemode", "mcp", "llama"].includes(name)).sort();
+			};
+			const native = await baseline();
+			const omitted = await observe(["omitted", "--", "--mode", "rpc"], "report-tools");
+			const declared = await observe(["declared", "--", "--mode", "rpc"], "report-tools");
+
+			// Every built-in except the force-included codemode is disabled natively.
+			expect(native).toContain("codemode");
+			expect(native.filter((name) => name !== "codemode")).not.toContain("mcp");
+			for (const observation of [omitted, declared]) {
+				const names = observation.tools ?? [];
+				expect(names).toContain("codemode");
+				expect(names).not.toContain("mcp");
+				expect(names).not.toContain("llama");
+			}
+		},
+	);
+
+	it(
+		"a native package filter and a relative local source match a native session",
+		{ timeout: 120_000 },
+		async () => {
+			const pkgRoot = await createLocalPackage("shared-pkg");
+			// Relative to the agent dir, escaping it (the sibling `shared-pkg`).
+			const relativeSource = `../${path.basename(pkgRoot)}`;
+			await writeUserSettings({ packages: [{ source: relativeSource, skills: ["skills/shared-pkg-skill"] }] });
+			await addGlobalSkill("alpha-skill");
+			await writeCatalog({ omitted: {} });
+
+			const omitted = await observe(["omitted", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+
+			expect(fixtureCommands(native, ["pkg-ext"])).toEqual(["pkg-ext"]);
+			expect(fixtureCommands(omitted, ["pkg-ext"])).toEqual(["pkg-ext"]);
+			expect(native.skills).toContain("skill:shared-pkg-skill");
+			expect(omitted.skills).toEqual(native.skills);
+		},
+	);
+
+	it(
+		"symlinked skills stay at native visibility for an omitted kind",
+		{ timeout: 90_000 },
+		async () => {
+			// A dotfiles-style skill library symlinked into the agentDir.
+			const libraryDir = path.join(fixture.root, "skill-library", "linked-skill");
+			await mkdir(libraryDir, { recursive: true });
+			await writeFile(path.join(libraryDir, "SKILL.md"), "---\nname: linked-skill\ndescription: linked-skill\n---\n");
+			await mkdir(path.join(fixture.agentDir, "skills"), { recursive: true });
+			await symlink(libraryDir, path.join(fixture.agentDir, "skills", "linked-skill"), "dir");
+			await addGlobalSkill("alpha-skill");
+			await writeCatalog({ omitted: {} });
+
+			const omitted = await observe(["omitted", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+
+			expect(native.skills).toContain("skill:linked-skill");
+			expect(omitted.skills).toEqual(native.skills);
 		},
 	);
 
@@ -364,6 +514,32 @@ describe("sparse resource selection against a real spawned pi", () => {
 
 			const review = await observe(["review", "--", "--mode", "rpc"]);
 			expect(review.skills).toEqual(["skill:alpha-skill"]);
+		},
+	);
+
+	it(
+		"real user settings and catalogs stay byte-identical around omitted/empty/mixed launches",
+		{ timeout: 120_000 },
+		async () => {
+			await addGlobalSkill("alpha-skill");
+			await addExtensionFile("ext-a");
+			await writeUserSettings({ skills: ["!skills/**", "+skills/alpha-skill/SKILL.md"], extensions: ["-builtin:codemode"] });
+			await writeCatalog({
+				omitted: {},
+				empty: { skills: [], extensions: [] },
+				mixed: { skills: ["alpha-skill"] },
+			});
+			const settingsPath = path.join(fixture.agentDir, "settings.json");
+			const catalogPath = path.join(fixture.profileSwitchDir, "profiles", "mixed.json");
+			const settingsBefore = await readFile(settingsPath, "utf8");
+			const catalogBefore = await readFile(catalogPath, "utf8");
+
+			await observe(["omitted", "--", "--mode", "rpc"]);
+			await observe(["empty", "--", "--mode", "rpc"]);
+			await observe(["mixed", "--", "--mode", "rpc"]);
+
+			expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+			expect(await readFile(catalogPath, "utf8")).toBe(catalogBefore);
 		},
 	);
 });

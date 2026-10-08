@@ -960,4 +960,64 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 			{ source: pkg.source, autoload: false, prompts: ["review-*"], extensions: ["extensions/pkg-ext.ts"] },
 		]);
 	});
+
+	it("remaps absolute and ~ native skill overrides under the agent dir for an omitted kind", async () => {
+		// Pi matches `!`/`+`/`-` entries lexically against the raw discovered path.
+		// AgentDir skills surface only through the instance's runtime-mirror
+		// symlink, so a native absolute/`~` override under the agent dir must be
+		// rewritten to the mirror path or it silently matches nothing.
+		await writeUserSettings({
+			skills: [
+				`-${path.join(fixture.agentDir, "skills", "hidden-skill", "SKILL.md")}`,
+				`+${path.join(fixture.agentDir, "skills", "kept-skill", "SKILL.md")}`,
+				`-~/${path.relative(fixture.root, path.join(fixture.agentDir, "skills", "tilde-hidden", "SKILL.md"))}`,
+				"-skills/relative-hidden/SKILL.md",
+				"-~/.agents/skills/agents-hidden/SKILL.md",
+			],
+		});
+		const plan = selectionPlan({ resourceSelection: { skills: false, extensions: true } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect((await generatedSettings(result.runtimeDir)).skills).toEqual([
+			`-${path.join(result.runtimeDir, "skills", "hidden-skill", "SKILL.md")}`,
+			`+${path.join(result.runtimeDir, "skills", "kept-skill", "SKILL.md")}`,
+			// Real Pi treats a `~` override as a no-op, so it is preserved verbatim
+			// rather than remapped into an effective exclusion.
+			`-~/${path.relative(fixture.root, path.join(fixture.agentDir, "skills", "tilde-hidden", "SKILL.md"))}`,
+			"-skills/relative-hidden/SKILL.md",
+			"-~/.agents/skills/agents-hidden/SKILL.md",
+		]);
+	});
+
+	it("rewrites a relative local package source to its resolved root", async () => {
+		const root = path.resolve(fixture.agentDir, "..", "shared-pkg");
+		await writeUserSettings({ packages: [{ source: "../shared-pkg", skills: ["skills/keep"] }] });
+
+		const result = await generateRuntimeDir(selectionPlan({ resourceSelection: { skills: false, extensions: false } }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [{ source: "../shared-pkg", root }] },
+		});
+
+		// A user-scope relative source resolves from the agent dir; the instance
+		// moves that root, so the emitted source must carry the resolved path.
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([{ source: root, skills: ["skills/keep"] }]);
+	});
+
+	it("keeps an unresolved package's native declaration for an undeclared kind", async () => {
+		await writeUserSettings({ packages: [{ source: "npm:not-installed", skills: ["skills/keep"] }] });
+
+		const result = await generateRuntimeDir(selectionPlan({ resourceSelection: { skills: false, extensions: false } }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [{ source: "npm:not-installed", root: undefined }] },
+		});
+
+		// Read-only discovery cannot resolve the root; the native declaration must
+		// pass through instead of becoming an empty or discovery-derived allowlist.
+		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
+			{ source: "npm:not-installed", skills: ["skills/keep"] },
+		]);
+	});
 });

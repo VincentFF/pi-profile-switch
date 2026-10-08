@@ -580,4 +580,91 @@ describe("in-session native resource bases for overlays (fix-undeclared-resource
 			}
 		},
 	);
+
+	it(
+		"a native-base extension overlay preserves native package filters and settings-only paths",
+		{ timeout: 120_000 },
+		async () => {
+			// A configured local package with a nonempty native extension filter, plus
+			// a settings-only extension outside the overlay vocabulary and a loose
+			// agentDir extension the overlay can actually name.
+			const pkgRoot = path.join(fixture.root, "pkg");
+			await mkdir(path.join(pkgRoot, "extensions"), { recursive: true });
+			await writeFile(
+				path.join(pkgRoot, "package.json"),
+				JSON.stringify({ name: "pkg", version: "1.0.0", pi: { extensions: ["./extensions"] } }),
+			);
+			await writeFile(
+				path.join(pkgRoot, "extensions", "pkg-ext.ts"),
+				[
+					`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+					`export default function (pi: ExtensionAPI) {`,
+					`\tpi.registerCommand("pkg-ext", { description: "package extension", handler: async () => {} });`,
+					`}`,
+					"",
+				].join("\n"),
+			);
+			const settingsOnly = path.join(fixture.root, "outside", "one-off.ts");
+			await mkdir(path.dirname(settingsOnly), { recursive: true });
+			await writeFile(
+				settingsOnly,
+				[
+					`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+					`export default function (pi: ExtensionAPI) {`,
+					`\tpi.registerCommand("one-off", { description: "settings-only", handler: async () => {} });`,
+					`}`,
+					"",
+				].join("\n"),
+			);
+			await addExtension("loose");
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({
+					packages: [{ source: pkgRoot, extensions: ["extensions/pkg-ext.ts"] }],
+					extensions: [settingsOnly],
+				}),
+			);
+			await writeCatalog({ open: {} });
+
+			// A named profile omitting both kinds.
+			const named = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await named.send({ type: "get_state" });
+				const before = await extensionNames(named);
+				expect(before).toContain("pkg-ext");
+				expect(before).toContain("one-off");
+				expect(before).toContain("loose");
+
+				await named.send({ type: "prompt", message: "/profile overlay disable extension loose" }, 60_000);
+				const after = await extensionNames(named);
+				expect(after).not.toContain("loose");
+				// Narrowing the omitted kind must not convert the package to a wildcard
+				// or an empty allowlist, nor drop the settings-only path.
+				expect(after).toContain("pkg-ext");
+				expect(after).toContain("one-off");
+
+				const instance = await soleInstanceDir(fixture);
+				const settings = JSON.parse(await readFile(path.join(instance, "settings.json"), "utf8"));
+				expect(settings.packages[0].extensions).toEqual(["extensions/pkg-ext.ts"]);
+				expect(settings.extensions).toContain(settingsOnly);
+			} finally {
+				await named.close();
+			}
+
+			// The default profile narrows the same omitted kind from its native base.
+			const def = runLauncherRpc(fixture, ["--", "--mode", "rpc"]);
+			try {
+				await def.send({ type: "get_state" });
+				expect(await extensionNames(def)).toContain("pkg-ext");
+
+				await def.send({ type: "prompt", message: "/profile overlay disable extension loose" }, 60_000);
+				const after = await extensionNames(def);
+				expect(after).not.toContain("loose");
+				expect(after).toContain("pkg-ext");
+				expect(after).toContain("one-off");
+			} finally {
+				await def.close();
+			}
+		},
+	);
 });
