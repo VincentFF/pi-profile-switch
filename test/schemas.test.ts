@@ -69,6 +69,7 @@ describe("shipped JSON schemas", () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 		const valid = [
 			{}, { subagents: {} }, { subagents: { agentOverrides: { reviewer: {} } } },
+			... ["reviewer role", "reviewer\trole"].map((name) => ({ subagents: { agentOverrides: { [name]: { model: "x" } } } })),
 			JSON.parse('{"subagents":{"defaultModel":"inherit","defaultThinking":"high","agentOverrides":{"reviewer":{"model":false,"thinking":false,"description":"Review","advertise":false},"toString":{"advertise":true},"__proto__":{"model":"native"}}}}'),
 		];
 		const invalid = [
@@ -76,6 +77,7 @@ describe("shipped JSON schemas", () => {
 			{ subagents: { defaultModel: " " } }, { subagents: { defaultThinking: "invalid" } },
 			{ subagents: { agentOverrides: { " reviewer": { model: "x" } } } },
 			{ subagents: { agentOverrides: { "review*": { model: "x" } } } },
+			... ["reviewer\nrole", "reviewer\rrole", "reviewer\u2028role", "reviewer\u2029role"].map((name) => ({ subagents: { agentOverrides: { [name]: { model: "x" } } } })),
 			{ subagents: { agentOverrides: { reviewer: { tools: [] } } } },
 			{ subagents: { agentOverrides: { reviewer: { advertise: "false" } } } },
 		];

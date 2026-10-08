@@ -8,7 +8,7 @@ Pi discovers resources globally: whichever skills, extensions, MCP servers, and 
 - Dangerous capabilities stay resident. File writes, command execution, and write access to external systems remain in the tool list once installed.
 - Boundaries can only exist in prompts. Switching between "read-only review" and "full implementation" means switching the capability set itself — a prompt cannot constrain whether a tool exists.
 
-Profiles turn resource selection into an explicit, switchable object, optionally accompanied by a declared model, thinking level, and extra system-prompt instructions. A profile does not copy resources: a `SKILL.md`, extension, or MCP server has exactly one implementation, referenced by any number of profiles.
+Profiles turn resource selection into an explicit, switchable object, optionally accompanied by a declared model, thinking level, extra system-prompt instructions, and native child-role settings. Child-role declarations are an opt-in profile behavior, described by the [profile-catalog contract](../openspec/specs/profile-catalog/spec.md). A profile does not copy resources: a `SKILL.md`, extension, or MCP server has exactly one implementation, referenced by any number of profiles.
 
 ```text
 SkillRegistry

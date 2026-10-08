@@ -54,7 +54,17 @@ A profile that uses every field:
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5",
   "defaultThinkingLevel": "high",
-  "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion."
+  "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion.",
+  "subagents": {
+    "defaultModel": "anthropic/claude-sonnet-4-5",
+    "agentOverrides": {
+      "reviewer": {
+        "thinking": "high",
+        "description": "Independent review for this project",
+        "advertise": true
+      }
+    }
+  }
 }
 ```
 
@@ -76,6 +86,7 @@ How the fields behave:
 - The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
 - Any field you omit keeps plain Pi behavior.
 - `label` and `description` are display metadata. `defaultProvider` and `defaultModel` (declared together) set the startup model; `defaultThinkingLevel` sets its thinking level; `instructions` is appended to the system prompt.
+- `subagents` optionally supplies native pi-subagents model/thinking defaults and exact role overrides. It does not load pi-subagents or change which roles or tools are available. Role descriptions are metadata, not child prompts; `advertise` controls parent-prompt listing, not whether a role can run. `/profile status` shows declared inputs, while `/subagents-models` inspects the native live mapping. See the [subagent behavior contract](openspec/specs/launcher/spec.md) and [pi-subagents model documentation](https://github.com/nicobailon/pi-subagents/blob/main/docs/models.md).
 - `skills`, `extensions`, `mcps`, and `tools` reference installed resources by name or glob; profiles never copy resources. `tools` covers non-MCP tools only (built-ins and extension tools).
 - `mcp_tools` selects tools inside MCP servers by literal server and tool name — globs are rejected. Omit a server to leave it unchanged, use `[]` to deny all of its tools while keeping the server enabled, or list names to allow only those. A literal selector that matches nothing stays restrictive without warning; a server that is unknown, disabled, or project-only fails activation with candidates.
 - `mcps` names user-level servers from `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`. Omit it to leave all servers as configured; use `[]` to disable every user-level server. Project-level servers (`.pi/mcp.json`) are read by Pi itself and are never narrowed. Legacy SSE servers cannot be selected.

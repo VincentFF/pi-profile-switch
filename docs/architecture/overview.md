@@ -74,7 +74,7 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | --- | --- |
 | `workspace.ts` | `~/.pi-profile-switch` workspace path (overridable via `PI_PROFILE_SWITCH_DIR`) |
 | `json-file.ts` | Shared JSON reading for file-backed stores |
-| `settings-generator.ts` | `generateRuntimeDir(plan, options)` (launcher, creates the directory) and `writeRuntimeFiles(runtimeDir, plan, options)` (in-session, rewrites in place) → generated files + symlink set + `{ PI_CODING_AGENT_DIR }`. All content (settings, launch plan, MCP snapshot, diagnostics, gateway marker) is prepared in memory before any runtime file is written; `writeRuntimeFiles` returns `{ warnings }` and `generateRuntimeDir` carries them for the launcher's stderr |
+| `settings-generator.ts` | `generateRuntimeDir(plan, options)` (launcher, creates the directory) and `writeRuntimeFiles(runtimeDir, plan, options)` (in-session, rewrites in place) → generated files + symlink set + `{ PI_CODING_AGENT_DIR }`. All content (settings, launch plan, MCP snapshot, diagnostics, gateway marker) is prepared in memory before any runtime file is written; `writeRuntimeFiles` returns `{ warnings }` and `generateRuntimeDir` carries them for the launcher's stderr. Declared subagent values are sparsely layered onto the native user settings before writes; see the [launcher contract](../../openspec/specs/launcher/spec.md) |
 | `runtime-state-store.ts` | Reads and writes `pi-profile-state.json` (`activeProfile`, `overlay`) per source scope; the overlay holds up to four disabled-entry lists (skills, extensions, MCP servers, tools) |
 
 ### In-session (inside the pi process)
@@ -82,11 +82,11 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | Module | Interface |
 | --- | --- |
 | `extensions/pi-profile/index.ts` | Registers the `/profile` command family, the profile selector (degrading to the list without interactive UI), and the status view; loaded via `-e` |
-| `switching/switch-profile.ts` | `switchProfile(profile, deps, options)` → `SwitchResult`; orchestrates snapshot → rewrite → reload → rollback. The write-and-reload interval is one rollback boundary: any write-stage failure after the first managed file, or a reload failure, restores every managed file exactly and reloads again |
+| `switching/switch-profile.ts` | `switchProfile(profile, deps, options)` → `SwitchResult`; orchestrates snapshot → rewrite → reload → rollback. The write-and-reload interval is one rollback boundary: any write-stage failure after the first managed file, or a reload failure, restores every managed file exactly and reloads again. Subagent settings and declarations use this same settings/plan snapshot boundary; see the [in-session contract](../../openspec/specs/in-session-switch/spec.md) |
 | `switching/apply-plan.ts` | `readLaunchPlanFile(runtimeDir)` + `applyLaunchPlan(input)`; at `session_start` and after reload, classifies the winning tool registrations by source path, applies only the non-MCP tools whitelist while retaining `builtin:mcp`-owned tools, re-applies overlays, persists runtime state, and emits the one-shot change summary |
 | `switching/overlay.ts` | `OVERLAY_USAGE` / `parseOverlayArgs` / `applyOverlayMutation` / `clearOverlay`; reads and writes the runtime overlay (one uniform `disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` grammar) |
 | `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; profile entries for the selector and the degraded bare `/profile` list, with trust gating and the `shadowsGlobal` marker |
-| `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP server tri-state and declared per-server tool policy. When the plan carries a defined `mcps` selection, the optional `projectMcpServers` input (populated from `loadMergedMcpServers().projectServers`) keeps trusted project-owned, non-disabled servers in the enabled group and out of the disabled group |
+| `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP server tri-state and declared per-server tool policy. When the plan carries a defined `mcps` selection, the optional `projectMcpServers` input (populated from `loadMergedMcpServers().projectServers`) keeps trusted project-owned, non-disabled servers in the enabled group and out of the disabled group. Subagent declaration status and registration observations follow the [in-session contract](../../openspec/specs/in-session-switch/spec.md) |
 | `switching/tool-references.ts` | `expandToolReferences(refs, nonMcpToolNames, mcpToolNames)`; expands non-MCP tool references against Pi's live registry and identifies legacy MCP references |
 | `startup-notifier.ts` | `runStartupNotifications(options)`; loads notification caches, checks remote sources, and presents notices through the extension's display surface |
 
@@ -187,7 +187,7 @@ For reading convenience, not a stable surface: this format evolves with Pi versi
 
 ### User configuration contract
 
-The authoritative schema for profile definition files (global `~/.pi-profile-switch/profiles/<name>.json`, project `.pi/profiles/<name>.json`) is `schemas/profiles.schema.json`. Core fields: a profile's `skills`/`extensions`/`mcps`/`tools` (names or globs), optional `defaultProvider`/`defaultModel`/`defaultThinkingLevel` and `instructions`; state's `activeProfile` and `overlay`.
+The authoritative schema for profile definition files (global `~/.pi-profile-switch/profiles/<name>.json`, project `.pi/profiles/<name>.json`) is `schemas/profiles.schema.json`. Core fields: a profile's `skills`/`extensions`/`mcps`/`tools` (names or globs), optional `defaultProvider`/`defaultModel`/`defaultThinkingLevel`, `instructions`, and native subagent declarations; state's `activeProfile` and `overlay`. The native-shaped profile boundary and rejected alternatives are recorded in [ADR-0017](../adr/0017-native-subagent-settings-overrides.md).
 
 ## Known limitations
 

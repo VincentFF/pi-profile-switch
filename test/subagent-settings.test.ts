@@ -35,10 +35,20 @@ describe("parseSubagentSettings", () => {
 	});
 
 	it("rejects blank text and malformed role names", () => {
-		for (const name of ["", " reviewer", "reviewer ", "review*"]) {
+		for (const name of ["", " reviewer", "reviewer ", "review*", "reviewer\nrole", "reviewer\rrole", "reviewer\u2028role", "reviewer\u2029role"]) {
 			expect(() => parseSubagentSettings({ agentOverrides: { [name]: { model: "m" } } }, context)).toThrow(/exact agent name/);
 		}
 		expect(() => parseSubagentSettings({ defaultModel: "  " }, context)).toThrow(/nonempty string/);
+	});
+
+	it("preserves internal spaces and tabs in exact role names", () => {
+		expect(parseSubagentSettings({ agentOverrides: {
+			"reviewer role": { model: "m" },
+			"reviewer\trole": { model: "m" },
+		} }, context)?.agentOverrides).toEqual({
+			"reviewer role": { model: "m" },
+			"reviewer\trole": { model: "m" },
+		});
 	});
 
 	it("preserves prototype-looking role keys as own data properties", () => {

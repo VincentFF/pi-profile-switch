@@ -79,8 +79,8 @@ export function parseSubagentSettings(
 		if (!record(overrides)) fail(context, "agentOverrides", "must be an object keyed by exact agent names");
 		const parsed: Record<string, SubagentRoleOverride> = {};
 		for (const name of Object.keys(overrides)) {
-			if (name.trim() === "" || name.trim() !== name || hasGlob(name)) {
-				fail(context, `agentOverrides.${name}`, "must use an exact agent name without whitespace or glob patterns");
+			if (name.trim() === "" || name.trim() !== name || /[\r\n\u2028\u2029]/.test(name) || hasGlob(name)) {
+				fail(context, `agentOverrides.${name}`, "must use an exact agent name without surrounding whitespace, line terminators, or glob patterns");
 			}
 			const rawRole = overrides[name];
 			if (!record(rawRole)) fail(context, `agentOverrides.${name}`, "must be an object");

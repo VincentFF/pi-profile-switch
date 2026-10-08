@@ -61,6 +61,7 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
 | `defaultModel` | `string` | Default model name (e.g. `"claude-sonnet-4-5"`). Effective only when declared together with `defaultProvider`. |
 | `defaultThinkingLevel` | `string` | Default thinking level; allowed values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Effective only when the model declaration holds. |
 | `instructions` | `string` | Instruction text appended to the system prompt when this profile is active. |
+| `subagents` | `object` | Optional native pi-subagents defaults and exact role overrides. Use only the subset in the [profile schema](../../schemas/profiles.schema.json). It neither loads pi-subagents nor selects or disables roles. |
 
 ### Example
 ```json
@@ -80,11 +81,24 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5",
   "defaultThinkingLevel": "high",
-  "instructions": "Focus on code quality, security, and edge cases. Do not edit files."
+  "instructions": "Focus on code quality, security, and edge cases. Do not edit files.",
+  "subagents": {
+    "defaultModel": "anthropic/claude-sonnet-4-5",
+    "agentOverrides": {
+      "reviewer": {
+        "model": "inherit",
+        "thinking": "high",
+        "description": "Independent review of this project",
+        "advertise": true
+      }
+    }
+  }
 }
 ```
 
 ---
+
+A role `description` is metadata and does not replace its system prompt. `advertise: true` lists a role in the parent prompt; `false` only omits that listing and does not disable the role. Role keys are exact names, not an availability list. Profile declarations can be superseded by pi-subagents' native project/provider/per-run precedence, so use `/profile status` for declared inputs and `/subagents-models` for live mappings. See the [launcher contract](../../openspec/specs/launcher/spec.md) and [native model reference](https://github.com/nicobailon/pi-subagents/blob/main/docs/models.md).
 
 ## 3. Discovering referenceable resources
 
