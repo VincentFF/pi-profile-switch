@@ -122,7 +122,7 @@ Accepted thinking values SHALL defer to Pi's authoritative thinking-level contra
 - **WHEN** a declared model is not statically known or authenticated before extensions load
 - **THEN** the profile layer does not reject activation and passes the model declaration to Pi
 
-#### Scenario: Model declaration requires no launcher validator
+#### Scenario: Validation not skipped when no validation means
 - **WHEN** model resolution has no launcher-side validation facility
 - **THEN** activation still carries the declaration rather than requiring or fabricating a validation result
 
@@ -138,7 +138,7 @@ An explicit selection MUST NOT become omission or unrestricted access when its r
 
 Pi tool references SHALL retain their deferred live-registry validation. Literal `mcp_tools` selectors SHALL remain restrictive policy inputs without missing-tool-name validation. Runtime overlay mutation errors SHALL retain their separate in-session contract.
 
-#### Scenario: Literal and glob misses both warn
+#### Scenario: Different outcomes for literals and globs
 - **WHEN** a profile references a missing literal skill and a zero-match skill glob
 - **THEN** activation continues and both misses are diagnosed rather than either aborting activation
 
@@ -178,7 +178,7 @@ Selectors SHALL NOT be checked against a server's tool catalog or produce missin
 - **WHEN** a server is assigned an empty selector list
 - **THEN** it exposes no callable MCP tools while retaining its enabled non-tool functions
 
-#### Scenario: Server name typo warns without rejecting activation
+#### Scenario: Server name typo fails before activation
 - **WHEN** a policy names a server absent from the merged snapshot
 - **THEN** activation continues with a server-name warning and usable candidates, without creating an unrestricted server
 
