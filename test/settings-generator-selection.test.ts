@@ -1204,3 +1204,27 @@ describe("native plain-include overlay exclusion (fix-undeclared-resource-filter
 		expect(skills).toContain(`-${path.join(result.runtimeDir, "vendor", "x", "SKILL.md")}`); // mirror route
 	});
 });
+
+describe("declared-selection extension-path refusal (fix-undeclared-resource-filtering)", () => {
+	it.each([
+		["empty", { extensions: [] }],
+		["nonempty", { extensions: [{ id: "declared", entry: "/opt/pi-resources/declared/index.ts" }] }],
+	] as Array<[string, Partial<ActivationPlan>]>, )("refuses real content at the instance extension path for a declared %s selection", async (_label, definition) => {
+		const runtimeDir = path.join(fixture.root, `runtime-${_label}`);
+		await mkdir(path.join(runtimeDir, "extensions", "sneaky"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "sneaky", "index.ts"), "export default 1");
+		const sentinelSettings = "settings sentinel";
+		await writeFile(path.join(runtimeDir, "settings.json"), sentinelSettings);
+
+		await expect(
+			writeRuntimeFiles(runtimeDir, selectionPlan(definition), {
+				agentDir: fixture.agentDir,
+				discovery: { skills: [], packages: [] },
+			}),
+		).rejects.toThrow(/real directory.*will not delete or overwrite/);
+
+		// Refusal happens before managed writes and never deletes or adopts content.
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
+		expect(await readFile(path.join(runtimeDir, "extensions", "sneaky", "index.ts"), "utf8")).toBe("export default 1");
+	});
+});

@@ -652,39 +652,54 @@ export interface ResolvedNames {
 }
 
 /** How the instance's `extensions` path represents native discovery:
- *  - `link`: a selection plan omits extensions; the path is a symlink to the
+ *  - `mirror`: a selection plan omits extensions; the path is a symlink to the
  *    real agentDir extensions directory, dangling allowed.
- *  - `absent`: a declared extension selection; no generated link.
- *  - `untouched`: the ordinary default profile keeps its existing form. */
-type ExtensionPathRepresentation = "link" | "absent" | "untouched";
+ *  - `no-mirror`: a declared extension selection; no generated link, and
+ *    unexpected real content at the path blocks activation.
+ *  - `default`: the ordinary filter:none profile keeps its additive
+ *    representation; only a known generated mirror is removed, foreign content
+ *    is left untouched. */
+type ExtensionPathRepresentation = "mirror" | "no-mirror" | "default";
 
 function extensionPathRepresentation(plan: ActivationPlan): ExtensionPathRepresentation {
-	if (plan.filter === "none") return "untouched";
-	return plan.resourceSelection.extensions ? "absent" : "link";
+	if (plan.filter === "none") return "default";
+	return plan.resourceSelection.extensions ? "no-mirror" : "mirror";
 }
 
 function instanceExtensionsPath(runtimeDir: string): string {
 	return path.join(runtimeDir, "extensions");
 }
 
-/** Validates the extension-path transition before any managed write. Creating
- *  the mirror link over pre-existing real content is refused with an actionable
- *  error; that content is never deleted or overwritten. */
+/** `lstat` that only tolerates absence. A non-ENOENT failure must not be
+ *  misclassified as "absent" — otherwise inaccessible non-symlink content could
+ *  be treated as safe to replace. */
+async function lstatOrNull(filePath: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+	try {
+		return await lstat(filePath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+}
+
+/** Validates the extension-path transition before any managed write. For a
+ *  selection plan, unexpected real content at the managed path is refused with
+ *  an actionable error; it is never deleted or overwritten. The ordinary
+ *  default profile manages only its own generated mirror. */
 async function assertExtensionPathTransition(
 	runtimeDir: string,
 	representation: ExtensionPathRepresentation,
 ): Promise<void> {
-	if (representation !== "link") return;
+	if (representation === "default") return;
 	const linkPath = instanceExtensionsPath(runtimeDir);
-	let info;
-	try {
-		info = await lstat(linkPath);
-	} catch {
-		return; // absent: the link may be created
-	}
-	if (info.isSymbolicLink()) return; // an existing generated link
+	const info = await lstatOrNull(linkPath);
+	if (info === null || info.isSymbolicLink()) return;
+	const remedy =
+		representation === "mirror"
+			? "so activation can link the real extensions directory"
+			: "so the declared extension selection stays restrictive";
 	throw new ActivationError(
-		`the instance extension path "${linkPath}" contains a real ${info.isDirectory() ? "directory" : "file"} (not a symlink); pi-profile will not delete or overwrite it — move or remove it so activation can link the real extensions directory`,
+		`the instance extension path "${linkPath}" contains a real ${info.isDirectory() ? "directory" : "file"} (not a symlink); pi-profile will not delete or overwrite it — move or remove it ${remedy}`,
 	);
 }
 
@@ -695,16 +710,18 @@ async function applyExtensionPathTransition(
 	agentDir: string,
 	representation: ExtensionPathRepresentation,
 ): Promise<void> {
-	if (representation === "untouched") return;
 	const linkPath = instanceExtensionsPath(runtimeDir);
 	const target = path.join(agentDir, "extensions");
-	let info;
-	try {
-		info = await lstat(linkPath);
-	} catch {
-		info = null;
+	const info = await lstatOrNull(linkPath);
+	if (representation === "default") {
+		// Remove only a known generated mirror; foreign content is left alone.
+		if (info?.isSymbolicLink()) {
+			const current = await readlink(linkPath).catch(() => null);
+			if (current === target) await rm(linkPath, { force: true });
+		}
+		return;
 	}
-	if (representation === "link") {
+	if (representation === "mirror") {
 		if (info?.isSymbolicLink()) {
 			const current = await readlink(linkPath).catch(() => null);
 			if (current === target) return;
@@ -718,7 +735,7 @@ async function applyExtensionPathTransition(
 		await symlink(target, linkPath, "dir");
 		return;
 	}
-	// "absent": remove only a generated link; leave real content alone.
+	// "no-mirror": remove a symlink at the managed path; leave real content alone.
 	if (info?.isSymbolicLink()) await rm(linkPath, { force: true });
 }
 

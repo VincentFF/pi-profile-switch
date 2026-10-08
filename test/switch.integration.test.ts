@@ -683,4 +683,74 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 			}
 		},
 	);
+
+	it(
+		"removes the generated extension mirror when switching to the ordinary default profile",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use default" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
+				// The per-session generated mirror is gone and the real source is intact.
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+				// The default additive baseline is retained.
+				const settings = JSON.parse(await readFile(path.join(instance, "settings.json"), "utf8"));
+				expect(settings.extensions).toContain(path.join(fixture.agentDir, "extensions"));
+				expect(settings.defaultProjectTrust).toBeUndefined();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"refuses unexpected real content at the instance extension path for a declared selection",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, empty: { extensions: [] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				const extDir = path.join(instance, "extensions");
+				await expect(lstat(extDir)).rejects.toMatchObject({ code: "ENOENT" });
+				await mkdir(path.join(extDir, "sneaky"), { recursive: true });
+				await writeFile(path.join(extDir, "sneaky", "index.ts"), "export default 1");
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use empty" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("will not delete or overwrite"),
+					20_000,
+				);
+				expect(JSON.stringify(diagnostic)).toContain("activation of profile");
+
+				// Content is not deleted or adopted; the prior selection stays active.
+				expect(await readFile(path.join(extDir, "sneaky", "index.ts"), "utf8")).toBe("export default 1");
+				expect(JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8")).profile).toBe("declared");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 });

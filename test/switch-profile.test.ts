@@ -729,3 +729,37 @@ describe("activation failure reporting (fix-undeclared-resource-filtering)", () 
 		expect(reported[0]).toContain("will not delete or overwrite");
 	});
 });
+
+describe("generated extension mirror on the ordinary default profile (fix-undeclared-resource-filtering)", () => {
+	it("removes the generated mirror when switching from an omitted selection to default", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+
+		await switchProfile("open", deps());
+		const link = path.join(runtimeDir, "extensions");
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
+
+		await switchProfile("default", deps());
+
+		// The per-session generated mirror is gone; the real source is untouched.
+		await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+
+		// The default additive baseline is retained (filter:none representation).
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.extensions).toContain(path.join(fixture.agentDir, "extensions"));
+		expect(settings.defaultProjectTrust).toBeUndefined();
+	});
+
+	it("leaves foreign real content at the instance extension path untouched for default", async () => {
+		await writeCatalog({ open: {}, plain: {} });
+		// A foreign real directory Pi or a user created at the managed path.
+		await mkdir(path.join(runtimeDir, "extensions", "foreign"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "foreign", "keep.ts"), "keep");
+
+		await switchProfile("default", deps());
+
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isDirectory()).toBe(true);
+		expect(await readFile(path.join(runtimeDir, "extensions", "foreign", "keep.ts"), "utf8")).toBe("keep");
+	});
+});

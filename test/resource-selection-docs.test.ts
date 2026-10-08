@@ -42,6 +42,11 @@ describe("resource-selection documentation", () => {
 		expect(model).toMatch(/conditional symlink/i);
 		expect(model).toMatch(/never deleted, adopted, or overwritten/i);
 		expect(model).toMatch(/sweep skips the link without traversing/);
+		// The default profile's own representation is retained while any generated
+		// mirror from the session is removed, and a declared selection is refused
+		// only via the same safety check.
+		expect(model).toMatch(/default` profile removes only a mirror this session generated/i);
+		expect(model).toMatch(/declared selection keeps the restrictive allowlist/i);
 		// The superseded additive-directory mechanism must not remain in scope;
 		// ordinary default additive wording elsewhere is not banned.
 		expect(model).not.toMatch(/directory re-added because the instance's is profile-managed/i);
