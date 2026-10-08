@@ -817,7 +817,7 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 		]);
 	});
 
-	it("preserves relative native resource paths for an undeclared kind", async () => {
+	it("resolves relative native resource paths against the real agent dir for an undeclared kind", async () => {
 		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
 		await writeUserSettings({ extensions: ["./extra.ts"] });
 
@@ -826,8 +826,10 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 			discovery: { skills: [], packages: [] },
 		});
 
+		// The instance base dir moves, so a relative native include is resolved
+		// against the real agent dir to keep its native meaning.
 		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
-			"./extra.ts",
+			path.join(fixture.agentDir, "extra.ts"),
 			path.join(fixture.agentDir, "extensions"),
 		]);
 	});
@@ -1019,5 +1021,74 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 		expect((await generatedSettings(result.runtimeDir)).packages).toEqual([
 			{ source: "npm:not-installed", skills: ["skills/keep"] },
 		]);
+	});
+
+	it("re-anchors relative native extension overrides under the agent dir for an omitted kind", async () => {
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		// The canonical shape `pi config` writes: a top-level relative control.
+		await writeUserSettings({
+			extensions: [
+				"-extensions/x.ts",
+				"!extensions/legacy/**",
+				"+extensions/keep.ts",
+				"-builtin:mcp",
+				"/opt/pi-resources/one-off.ts",
+				"~/.config/pi/extra.ts",
+			],
+		});
+		const plan = selectionPlan({ resourceSelection: { skills: true, extensions: false } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const real = fixture.agentDir;
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
+			`-${path.join(real, "extensions", "x.ts")}`,
+			`!${path.join(real, "extensions", "legacy", "**")}`,
+			`+${path.join(real, "extensions", "keep.ts")}`,
+			"-builtin:mcp",
+			"/opt/pi-resources/one-off.ts",
+			"~/.config/pi/extra.ts",
+			path.join(real, "extensions"),
+		]);
+	});
+
+	it("re-anchors escaping relative skill includes and their matching overrides", async () => {
+		await writeUserSettings({
+			skills: [
+				"../shared-skills",
+				"!../shared-skills/foo/SKILL.md",
+				"!skills/**",
+				`!${path.join(fixture.agentDir, "skills", "**")}`,
+			],
+		});
+		const plan = selectionPlan({ resourceSelection: { skills: false, extensions: true } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const escaped = path.resolve(fixture.agentDir, "..", "shared-skills");
+		expect((await generatedSettings(result.runtimeDir)).skills).toEqual([
+			escaped,
+			`!${path.join(escaped, "foo", "SKILL.md")}`,
+			// Non-escaping relatives still match the instance's mirrored subtree.
+			"!skills/**",
+			// An absolute agentDir control still maps to the runtime mirror.
+			`!${path.join(result.runtimeDir, "skills", "**")}`,
+		]);
+	});
+
+	it("re-anchors escaping relative extension includes and their matching overrides", async () => {
+		await writeUserSettings({ extensions: ["../shared-extension.ts", "-../shared-extension.ts"] });
+		const plan = selectionPlan({ resourceSelection: { skills: true, extensions: false } });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const escaped = path.resolve(fixture.agentDir, "..", "shared-extension.ts");
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([escaped, `-${escaped}`]);
 	});
 });

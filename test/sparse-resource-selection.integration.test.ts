@@ -542,4 +542,60 @@ describe("sparse resource selection against a real spawned pi", () => {
 			expect(await readFile(catalogPath, "utf8")).toBe(catalogBefore);
 		},
 	);
+
+	it(
+		"relative native extension controls match a native session",
+		{ timeout: 120_000 },
+		async () => {
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "x.ts"), "x");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "legacy", "old.ts"), "legacy-old");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "keep.ts"), "keep");
+			// The canonical shape `pi config` writes for a top-level extension toggle.
+			await writeUserSettings({ extensions: ["-extensions/x.ts", "!extensions/legacy/**"] });
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			const fixtureNames = ["x", "legacy-old", "keep"];
+
+			expect(fixtureCommands(native, fixtureNames)).toEqual(["keep"]);
+			expect(fixtureCommands(omitted, fixtureNames)).toEqual(fixtureCommands(native, fixtureNames));
+		},
+	);
+
+	it(
+		"escaping relative includes and absolute ! skill patterns match a native session",
+		{ timeout: 120_000 },
+		async () => {
+			// Skills and an extension that live outside the agent dir, reached by a
+			// relative entry that escapes it, plus a matching relative override.
+			const sharedSkills = path.join(fixture.root, "shared-skills");
+			await mkdir(path.join(sharedSkills, "pkg-skill"), { recursive: true });
+			await writeFile(path.join(sharedSkills, "pkg-skill", "SKILL.md"), "---\nname: pkg-skill\ndescription: pkg\n---\n");
+			await mkdir(path.join(sharedSkills, "hidden-skill"), { recursive: true });
+			await writeFile(path.join(sharedSkills, "hidden-skill", "SKILL.md"), "---\nname: hidden-skill\ndescription: hidden\n---\n");
+			await writeExtensionFile(path.join(fixture.root, "shared-extension.ts"), "shared-ext");
+
+			const keptPath = await addGlobalSkill("kept-skill");
+			await addGlobalSkill("other-skill");
+			await writeUserSettings({
+				skills: [
+					"../shared-skills",
+					"!../shared-skills/hidden-skill/SKILL.md",
+					`!${path.join(fixture.agentDir, "skills", "**")}`,
+					`+${keptPath}`,
+				],
+				extensions: ["../shared-extension.ts"],
+			});
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+
+			expect(native.skills).toEqual(["skill:kept-skill", "skill:pkg-skill"]);
+			expect(omitted.skills).toEqual(native.skills);
+			expect(fixtureCommands(native, ["shared-ext"])).toEqual(["shared-ext"]);
+			expect(fixtureCommands(omitted, ["shared-ext"])).toEqual(["shared-ext"]);
+		},
+	);
 });

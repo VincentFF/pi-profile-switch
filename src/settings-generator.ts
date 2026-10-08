@@ -177,32 +177,67 @@ function homeAgentsSkillsDir(): string {
 /** The user's own skill exclusions and force-inclusions (`!pattern`, `+path`,
  *  `-path`), carried into a named profile's generated settings. Relative
  *  entries resolve against the runtime dir, which mirrors the agent dir, so
-/** Maps one native skill override entry onto the instance's discovery root.
- *  Pi matches `!`/`+`/`-` entries lexically against the raw discovered path,
- *  and agentDir skills surface in the instance only through the runtime-mirror
- *  symlink; an absolute target under the real agent dir must therefore be
- *  rewritten to its runtime mirror path or it silently matches nothing.
- *  Relative patterns, literal names, and paths outside the agent dir keep
- *  their meaning unchanged. `expandTilde` controls whether a `~`-anchored
- *  target is also remapped: real Pi does not expand `~` in override entries
- *  (it is a no-op there), so the native-base branch leaves `~` verbatim while
- *  the declared branch keeps its historical remap. */
+/** Splits an entry into its override marker (`!`/`+`/`-`) and target; a plain
+ *  additive entry has an empty marker. */
+function splitNativeEntry(entry: string): { marker: string; target: string } {
+	const first = entry[0];
+	const marker = first === "!" || first === "+" || first === "-" ? first : "";
+	return { marker, target: marker === "" ? entry : entry.slice(1) };
+}
+
+/** Whether a path resolves inside the real agent dir (the mirrored subtree). */
+function isUnderAgentDir(target: string, agentDir: string): boolean {
+	const rel = path.relative(agentDir, target);
+	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/** Maps one native skill entry onto the instance's discovery root.
+ *
+ *  AgentDir skills are discovered in the instance through the runtime-mirror
+ *  symlink, so a relative target that stays under the agent dir keeps its
+ *  relative form (it still matches the mirror path's `rel`), while an absolute
+ *  override under the agent dir is rewritten to the mirror path. A target that
+ *  escapes the agent dir is resolved against the real agent dir and emitted
+ *  absolute, because nothing mirrors it and the instance base dir would change
+ *  its meaning. `~` targets keep their native spelling (real Pi does not expand
+ *  them in override entries); `expandTilde` retains the declared branch's
+ *  historical remap. */
 function mapNativeSkillEntry(
 	entry: string,
 	agentDir: string,
 	runtimeDir: string,
 	expandTilde: boolean,
 ): string {
-	if (!(entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-"))) return entry;
-	const marker = entry[0];
-	const target = entry.slice(1);
-	const isTilde = target === "~" || target.startsWith("~/");
-	if (isTilde && !expandTilde) return entry;
-	const expanded = isTilde ? path.join(process.env.HOME ?? homedir(), target.slice(1)) : target;
-	if (!path.isAbsolute(expanded)) return entry;
-	const rel = path.relative(agentDir, expanded);
-	if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return entry;
-	return `${marker}${path.join(runtimeDir, rel)}`;
+	const { marker, target } = splitNativeEntry(entry);
+	if (target.startsWith("~")) {
+		if (!expandTilde) return entry;
+		const expanded = path.join(process.env.HOME ?? homedir(), target.slice(1));
+		if (!isUnderAgentDir(expanded, agentDir)) return entry;
+		return `${marker}${path.join(runtimeDir, path.relative(agentDir, expanded))}`;
+	}
+	if (path.isAbsolute(target)) {
+		if (marker === "" || !isUnderAgentDir(target, agentDir)) return entry;
+		return `${marker}${path.join(runtimeDir, path.relative(agentDir, target))}`;
+	}
+	// Relative target: keep it when the mirror preserves its relative matching;
+	// otherwise resolve it against the real agent dir so its native meaning
+	// survives the base-dir move.
+	const resolved = path.resolve(agentDir, target);
+	if (isUnderAgentDir(resolved, agentDir)) return entry;
+	return `${marker}${resolved}`;
+}
+
+/** Maps one native extension entry onto the instance's generated settings.
+ *
+ *  AgentDir extensions are discovered in the instance as their real absolute
+ *  paths (the managed `extensions` directory is not mirrored), so a relative
+ *  target keeps its native meaning only after being resolved against the real
+ *  agent dir. Absolute targets already carry their root; `builtin:` controls
+ *  and `~` targets keep their native spelling. */
+function mapNativeExtensionEntry(entry: string, agentDir: string): string {
+	const { marker, target } = splitNativeEntry(entry);
+	if (target.startsWith("builtin:") || target.startsWith("~") || path.isAbsolute(target)) return entry;
+	return `${marker}${path.resolve(agentDir, target)}`;
 }
 
 /** The user's own skill overrides (`!pattern`, `+path`, `-path`), carried into
@@ -396,6 +431,13 @@ function buildSelectionSettings(
 		settings.extensions = extensionEntries;
 	} else {
 		const native = Array.isArray(settings.extensions) ? settings.extensions : [];
+		// Relative native entries are resolved against the real agent dir: the
+		// managed `extensions` directory is not mirrored, so the instance base dir
+		// would change their meaning (including relative `!`/`+`/`-` controls that
+		// `pi config` writes as `-extensions/<name>.ts`).
+		const mappedNative = native.map((entry) =>
+			typeof entry === "string" ? mapNativeExtensionEntry(entry, agentDir) : entry,
+		);
 		// The instance's extensions directory is profile-managed (not mirrored),
 		// so the real discovery directory is restored additively to keep loose
 		// agentDir extensions visible under an omitted extension field.
@@ -408,7 +450,7 @@ function buildSelectionSettings(
 					projectExtensionsDir === undefined || !isUnderPath(extension.entry, projectExtensionsDir),
 			)
 			.map((extension) => `-${extension.entry}`);
-		const next = [...native, ...addDir, ...exclusions];
+		const next = [...mappedNative, ...addDir, ...exclusions];
 		if (next.length > 0) settings.extensions = next;
 	}
 
