@@ -667,4 +667,40 @@ describe("in-session native resource bases for overlays (fix-undeclared-resource
 			}
 		},
 	);
+
+	it(
+		"native basename and marker-less extension patterns stay effective under a native-base overlay",
+		{ timeout: 90_000 },
+		async () => {
+			await addExtension("keep");
+			await addExtension("alpha");
+			await addExtension("legacy-old");
+			// `!legacy-*` excludes by basename; the marker-less `extensions/*`
+			// glob is inert for native automatic discovery and must stay inert.
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({ extensions: ["!legacy-*", "extensions/*"] }),
+			);
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const before = await extensionNames(rpc);
+				expect(before).toContain("keep");
+				expect(before).toContain("alpha");
+				expect(before).not.toContain("legacy-old");
+
+				// The overlay adds only the concrete targeted disable; the native
+				// basename exclusion and marker-less inertness survive.
+				await rpc.send({ type: "prompt", message: "/profile overlay disable extension keep" }, 60_000);
+				const after = await extensionNames(rpc);
+				expect(after).not.toContain("keep");
+				expect(after).toContain("alpha");
+				expect(after).not.toContain("legacy-old");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 });

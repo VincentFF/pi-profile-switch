@@ -566,4 +566,83 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 			}
 		},
 	);
+
+	it(
+		"transitions the extension mirror in both directions with session identity retained",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+
+				// Omitted -> declared: the generated link is removed and only the
+				// declared extension stays visible.
+				const switched = await rpc.send({ type: "prompt", message: "/profile use declared" }, 60_000);
+				expect(switched.success).toBe(true);
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+
+				// Declared -> omitted: the link is restored and native visibility
+				// returns without restarting.
+				const back = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(back.success).toBe(true);
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"an unsafe real directory at the instance extension path blocks the transition safely",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				// Real content appears at the managed path (created by Pi or a user).
+				await mkdir(link, { recursive: true });
+				await writeFile(path.join(link, "real.ts"), "real bytes");
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// The failure is actionable and never deletes the real content; the prior
+				// representation, visibility, and selection stay intact. Actionability of
+				// the error itself is asserted at the switch boundary in
+				// test/switch-profile.test.ts (the post-reload notify is swallowed once
+				// the reload invalidates this extension context).
+				expect(await readFile(path.join(link, "real.ts"), "utf8")).toBe("real bytes");
+				expect(JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8")).profile).toBe("declared");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+				// The failed selection is not persisted.
+				await expect(
+					readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"),
+				).rejects.toThrow();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 });

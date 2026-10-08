@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, lstat, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, lstat, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -800,7 +800,7 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 		]);
 	});
 
-	it("omitted extensions preserve native settings-only paths and re-add the real extensions dir", async () => {
+	it("omitted extensions preserve native settings-only paths and control entries", async () => {
 		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
 		await writeUserSettings({ extensions: ["/opt/pi-resources/review-guard/index.ts", "-builtin:mcp"] });
 
@@ -810,14 +810,15 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 			discovery: { skills: [], packages: [] },
 		});
 
+		// The real directory is exposed by the conditional link, not an additive
+		// plain include, so only the native entries remain in the array.
 		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
 			"/opt/pi-resources/review-guard/index.ts",
 			"-builtin:mcp",
-			path.join(fixture.agentDir, "extensions"),
 		]);
 	});
 
-	it("resolves relative native resource paths against the real agent dir for an undeclared kind", async () => {
+	it("keeps non-escaping relative native extension paths for the mirrored kind", async () => {
 		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
 		await writeUserSettings({ extensions: ["./extra.ts"] });
 
@@ -826,12 +827,9 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 			discovery: { skills: [], packages: [] },
 		});
 
-		// The instance base dir moves, so a relative native include is resolved
-		// against the real agent dir to keep its native meaning.
-		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
-			path.join(fixture.agentDir, "extra.ts"),
-			path.join(fixture.agentDir, "extensions"),
-		]);
+		// The instance mirrors the real extensions directory, so a relative path
+		// under the agent dir keeps its native relative meaning.
+		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual(["./extra.ts"]);
 	});
 
 	it("appends targeted native-base exclusions for an overlay on an omitted skill kind", async () => {
@@ -863,8 +861,7 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 		});
 
 		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
-			path.join(fixture.agentDir, "extensions"),
-			`-${entry}`,
+			`-${path.join(result.runtimeDir, "extensions", "beta.ts")}`,
 		]);
 	});
 
@@ -1023,7 +1020,7 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 		]);
 	});
 
-	it("re-anchors relative native extension overrides under the agent dir for an omitted kind", async () => {
+	it("keeps native extension control patterns for the mirrored kind", async () => {
 		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
 		// The canonical shape `pi config` writes: a top-level relative control.
 		await writeUserSettings({
@@ -1042,15 +1039,15 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 			discovery: { skills: [], packages: [] },
 		});
 
-		const real = fixture.agentDir;
+		// Relative controls match the mirrored `rel`; `builtin:`/`~`/absolute keep
+		// their native spelling.
 		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([
-			`-${path.join(real, "extensions", "x.ts")}`,
-			`!${path.join(real, "extensions", "legacy", "**")}`,
-			`+${path.join(real, "extensions", "keep.ts")}`,
+			"-extensions/x.ts",
+			"!extensions/legacy/**",
+			"+extensions/keep.ts",
 			"-builtin:mcp",
 			"/opt/pi-resources/one-off.ts",
 			"~/.config/pi/extra.ts",
-			path.join(real, "extensions"),
 		]);
 	});
 
@@ -1090,5 +1087,87 @@ describe("independent per-kind materialization (fix-undeclared-resource-filterin
 
 		const escaped = path.resolve(fixture.agentDir, "..", "shared-extension.ts");
 		expect((await generatedSettings(result.runtimeDir)).extensions).toEqual([escaped, `-${escaped}`]);
+	});
+});
+
+describe("conditional extension mirror (fix-undeclared-resource-filtering)", () => {
+	function omittedExtensionsPlan(): ActivationPlan {
+		return selectionPlan({ resourceSelection: { skills: true, extensions: false } });
+	}
+
+	it("links the instance extensions path to the real one for an omitted selection, dangling allowed", async () => {
+		const result = await generateRuntimeDir(omittedExtensionsPlan(), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const link = path.join(result.runtimeDir, "extensions");
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
+		expect(await readlink(link)).toBe(path.join(fixture.agentDir, "extensions"));
+		// The target is not created or populated.
+		expect(existsSync(path.join(fixture.agentDir, "extensions"))).toBe(false);
+	});
+
+	it("links an existing real extensions directory without touching its contents", async () => {
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		await writeFile(path.join(fixture.agentDir, "extensions", "a.ts"), "export default 1");
+
+		const result = await generateRuntimeDir(omittedExtensionsPlan(), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(await readlink(path.join(result.runtimeDir, "extensions"))).toBe(
+			path.join(fixture.agentDir, "extensions"),
+		);
+		expect(await readFile(path.join(fixture.agentDir, "extensions", "a.ts"), "utf8")).toBe("export default 1");
+	});
+
+	it("has no generated link for a declared extension selection", async () => {
+		const plan = selectionPlan({ extensions: [{ id: "e", entry: "/opt/x/index.ts" }] });
+		const result = await generateRuntimeDir(plan, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		await expect(lstat(path.join(result.runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("removes a stale generated link when an in-place rewrite declares extensions", async () => {
+		const first = await generateRuntimeDir(omittedExtensionsPlan(), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+		expect((await lstat(path.join(first.runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+
+		await writeRuntimeFiles(
+			first.runtimeDir,
+			selectionPlan({ extensions: [{ id: "e", entry: "/opt/x/index.ts" }] }),
+			{ agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } },
+		);
+
+		await expect(lstat(path.join(first.runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("refuses real content at the instance extensions path before any managed write", async () => {
+		const runtimeDir = path.join(fixture.root, "runtime");
+		await mkdir(path.join(runtimeDir, "extensions"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "real.ts"), "real");
+		const sentinelSettings = "settings sentinel";
+		const sentinelPlan = "plan sentinel";
+		await writeFile(path.join(runtimeDir, "settings.json"), sentinelSettings);
+		await writeFile(path.join(runtimeDir, "pi-profile.json"), sentinelPlan);
+
+		await expect(
+			writeRuntimeFiles(runtimeDir, omittedExtensionsPlan(), {
+				agentDir: fixture.agentDir,
+				discovery: { skills: [], packages: [] },
+			}),
+		).rejects.toThrow(/real directory.*will not delete or overwrite/);
+
+		// Refusal happens before managed writes and never touches the real content.
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(sentinelPlan);
+		expect(await readFile(path.join(runtimeDir, "extensions", "real.ts"), "utf8")).toBe("real");
 	});
 });

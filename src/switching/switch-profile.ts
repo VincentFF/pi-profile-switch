@@ -83,7 +83,10 @@ export interface SwitchResult {
 type FileSnapshot =
 	| { kind: "absent" }
 	| { kind: "symlink"; target: string }
-	| { kind: "file"; content: string; mode: number };
+	| { kind: "file"; content: string; mode: number }
+	/** Unsafe non-symlink content (a real file or directory) that must never be
+	 *  deleted or rewritten on restore. */
+	| { kind: "opaque" };
 
 interface RuntimeSnapshot {
 	settings: FileSnapshot;
@@ -91,6 +94,8 @@ interface RuntimeSnapshot {
 	mcp: FileSnapshot;
 	appendSystem: FileSnapshot;
 	trust: FileSnapshot;
+	/** The conditional managed extension link: absent or its raw symlink target. */
+	extensions: FileSnapshot;
 }
 
 /** Snapshots one managed runtime file. lstat (never stat) detects symlinks
@@ -112,6 +117,21 @@ async function snapshotFile(filePath: string): Promise<FileSnapshot> {
 	return { kind: "file", content: await readFile(filePath, "utf8"), mode: info.mode & 0o777 };
 }
 
+/** Snapshots the managed extension path as absence or a raw symlink target.
+ *  Real non-symlink content (a file or directory) at that path is unsafe and is
+ *  recorded as opaque: restore must never delete or rewrite it, and activation
+ *  refuses to replace it with the generated link. Reading it as a file would
+ *  surface an obscure EISDIR for directories. */
+async function snapshotExtensionPath(filePath: string): Promise<FileSnapshot> {
+	const info = await lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return null;
+		throw error;
+	});
+	if (info === null) return { kind: "absent" };
+	if (info.isSymbolicLink()) return { kind: "symlink", target: await readlink(filePath) };
+	return { kind: "opaque" };
+}
+
 async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot> {
 	return {
 		settings: await snapshotFile(path.join(runtimeDir, "settings.json")),
@@ -119,10 +139,13 @@ async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot
 		mcp: await snapshotFile(path.join(runtimeDir, "mcp.json")),
 		appendSystem: await snapshotFile(path.join(runtimeDir, "APPEND_SYSTEM.md")),
 		trust: await snapshotFile(path.join(runtimeDir, "trust.json")),
+		extensions: await snapshotExtensionPath(path.join(runtimeDir, "extensions")),
 	};
 }
 
 async function restoreFile(filePath: string, snapshot: FileSnapshot): Promise<void> {
+	// Opaque (real, unsafe) content is never deleted or rewritten on restore.
+	if (snapshot.kind === "opaque") return;
 	// rm first, always: restoring a snapshotted FILE must never writeFile
 	// through a symlink the failed switch left on disk — that would write
 	// THROUGH to the link target (the user's real ~/.pi/agent/mcp.json)
@@ -142,6 +165,9 @@ async function restoreRuntimeFiles(runtimeDir: string, snapshot: RuntimeSnapshot
 	await restoreFile(path.join(runtimeDir, "mcp.json"), snapshot.mcp);
 	await restoreFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), snapshot.appendSystem);
 	await restoreFile(path.join(runtimeDir, "trust.json"), snapshot.trust);
+	// Restore the extension-path representation (absence or raw link target)
+	// before the rollback reload; the real resource directory is never touched.
+	await restoreFile(path.join(runtimeDir, "extensions"), snapshot.extensions);
 }
 
 /** Waits are delegated to Pi's native `ctx.waitForIdle()` (see SwitchDeps);

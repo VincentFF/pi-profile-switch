@@ -227,17 +227,34 @@ function mapNativeSkillEntry(
 	return `${marker}${resolved}`;
 }
 
-/** Maps one native extension entry onto the instance's generated settings.
+/** Maps one native extension entry onto the instance's discovery root.
  *
- *  AgentDir extensions are discovered in the instance as their real absolute
- *  paths (the managed `extensions` directory is not mirrored), so a relative
- *  target keeps its native meaning only after being resolved against the real
- *  agent dir. Absolute targets already carry their root; `builtin:` controls
- *  and `~` targets keep their native spelling. */
-function mapNativeExtensionEntry(entry: string, agentDir: string): string {
-	const { marker, target } = splitNativeEntry(entry);
-	if (target.startsWith("builtin:") || target.startsWith("~") || path.isAbsolute(target)) return entry;
-	return `${marker}${path.resolve(agentDir, target)}`;
+ *  For an omitted extension selection the instance mirrors the real extensions
+ *  directory, so the mapping matches the skills kind: a relative target under
+ *  the agent dir keeps its relative form (it still matches the mirror path's
+ *  `rel`), an absolute override under the agent dir is rewritten to the mirror
+ *  path, and a target that escapes the agent dir is resolved against the real
+ *  agent dir. `builtin:` controls, `~` targets, and marker-less globs keep
+ *  their native spelling — Pi's basename matching and its marker-less include
+ *  filters over plain entries must stay intact. */
+function mapNativeExtensionEntry(entry: string, agentDir: string, runtimeDir: string): string {
+	const { target } = splitNativeEntry(entry);
+	if (target.startsWith("builtin:")) return entry;
+	return mapNativeSkillEntry(entry, agentDir, runtimeDir, false);
+}
+
+/** The `-<path>` force-exclusion for one resolved extension entry, matching
+ *  the path Pi discovers at runtime under the mirrored extensions directory.
+ *  Package extensions are encoded in their package's filter instead. */
+function extensionExclusionEntry(
+	extension: { entry: string },
+	agentDir: string,
+	runtimeDir: string,
+): string {
+	if (isUnderPath(extension.entry, agentDir)) {
+		return `-${path.join(runtimeDir, path.relative(agentDir, extension.entry))}`;
+	}
+	return `-${extension.entry}`;
 }
 
 /** The user's own skill overrides (`!pattern`, `+path`, `-path`), carried into
@@ -431,26 +448,21 @@ function buildSelectionSettings(
 		settings.extensions = extensionEntries;
 	} else {
 		const native = Array.isArray(settings.extensions) ? settings.extensions : [];
-		// Relative native entries are resolved against the real agent dir: the
-		// managed `extensions` directory is not mirrored, so the instance base dir
-		// would change their meaning (including relative `!`/`+`/`-` controls that
-		// `pi config` writes as `-extensions/<name>.ts`).
+		// The instance mirrors the real extensions directory, so native entries
+		// keep their native meaning: relative paths resolve through the mirror,
+		// absolute controls map to it, escaping relatives are re-anchored, and
+		// marker-less filters keep filtering the native plain entries only.
 		const mappedNative = native.map((entry) =>
-			typeof entry === "string" ? mapNativeExtensionEntry(entry, agentDir) : entry,
+			typeof entry === "string" ? mapNativeExtensionEntry(entry, agentDir, runtimeDir) : entry,
 		);
-		// The instance's extensions directory is profile-managed (not mirrored),
-		// so the real discovery directory is restored additively to keep loose
-		// agentDir extensions visible under an omitted extension field.
-		const realExtensionsDir = path.join(agentDir, "extensions");
-		const addDir = existsSync(realExtensionsDir) ? [realExtensionsDir] : [];
 		const exclusions = (plan.disabledExtensions ?? [])
 			.filter((extension) => extension.origin !== "package")
 			.filter(
 				(extension) =>
 					projectExtensionsDir === undefined || !isUnderPath(extension.entry, projectExtensionsDir),
 			)
-			.map((extension) => `-${extension.entry}`);
-		const next = [...mappedNative, ...addDir, ...exclusions];
+			.map((extension) => extensionExclusionEntry(extension, agentDir, runtimeDir));
+		const next = [...mappedNative, ...exclusions];
 		if (next.length > 0) settings.extensions = next;
 	}
 
@@ -636,6 +648,77 @@ export interface ResolvedNames {
 	mcps?: string[];
 }
 
+/** How the instance's `extensions` path represents native discovery:
+ *  - `link`: a selection plan omits extensions; the path is a symlink to the
+ *    real agentDir extensions directory, dangling allowed.
+ *  - `absent`: a declared extension selection; no generated link.
+ *  - `untouched`: the ordinary default profile keeps its existing form. */
+type ExtensionPathRepresentation = "link" | "absent" | "untouched";
+
+function extensionPathRepresentation(plan: ActivationPlan): ExtensionPathRepresentation {
+	if (plan.filter === "none") return "untouched";
+	return plan.resourceSelection.extensions ? "absent" : "link";
+}
+
+function instanceExtensionsPath(runtimeDir: string): string {
+	return path.join(runtimeDir, "extensions");
+}
+
+/** Validates the extension-path transition before any managed write. Creating
+ *  the mirror link over pre-existing real content is refused with an actionable
+ *  error; that content is never deleted or overwritten. */
+async function assertExtensionPathTransition(
+	runtimeDir: string,
+	representation: ExtensionPathRepresentation,
+): Promise<void> {
+	if (representation !== "link") return;
+	const linkPath = instanceExtensionsPath(runtimeDir);
+	let info;
+	try {
+		info = await lstat(linkPath);
+	} catch {
+		return; // absent: the link may be created
+	}
+	if (info.isSymbolicLink()) return; // an existing generated link
+	throw new ActivationError(
+		`the instance extension path "${linkPath}" contains a real ${info.isDirectory() ? "directory" : "file"} (not a symlink); pi-profile will not delete or overwrite it — move or remove it so activation can link the real extensions directory`,
+	);
+}
+
+/** Applies the extension-path transition after the managed writes. Only the
+ *  instance link is mutated; its target and real resources are never touched. */
+async function applyExtensionPathTransition(
+	runtimeDir: string,
+	agentDir: string,
+	representation: ExtensionPathRepresentation,
+): Promise<void> {
+	if (representation === "untouched") return;
+	const linkPath = instanceExtensionsPath(runtimeDir);
+	const target = path.join(agentDir, "extensions");
+	let info;
+	try {
+		info = await lstat(linkPath);
+	} catch {
+		info = null;
+	}
+	if (representation === "link") {
+		if (info?.isSymbolicLink()) {
+			const current = await readlink(linkPath).catch(() => null);
+			if (current === target) return;
+			await rm(linkPath, { force: true });
+		} else if (info !== null) {
+			// Already rejected by assertExtensionPathTransition; re-assert defensively.
+			throw new ActivationError(
+				`the instance extension path "${linkPath}" is not a symlink; pi-profile will not delete or overwrite it`,
+			);
+		}
+		await symlink(target, linkPath, "dir");
+		return;
+	}
+	// "absent": remove only a generated link; leave real content alone.
+	if (info?.isSymbolicLink()) await rm(linkPath, { force: true });
+}
+
 /** Writes settings.json + pi-profile.json into an existing runtime dir and
  *  keeps the trust.json link in place for every profile: Pi reads its
  *  project-scope decision from that path, and project-level resources belong
@@ -651,6 +734,11 @@ export async function writeRuntimeFiles(
 ): Promise<{ warnings: string[] }> {
 	const warnings: string[] = [];
 	const settings = await computeSettings(plan, options, runtimeDir);
+
+	// Validate the extension-path transition before any managed write so an
+	// unsafe pre-existing path fails actionably and leaves the runtime intact.
+	const extensionsRepresentation = extensionPathRepresentation(plan);
+	await assertExtensionPathTransition(runtimeDir, extensionsRepresentation);
 
 	// Prepare the MCP snapshot and diagnostics before the write stage. A
 	// declared mcps or nonempty mcp_tools policy is strict; an undeclared
@@ -743,6 +831,12 @@ export async function writeRuntimeFiles(
 
 	// Full-fidelity symlink mirroring and dangling link cleanup (Ticket 02).
 	await syncAgentSymlinks(options.agentDir, runtimeDir);
+
+	// The conditional managed extension link is handled separately from the
+	// general mirror (which excludes managed paths): a selection plan omitting
+	// extensions gets a link to the real discovery directory, a declared
+	// selection gets none.
+	await applyExtensionPathTransition(runtimeDir, options.agentDir, extensionsRepresentation);
 
 	return { warnings };
 }

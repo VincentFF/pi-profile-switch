@@ -598,4 +598,82 @@ describe("sparse resource selection against a real spawned pi", () => {
 			expect(fixtureCommands(omitted, ["shared-ext"])).toEqual(["shared-ext"]);
 		},
 	);
+
+	it(
+		"marker-less extension glob includes match a native session",
+		{ timeout: 120_000 },
+		async () => {
+			// N4-A1: `"*"` is a marker-less include filter; native applies it only to
+			// plain settings entries (none here) and auto-discovers every extension.
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "alpha.ts"), "alpha");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "beta.ts"), "beta");
+			await writeUserSettings({ extensions: ["*"] });
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			const names = ["alpha", "beta"];
+			expect(fixtureCommands(native, names)).toEqual(["alpha", "beta"]);
+			expect(fixtureCommands(omitted, names)).toEqual(fixtureCommands(native, names));
+		},
+	);
+
+	it(
+		"basename extension exclusion matches a native session",
+		{ timeout: 120_000 },
+		async () => {
+			// N4-A2: `!legacy-*` excludes by basename natively.
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "legacy-old.ts"), "legacy-old");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "keep.ts"), "keep");
+			await writeUserSettings({ extensions: ["!legacy-*"] });
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			const names = ["legacy-old", "keep"];
+			expect(fixtureCommands(native, names)).toEqual(["keep"]);
+			expect(fixtureCommands(omitted, names)).toEqual(fixtureCommands(native, names));
+		},
+	);
+
+	it(
+		"marker-less path glob without native plain includes matches a native session",
+		{ timeout: 120_000 },
+		async () => {
+			// N4-B: a path-style marker-less glob is inert natively (no plain entries).
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "pkg-a.ts"), "pkg-a");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "alpha.ts"), "alpha");
+			await writeUserSettings({ extensions: ["extensions/pkg-*"] });
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			const names = ["pkg-a", "alpha"];
+			expect(fixtureCommands(native, names)).toEqual(["alpha", "pkg-a"]);
+			expect(fixtureCommands(omitted, names)).toEqual(fixtureCommands(native, names));
+		},
+	);
+
+	it(
+		"marker-less path glob filtering native plain includes matches a native session",
+		{ timeout: 120_000 },
+		async () => {
+			// N4-B variant: the same glob filters the user's real plain includes but
+			// must not filter the auto-discovered extensions (pkg-b, legacy).
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "pkg-a.ts"), "pkg-a");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "pkg-b.ts"), "pkg-b");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "alpha.ts"), "alpha");
+			await writeExtensionFile(path.join(fixture.agentDir, "extensions", "other.ts"), "other");
+			await writeUserSettings({
+				extensions: ["extensions/pkg-*", "./extensions/pkg-a.ts", "./extensions/alpha.ts"],
+			});
+			await writeCatalog({ open: {} });
+
+			const omitted = await observe(["open", "--", "--mode", "rpc"]);
+			const native = await observeNative();
+			const names = ["pkg-a", "pkg-b", "alpha", "other"];
+			expect(fixtureCommands(native, names)).toEqual(["other", "pkg-a", "pkg-b"]);
+			expect(fixtureCommands(omitted, names)).toEqual(fixtureCommands(native, names));
+		},
+	);
 });

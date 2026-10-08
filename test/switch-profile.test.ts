@@ -549,10 +549,13 @@ describe("sparse resource selection across activation (fix-undeclared-resource-f
 
 		await switchProfile("open", deps());
 		settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
-		// Both restrictions are gone: skills return to native visibility (no
-		// selection key) and extensions include the real discovery directory.
+		// Both restrictions are gone: skills and extensions return to native
+		// visibility (no selection keys); the omitted extension kind is exposed
+		// through the conditional managed link to the real discovery directory.
 		expect(settings.skills).toBeUndefined();
-		expect(settings.extensions).toEqual([path.join(fixture.agentDir, "extensions")]);
+		expect(settings.extensions).toBeUndefined();
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
 		const plan = await readPlanFile();
 		const resolved = plan.resolved as { skills: Array<{ name: string }> };
 		expect(resolved.skills.map((skill) => skill.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
@@ -611,5 +614,69 @@ describe("sparse resource selection across activation (fix-undeclared-resource-f
 		expect(reloads).toBe(2);
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(previousSettings);
 		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(previousPlan);
+	});
+
+	it("restores the extension-link representation in both transition directions on failure", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+		// Declared -> omitted failure: prior absence is restored.
+		await switchProfile("declared", deps());
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		let reloads = 0;
+		const failFirstReload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("reload failed");
+		};
+		await expect(switchProfile("open", deps({ reload: failFirstReload }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		// Omitted -> declared failure: the prior link is restored.
+		await switchProfile("open", deps());
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
+
+		reloads = 0;
+		await expect(switchProfile("declared", deps({ reload: failFirstReload }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
+		// The real extension source is never touched by the rollback.
+		expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+	});
+
+	it("fails actionably without deleting real content at the instance extension path", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+		// A real directory occupies the managed path instead of the generated link.
+		await mkdir(path.join(runtimeDir, "extensions"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "real.ts"), "real bytes");
+
+		await expect(switchProfile("open", deps())).rejects.toThrow(
+			/real directory.*will not delete or overwrite/,
+		);
+
+		// The content is never deleted or replaced by the generated link.
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isDirectory()).toBe(true);
+		expect(await readFile(path.join(runtimeDir, "extensions", "real.ts"), "utf8")).toBe("real bytes");
+	});
+
+	it("transitions the extension-link representation on reload after adding or deleting the field", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+
+		await switchProfile("open", deps());
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+
+		await writeCatalog({ open: { extensions: ["ext-a"] } });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		await writeCatalog({ open: {} });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
 	});
 });

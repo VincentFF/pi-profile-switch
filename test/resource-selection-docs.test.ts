@@ -35,6 +35,19 @@ describe("resource-selection documentation", () => {
 		expect(overview).toMatch(/Declared kind: whitelist/);
 	});
 
+	it("architecture overview documents the conditional extension mirror and rejects the superseded additive mechanism", async () => {
+		const overview = await read("docs/architecture/overview.md");
+		const model = section(overview, /^##\s+Filtering model$/);
+		expect(model.length).toBeGreaterThan(0);
+		expect(model).toMatch(/conditional symlink/i);
+		expect(model).toMatch(/never deleted, adopted, or overwritten/i);
+		expect(model).toMatch(/sweep skips the link without traversing/);
+		// The superseded additive-directory mechanism must not remain in scope;
+		// ordinary default additive wording elsewhere is not banned.
+		expect(model).not.toMatch(/directory re-added because the instance's is profile-managed/i);
+		expect(model).not.toMatch(/additively because the instance/i);
+	});
+
 	it("PRD success criterion 1 links to the resource-reference contract", async () => {
 		const prd = await read("docs/prd.md");
 		const criteria = section(prd, /^##\s+Success criteria$/);
