@@ -33,6 +33,22 @@ describe("generateRuntimeDir (default profile)", () => {
 		expect(generated.skills).toContain(path.join(fixture.agentDir, "skills"));
 	});
 
+	it("preserves native settings-only extension paths and relative resource paths", async () => {
+		const settingsOnly = "/opt/pi-resources/review-guard/index.ts";
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ extensions: [settingsOnly, "./extra.ts"] }),
+		);
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const generated = JSON.parse(await readFile(path.join(result.runtimeDir, "settings.json"), "utf8"));
+
+		// The ordinary default path stays the regression baseline: native entries
+		// and their relative meaning are preserved verbatim.
+		expect(generated.extensions).toEqual([settingsOnly, "./extra.ts", path.join(fixture.agentDir, "extensions")]);
+	});
+
 	it("writes an empty settings object when the user has none", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		expect(JSON.parse(await readFile(path.join(result.runtimeDir, "settings.json"), "utf8"))).toEqual({});
