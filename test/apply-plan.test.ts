@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { applyLaunchPlan, type PlanApplicationSurface } from "../src/switching/apply-plan.ts";
+import { applyLaunchPlan, readLaunchPlanFile, type PlanApplicationSurface } from "../src/switching/apply-plan.ts";
 
 let root: string;
 let runtimeDir: string;
@@ -524,5 +524,31 @@ describe("applyLaunchPlan", () => {
 		expect(surface.notifications.some((entry) => entry.message.includes("review → impl"))).toBe(true);
 		const rewritten = JSON.parse(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8"));
 		expect(rewritten.switchedFrom).toBeUndefined();
+	});
+});
+
+
+describe("persisted activation diagnostics", () => {
+	const issue = { kind: "extension", code: "unknown-reference", reference: "missing", message: 'profile "review": missing extension; not loaded' };
+	it("reads older plans without diagnostics and retains additive diagnostics through marker clearing", async () => {
+		await writePlan({ profile: "review", source: "global" });
+		expect((await readLaunchPlanFile(runtimeDir))?.diagnostics).toBeUndefined();
+		await writePlan({ profile: "review", source: "global", diagnostics: [issue], switchedFrom: "default" });
+		await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface: fakeSurface() });
+		expect((await readLaunchPlanFile(runtimeDir))?.diagnostics).toEqual([issue]);
+	});
+	it("emits each diagnostic once on reload but not again on startup/new/resume", async () => {
+		await writePlan({ profile: "review", source: "global", diagnostics: [issue, { ...issue }] });
+		for (const reason of ["startup", "new", "resume"]) {
+			const surface = fakeSurface();
+			await applyLaunchPlan({ runtimeDir, cwd: root, reason, surface });
+			expect(surface.notifications).toEqual([]);
+		}
+		for (let activation = 0; activation < 2; activation++) {
+			const surface = fakeSurface();
+			const result = await applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface });
+			expect(result.warnings).toEqual([issue.message]);
+			expect(surface.notifications).toEqual([{ message: issue.message, level: "warning" }]);
+		}
 	});
 });

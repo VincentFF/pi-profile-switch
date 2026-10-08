@@ -2,7 +2,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RpcDriver } from "./helpers/rpc-driver.ts";
+import { runLauncherRpc } from "./helpers/launcher-runner.ts";
+import type { RpcDriver } from "./helpers/rpc-driver.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -37,15 +38,7 @@ afterEach(async () => {
 async function start(profile = "review"): Promise<void> {
 	// Pre-seed trust so the project catalog participates.
 	await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
-	driver = new RpcDriver("node", [path.resolve("bin/pi-profile.ts"), profile, "--", "--mode", "rpc"], {
-		cwd: fixture.cwd,
-		env: {
-			...process.env,
-			HOME: fixture.root,
-			PI_CODING_AGENT_DIR: fixture.agentDir,
-			PI_OFFLINE: "1",
-		},
-	});
+	driver = runLauncherRpc(fixture, [profile, "--", "--mode", "rpc"]);
 	await driver.send({ type: "get_state" });
 }
 
@@ -146,15 +139,7 @@ describe("observability surface against a real spawned pi", () => {
 		await mkdir(globalProfilesDir, { recursive: true });
 		await writeFile(path.join(globalProfilesDir, "closed.json"), JSON.stringify({ mcps: [] }));
 
-		driver = new RpcDriver("node", [path.resolve("bin/pi-profile.ts"), "closed", "--", "--mode", "rpc"], {
-			cwd: fixture.cwd,
-			env: {
-				...process.env,
-				HOME: fixture.root,
-				PI_CODING_AGENT_DIR: fixture.agentDir,
-				PI_OFFLINE: "1",
-			},
-		});
+		driver = runLauncherRpc(fixture, ["closed", "--", "--mode", "rpc"]);
 		await driver.send({ type: "get_state" });
 
 		await command("profile status");
@@ -163,4 +148,40 @@ describe("observability surface against a real spawned pi", () => {
 		expect(seen).toContain("disabled=[github]");
 		expect(seen).not.toContain("disabled=[proj]");
 	}, 90_000);
+});
+
+
+describe("tolerant observability in native Pi", () => {
+	it("lists unavailable/catalog filename diagnostics but status ignores other malformed profiles", { timeout: 90_000 }, async () => {
+		const dir = path.join(fixture.profileSwitchDir, "profiles");
+		await writeFile(path.join(dir, "broken.json"), "{ bad");
+		await writeFile(path.join(dir, "default.json"), "{ bad");
+		await writeFile(path.join(dir, "bad name.json"), "{ bad");
+		await writeFile(path.join(dir, "shared.json"), "{ corrupt shadowed");
+		await start();
+		await command("profile");
+		await messageContaining('"available":false');
+		const list = driver.messages.find((message) => JSON.stringify(message).includes('"kind":"list"'));
+		expect(JSON.stringify(list)).toContain("broken.json");
+		expect(JSON.stringify(list)).toContain("bad name.json");
+		expect(JSON.stringify(list)).toContain('"shadowsGlobal":true');
+		await command("profile status");
+		await messageContaining('"kind":"status"');
+	});
+	it("exposes active skipped-reference and dormant-policy diagnostics without enabled claims or duplicate startup warnings", { timeout: 90_000 }, async () => {
+		const file = path.join(fixture.profileSwitchDir, "profiles", "partial.json");
+		await writeFile(file, '{"skills":["review","missing"],"mcps":["absent"],"mcp_tools":{"absent":["opaque"],"linear":[]},"unknownField":true}');
+		await start("partial");
+		expect(driver.stderr.join("").split("\n").filter((line) => line.includes('pi-profile: warning:') && line.includes('unknown skill "missing"'))).toHaveLength(1);
+		await command("profile status");
+		await messageContaining('"kind":"status"');
+		const status = driver.messages.find((message) => JSON.stringify(message).includes('"kind":"status"'));
+		const seen = JSON.stringify(status);
+		expect(seen).toContain("missing");
+		expect(seen).toContain("unknownField");
+		expect(seen).toContain("absent: declared policy [opaque] (missing; not applied)");
+		expect(seen).not.toContain("linear: no enabled MCP tools");
+		expect(await driver.skillCommandNames()).toEqual(["skill:review"]);
+		expect(await readFile(file, "utf8")).toBe('{"skills":["review","missing"],"mcps":["absent"],"mcp_tools":{"absent":["opaque"],"linear":[]},"unknownField":true}');
+	});
 });

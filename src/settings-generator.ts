@@ -45,7 +45,7 @@ import { mkdir, mkdtemp, lstat, readdir, readFile, readlink, rm, stat, symlink, 
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { ActivationError, buildInstanceMcpConfig, type ActivationPlan } from "./profile-resolver.ts";
+import { ActivationError, buildInstanceMcpConfig, mcpReferenceDiagnostics, mcpSourceDiagnostics, mergeResolutionDiagnostics, resolutionDiagnostics, type ActivationPlan } from "./profile-resolver.ts";
 import { applySubagentSettings, SubagentSettingsError } from "./subagent-settings.ts";
 import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
@@ -758,20 +758,17 @@ export async function writeRuntimeFiles(
 	const extensionsRepresentation = extensionPathRepresentation(plan);
 	await assertExtensionPathTransition(runtimeDir, extensionsRepresentation);
 
-	// Prepare the MCP snapshot and diagnostics before the write stage. A
-	// declared mcps or nonempty mcp_tools policy is strict; an undeclared
-	// policy diagnoses malformed sources by path and keeps valid ones (D2).
-	const hasMcpPolicy =
-		plan.mcps !== undefined || (plan.mcpTools !== undefined && Object.keys(plan.mcpTools).length > 0);
-	const discovery = await loadMergedMcpServers(
-		options.agentDir,
-		options.projectDir,
-		{
-			...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-			invalidSource: hasMcpPolicy ? "throw" : "diagnose",
-		},
+	// Re-read sources in diagnostic mode and apply intent to the final snapshot.
+	const discovery = await loadMergedMcpServers(options.agentDir, options.projectDir, {
+		...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+		invalidSource: "diagnose",
+	});
+	const diagnostics = mergeResolutionDiagnostics(
+		resolutionDiagnostics(plan).filter((issue) => issue.kind !== "mcp-source" && issue.kind !== "mcp-tools"),
+		mcpSourceDiagnostics(plan.profile, discovery.diagnostics),
+		mcpReferenceDiagnostics(plan.profile, discovery, plan.mcps, plan.mcpTools),
 	);
-	warnings.push(...(discovery.diagnostics ?? []));
+	warnings.push(...diagnostics.map((issue) => issue.message));
 	const instanceMcpConfig = buildInstanceMcpConfig(plan.profile, discovery, plan.mcps, plan.mcpTools);
 
 	// When a profile narrows `tools` and the effective MCP set still has an
@@ -813,6 +810,7 @@ export async function writeRuntimeFiles(
 		// Zero-match glob references (ADR-0009) — surfaced by /profile status
 		// so a typo'd glob is visible instead of silently selecting nothing.
 		...(plan.unmatched !== undefined ? { unmatched: plan.unmatched } : {}),
+		...(diagnostics.length > 0 ? { diagnostics } : {}),
 		...options.planExtras,
 	};
 

@@ -16,7 +16,7 @@ import path from "node:path";
 import { isRecord, readJsonFile } from "../json-file.ts";
 import { loadMergedMcpServers } from "../mcp-config.ts";
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
-import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
+import { ActivationError, defaultPlan, mergeResolutionDiagnostics, resolutionDiagnostics, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
@@ -29,15 +29,17 @@ export class UnknownProfileError extends Error {
 	}
 }
 
-/** Keep legacy unmatched notices while emitting each structured miss once. */
-function resolutionWarnings(plan: ActivationPlan): string[] {
-	const diagnostics = plan.diagnostics ?? [];
-	return [
-		...diagnostics.map((issue) => issue.message),
-		...(plan.unmatched ?? [])
-			.filter((reference) => !diagnostics.some((issue) => issue.code === "zero-match" && `${issue.kind}:${issue.reference}` === reference))
-			.map((reference) => `profile "${plan.profile}": "${reference}" matched nothing this resolution`),
-	];
+function collectPlanDiagnostics(plan: ActivationPlan, discovery: LauncherDiscovery, profile?: ResolvedProfile): string[] {
+	const diagnostics = mergeResolutionDiagnostics(
+		resolutionDiagnostics(plan),
+		discovery.extensions.warnings().map((message) => ({ kind: "extension-discovery", code: "discovery-warning", reference: message, message: `profile "${plan.profile}": ${message}` })),
+		(profile?.warnings ?? []).map((message) => {
+			const separator = message.indexOf(': profile "');
+			return { kind: "catalog", code: "unknown-field", reference: message.match(/unknown field "([^"]*)"/)?.[1] ?? message, message, ...(separator >= 0 ? { filePath: message.slice(0, separator) } : {}) };
+		}),
+	);
+	if (diagnostics.length > 0) plan.diagnostics = diagnostics;
+	return diagnostics.map((issue) => issue.message);
 }
 
 export interface LauncherContext {
@@ -160,11 +162,10 @@ export async function resolveInitialProfile(
 			overlay,
 			liveToolNames: options?.liveToolNames,
 		});
-		warnings.push(...discovery.extensions.warnings(), ...resolutionWarnings(plan));
+		warnings.push(...collectPlanDiagnostics(plan, discovery));
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
-	warnings.push(...(profile.warnings ?? []));
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 
 	// Diagnose source content regardless of whether the profile declares an
@@ -180,6 +181,6 @@ export async function resolveInitialProfile(
 		overlay: options?.overlay,
 		liveToolNames: options?.liveToolNames,
 	});
-	warnings.push(...discovery.extensions.warnings(), ...resolutionWarnings(plan));
+	warnings.push(...collectPlanDiagnostics(plan, discovery, profile));
 	return { plan, discovery, projectDir, projectTrusted, warnings };
 }

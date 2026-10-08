@@ -46,15 +46,15 @@ async function extensionsWith(names: string[] = []): Promise<DiscoveredExtension
 
 describe("resolveProfile", () => {
 	it("carries child settings verbatim without parent-model validation or resource selection", async () => {
-		const validateModel = vi.fn(async () => undefined);
 		const subagents = { defaultModel: "provider/model:high", agentOverrides: { unknownRole: { model: "inherit" } } };
 		const plan = await resolveProfile({
-			profile: profile("review", { subagents }), skills: [], extensions: await extensionsWith(), validateModel,
+			profile: profile("review", { subagents }), skills: [], extensions: await extensionsWith(),
 		});
 		expect(plan.subagents).toEqual(subagents);
 		expect(plan.extensions).toEqual([]);
 		expect(plan.tools).toBeUndefined();
-		expect(validateModel).not.toHaveBeenCalled();
+		expect(plan.model).toBeUndefined();
+		expect(plan.resourceSelection).toEqual({ skills: false, extensions: false });
 	});
 
 	it("expands literal and glob skill references against the registry, deduped", async () => {

@@ -14,6 +14,7 @@
  * visible.
  */
 
+import { mergeResolutionDiagnostics, type ResolutionDiagnostic } from "../profile-resolver.ts";
 import type { RuntimeOverlay } from "../runtime-state-store.ts";
 import type { ProfileSubagentSettings } from "../subagent-settings.ts";
 import type { LaunchPlanFile } from "./apply-plan.ts";
@@ -32,6 +33,8 @@ export interface McpServerToolStatus {
 	server: string;
 	policy: "unrestricted" | "restricted" | "none";
 	tools?: string[];
+	/** Retained declaration not applied to an eligible user-level server. */
+	state?: "disabled" | "missing" | "project";
 }
 
 export interface StatusReport {
@@ -47,6 +50,7 @@ export interface StatusReport {
 	delta?: { added: string[]; removed: string[] };
 	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
+	diagnostics?: ResolutionDiagnostic[];
 	conflicts: StatusConflict[];
 	subagents?: {
 		declared: ProfileSubagentSettings;
@@ -89,29 +93,25 @@ export function buildStatusReport(input: {
 	const { plan } = input;
 
 	const discovered = new Set(input.discoveredMcpServers);
-	let enabled: string[];
-	let disabled: string[];
-	let missing: string[];
-
-	if (plan.mcps === undefined) {
-		const snapshotDisabled = new Set(input.disabledMcpServers);
-		enabled = input.discoveredMcpServers.filter((name) => !snapshotDisabled.has(name));
-		disabled = input.discoveredMcpServers.filter((name) => snapshotDisabled.has(name));
-		missing = [];
-	} else {
-		const projectMcpServers = new Set(input.projectMcpServers ?? []);
-		const snapshotDisabled = new Set(input.disabledMcpServers);
-		const explicitMcps = new Set(plan.mcps);
-		const projectEnabled = input.discoveredMcpServers.filter(
-			(name) => projectMcpServers.has(name) && !explicitMcps.has(name) && !snapshotDisabled.has(name),
-		);
-		enabled = [...plan.mcps, ...projectEnabled].sort();
-		disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name));
-		missing = plan.mcps.filter((name) => !discovered.has(name));
-	}
+	const snapshotDisabled = new Set(input.disabledMcpServers);
+	const project = new Set(input.projectMcpServers ?? []);
+	const diagnostics = mergeResolutionDiagnostics(plan.diagnostics);
+	const enabled = input.discoveredMcpServers.filter((name) => !snapshotDisabled.has(name) && (project.has(name) || plan.mcps === undefined || plan.mcps.includes(name))).sort();
+	const disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name)).sort();
+	const referenced = new Set([
+		...(plan.mcps ?? []), ...Object.keys(plan.mcpTools ?? {}),
+		...diagnostics.filter((issue) => (issue.kind === "mcp" || issue.kind === "mcp-tools") && issue.code !== "zero-match" && issue.reference !== undefined).map((issue) => issue.reference!),
+	]);
+	const missing = [...referenced].filter((name) => !discovered.has(name)).sort();
 
 	const mcp = { enabled, disabled, missing };
 
+	const policyState = (server: string): Pick<McpServerToolStatus, "state"> => {
+		if (!discovered.has(server)) return { state: "missing" };
+		if (project.has(server)) return { state: "project" };
+		if (!enabled.includes(server)) return { state: "disabled" };
+		return {};
+	};
 	let mcpTools: McpServerToolStatus[] | undefined;
 	const policyMap = plan.mcpTools;
 	if (policyMap !== undefined || enabled.length > 0) {
@@ -124,9 +124,9 @@ export function buildStatusReport(input: {
 			} else {
 				const declaredTools = policyMap![server] ?? [];
 				if (declaredTools.length === 0) {
-					mcpTools.push({ server, policy: "none", tools: [] });
+					mcpTools.push({ server, policy: "none", tools: [], ...policyState(server) });
 				} else {
-					mcpTools.push({ server, policy: "restricted", tools: declaredTools });
+					mcpTools.push({ server, policy: "restricted", tools: declaredTools, ...policyState(server) });
 				}
 			}
 		}
@@ -194,6 +194,7 @@ export function buildStatusReport(input: {
 		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(delta !== undefined ? { delta } : {}),
 		...(plan.unmatched !== undefined && plan.unmatched.length > 0 ? { unmatched: plan.unmatched } : {}),
+		...(diagnostics.length > 0 ? { diagnostics } : {}),
 		conflicts,
 		...(plan.subagents !== undefined
 			? {
@@ -246,7 +247,10 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	if (report.mcpTools !== undefined && report.mcpTools.length > 0) {
 		lines.push("mcp tools:");
 		for (const item of report.mcpTools) {
-			if (item.policy === "unrestricted") {
+			if (item.state !== undefined) {
+				const state = item.state === "project" ? "project-owned" : item.state;
+				lines.push(`  ${item.server}: declared policy [${(item.tools ?? []).join(", ")}] (${state}; not applied)`);
+			} else if (item.policy === "unrestricted") {
 				lines.push(`  ${item.server}: unrestricted`);
 			} else if (item.policy === "none") {
 				lines.push(`  ${item.server}: no enabled MCP tools`);
@@ -260,6 +264,10 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	}
 	if (report.unmatched !== undefined) {
 		lines.push(`unmatched (zero-match globs this resolution): [${report.unmatched.join(", ")}]`);
+	}
+	if (report.diagnostics !== undefined) {
+		lines.push("diagnostics:");
+		for (const issue of report.diagnostics) lines.push(`  ${issue.message}`);
 	}
 	for (const conflict of report.conflicts) {
 		lines.push(

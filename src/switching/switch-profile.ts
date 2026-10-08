@@ -299,5 +299,5 @@ export async function switchProfile(
 		}
 	}
 
-	return { profile: resolved.plan.profile, warnings };
+	return { profile: resolved.plan.profile, warnings: [...new Set(warnings)] };
 }

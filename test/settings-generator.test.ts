@@ -8,6 +8,7 @@ import type { ProfileDefinition } from "../src/profile-catalog.ts";
 import { defaultPlan, resolveProfile } from "../src/profile-resolver.ts";
 import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
 import { resolveModelProfileInNode } from "./helpers/model-profile-runner.ts";
+import { runLauncher } from "./helpers/launcher-runner.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -270,5 +271,23 @@ describe("native model declaration inputs", () => {
 		const { runtimeDir } = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, homeDir: fixture.root, discovery: { skills: [], packages: [] } });
 		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
 		expect(settings.defaultThinkingLevel).toBe(native.defaultThinkingLevel);
+	});
+});
+
+
+describe("launcher activation diagnostic deduplication", () => {
+	it("prints resolution/generation warnings once on stderr and stores them for status", { timeout: 45_000 }, async () => {
+		const dir = path.join(fixture.profileSwitchDir, "profiles");
+		await mkdir(dir, { recursive: true });
+		await writeFile(path.join(dir, "review.json"), '{"skills":["missing"],"mcps":[],"unknownField":"ignored"}');
+		const malformed = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(malformed, "{ bad");
+		const output = await runLauncher(fixture, ["review", "--", "--version"]);
+		expect(output.code).toBe(0);
+		const warnings = output.stderr.split("\n").filter((line) => line.startsWith("pi-profile: warning:"));
+		expect(warnings.filter((line) => line.includes(malformed))).toHaveLength(1);
+		expect(warnings.filter((line) => line.includes('unknown skill "missing"'))).toHaveLength(1);
+		expect(warnings.filter((line) => line.includes('unknown field "unknownField"'))).toHaveLength(1);
+		expect(output.stdout).not.toContain("warning");
 	});
 });
