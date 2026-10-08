@@ -39,10 +39,10 @@ profile field present --> expanded allowlist - matching overlay entries
 The generator chooses its branch independently for skills and extensions:
 
 - A declared kind uses the existing allowlist encoding, including an explicitly empty selection.
-- An undeclared kind starts from current real user settings. Preserve native resource paths and override meaning; restore the real extension discovery directory additively because the instance's extension directory remains managed. Skills continue to use the existing mirror.
+- An undeclared kind starts from current real user settings. Preserve native resource paths and override meaning. In a selection plan with undeclared extensions, manage `extensions` as a symlink to the real agentDir's extension directory so Pi auto-discovers it. Do not add that directory as a plain settings include. Skills continue to use the existing mirror.
 - An overlay on an undeclared kind adds only concrete force-exclusions. Keep settings-only resources outside its reference vocabulary intact.
 
-Resource paths and exact exclusions must be mapped to their actual discovery paths after the agent directory moves. Preserve relative-path meaning and native inclusion/exclusion precedence. Native built-in identifiers stay literal rather than being resolved as filesystem paths. In a declared kind, retaining native exclusions must not re-add unrelated native additive includes; selected resources with a native force-inclusion exception must still load.
+Resource paths and exact exclusions must be mapped to their actual discovery paths after the agent directory moves. Preserve relative-path meaning, basename-pattern matching, and native inclusion/exclusion precedence. Marker-less glob filters apply to native plain includes, not to auto-discovered directories. Absolute controls under a mirrored directory must match its runtime lexical paths; escaping relative paths retain their real-agentDir resolution root. Native built-in identifiers and native no-op `~` override targets stay literal rather than acquiring new semantics. In a declared kind, retaining native exclusions must not re-add unrelated native additive includes; selected resources with a native force-inclusion exception must still load.
 
 Package handling follows the same split. Rewrite an allowlist only for a declared kind. Preserve an undeclared kind's original filter, or its absence, and other package properties. Native-base overlays append package-relative force-exclusions only for matched entries. An existing empty native filter remains empty. Packages unresolved during read-only discovery retain their native undeclared-kind input; discovery must not install or contact the network to complete an allowlist.
 
@@ -50,15 +50,25 @@ Keep configured package source identity for matching against discovery; preserve
 
 Carry native extension override controls through both branches. Their authoritative syntax and identifiers come from Pi, not a package-maintained inventory or an exemption list. The ordinary `default` path remains a regression baseline.
 
-**Alternatives rejected:** changing the entire profile to `filter: "none"` when one field is absent would ignore the other field's explicit selection. Rewriting every package kind together is the existing bug. A native-base overlay encoded as a positive whitelist would hide settings-only resources and unresolved package contents.
+**Alternatives rejected:** changing the entire profile to `filter: "none"` when one field is absent would ignore the other field's explicit selection. Rewriting every package kind together is the existing bug. A native-base overlay encoded as a positive whitelist would hide settings-only resources and unresolved package contents. Adding the real extension directory as a plain include subjects auto-discovered extensions to marker-less glob filters that are inert for native auto-discovery. Dropping those globs instead would discard their native filtering of explicit plain includes.
 
 ### D3. Use sparse declarations for the default-overlay path
 
 Replace the synthetic wildcard definition in `resolveInitialProfile` with an empty definition. The shared resolver supplies native referenceable bases and concrete exclusions for the kinds the overlay actually narrows. Preserve the existing rejection of MCP disables on `default` and existing tool-overlay behavior.
 
-Switching keeps its current resolve, snapshot, rewrite, reload, and rollback boundary. Each rewrite uses real user settings; no previous-instance selection is treated as the next activation's native input.
+Switching keeps its current resolve, snapshot, rewrite, reload, and rollback boundary. Each rewrite uses real user settings; no previous-instance selection is treated as the next activation's native input. D4 extends the snapshot to cover extension-directory representation.
 
 **Alternative rejected:** retaining wildcard declarations for unrelated kinds makes a tool-only overlay accidentally change skill and extension visibility.
+
+### D4. Keep the conditional extension mirror inside the activation boundary
+
+`extensions` remains a profile-managed instance path. For a selection plan with `resourceSelection.extensions === false`, it is a symlink to the real agentDir's `extensions` path, including when the target is absent. Declared extension selections remove the generated link and retain the existing allowlist encoding. The ordinary `filter: "none"` path retains its existing additive encoding and has no conditional mirror.
+
+Prepare settings and validate the extension-path transition before writes. Change only the instance link, never the linked directory or its contents. A pre-existing real directory or file at the instance extension path blocks activation with an actionable error; it is not deleted or adopted by the activation path. Keep `syncAgentSymlinks(agentDir, runtimeDir)` and its existing managed-path exclusions unchanged; handle this conditional managed link separately.
+
+Include the instance extension path in the switch snapshot as absent or symlink, recording the raw target. Restore that representation before rollback reload after any write, link-transition, or reload failure. No change to the real resource directory is part of rollback. The sweep continues to skip symlinks without traversing their targets and keeps the existing warning-only treatment of content in real instance extension directories under ADR-0012.
+
+This is a reversible internal representation change. It introduces no durable settings format, new process architecture, dependency, or new sweep disposition; no ADR is required.
 
 ### Export surface
 
@@ -78,7 +88,8 @@ disabledExtensions?: ActivationPlan["extensions"];
 | `src/profile-resolver.ts` | `defaultPlan(): ActivationPlan` | Populate both declaration flags as false; keep the ordinary default plan's existing resolved-array shape. |
 | `src/profile-resolver.ts` | `resolveProfile(input: ResolveInput): Promise<ActivationPlan>` | Populate metadata, native referenceable snapshots, and native-base overlay exclusions. Existing `ActivationError` behavior remains. |
 | `src/settings-generator.ts` | `generateRuntimeDir(plan: ActivationPlan, options: GenerateOptions): Promise<GeneratedRuntime>` | Consume per-kind control; signature and existing error propagation remain. |
-| `src/settings-generator.ts` | `writeRuntimeFiles(runtimeDir: string, plan: ActivationPlan, options: RuntimeFileOptions): Promise<{ warnings: string[] }>` | Same consumption for in-place rewrites; prepare content before writes as today. |
+| `src/settings-generator.ts` | `writeRuntimeFiles(runtimeDir: string, plan: ActivationPlan, options: RuntimeFileOptions): Promise<{ warnings: string[] }>` | Consume per-kind control and transition the conditional extension mirror; prepare content and validate the transition before writes. Unsafe pre-existing extension-path content raises the existing `ActivationError` with its path and a fix. |
+| `src/switching/switch-profile.ts` | `switchProfile(name: string \| undefined, deps: SwitchDeps, options?: { reloadCurrent?: boolean; overlay?: RuntimeOverlay \| null; clearOverlay?: boolean }): Promise<SwitchResult>` | Signature unchanged; snapshot and restore extension-path absence or raw symlink target within the existing `SwitchError` rollback boundary. |
 | `src/launcher/initial-profile.ts` | `resolveInitialProfile(name: string \| undefined, context: LauncherContext, options?: { overlay?: RuntimeOverlay; liveToolNames?: string[] }): Promise<InitialProfile>` | Change only the synthetic default-overlay definition; existing activation errors remain. |
 
 Declaration metadata and concrete exclusions are internal resolver-to-generator data. They need not be serialized into `pi-profile.json`; retain its existing resolved snapshots, tool fields, and switch markers. No durable format or new error class is introduced.
@@ -87,7 +98,8 @@ Declaration metadata and concrete exclusions are internal resolver-to-generator 
 
 - Existing profiles can expose more resources after the fix --> publish explicit-empty upgrade guidance in both READMEs; do not silently rewrite catalogs.
 - Native override precedence differs between ordinary resource lists and package filters --> compare actual loaded resources with native Pi, including broad exclusions, force-inclusion exceptions, empty package filters, and relative paths.
-- Managed extension directories and symlinked skills have different lexical paths --> test exclusion matching against actual runtime discovery paths, including skills symlinked outside the real agent directory.
+- Conditional extension mirrors and native additive resource paths have different lexical paths --> test relative, absolute, basename, and marker-less patterns against true native Pi, including symlinked resources and explicit plain includes.
+- Switching can change extension-directory representation --> test both transition directions, link-write and reload failure rollback, absent source directories, and cleanup that never traverses the real directory.
 - Native-base overlays can unintentionally become global allowlists --> exercise settings-only extension paths, unresolved package declarations, and unrelated kinds under tool-only overlays.
 - A required internal field affects hand-built test plans --> update `selectionPlan` in `test/settings-generator-selection.test.ts` and let TypeScript identify any other constructors; never infer declaration intent from array length.
 - Project resources or sibling native settings can be affected by path/source changes --> retain the existing trust boundary and verify unmanaged settings and real source files are unchanged.

@@ -11,6 +11,7 @@ Named profiles currently turn omitted `skills` and `extensions` into empty selec
 - Keep explicit selections restrictive, retain native exclusions, and preserve the project-trust boundary.
 - Apply overlays to the appropriate native or explicitly selected base without narrowing an unrelated kind.
 - Restore these semantics on launch, profile switching, and reload, using current real user settings rather than the previous instance.
+- Preserve native automatic extension discovery for omitted selections through a conditional instance link; include its representation in activation rollback and verify cleanup never touches the real resource directory.
 - **BREAKING for profiles relying on the bug**: omission no longer hides a resource kind. Users requiring an empty selection must declare `[]`; catalog files are not migrated automatically.
 - Keep `mcps`, `mcp_tools`, `tools`, commands, configuration fields, and runtime dependencies unchanged.
 
@@ -29,15 +30,15 @@ None.
 
 ## Impact
 
-Resolution and instance generation change in `src/profile-resolver.ts`, `src/settings-generator.ts`, and the default-overlay branch of `src/launcher/initial-profile.ts`. The internal activation-plan interface must retain declaration intent across the resolver/generator boundary; its exact surface belongs in the design.
+Resolution and instance generation change in `src/profile-resolver.ts`, `src/settings-generator.ts`, and the default-overlay branch of `src/launcher/initial-profile.ts`. The internal activation-plan interface must retain declaration intent across the resolver/generator boundary; its exact surface belongs in the design. `src/switching/switch-profile.ts` also extends rollback to the conditional extension-directory representation. Existing sweep dispositions remain unchanged; cleanup safety is verified in `test/runtime-cleanup.test.ts`.
 
 Regression coverage spans resolver and settings tests, named-profile launch, profile switching, overlays, and project trust. Existing MCP/tool omission tests remain compatibility guards. Resource discovery stays delegated to Pi; the change adds no registration layer, dependency graph, or resource copies.
 
 ## Doc Impact
 
 - `docs/prd.md`: replace the unconditional resource-selection wording in success criterion 1 with a link to the sparse-selection and project-boundary contracts; product goals and non-goals remain unchanged.
-- `docs/architecture/overview.md`: describe independent per-kind materialization and native-base overlay exclusions; correct the unconditional named-profile filtering description.
+- `docs/architecture/overview.md`: describe independent per-kind materialization, the conditional extension mirror, its activation/rollback boundary, and native-base overlay exclusions; correct the unconditional named-profile filtering description.
 - `CONTEXT.md`: none: existing domain terms and resource identities remain unchanged.
-- `docs/adr/`: none: ADR-0005, ADR-0007, ADR-0008, and ADR-0011 remain applicable; the internal plan is reversible and introduces no durable format or external dependency commitment.
+- `docs/adr/`: none: the conditional managed link and internal plan are reversible and introduce no durable configuration format, process architecture, or external dependency commitment. Existing decisions, including ADR-0012's warning-only treatment of content in real instance extension directories, remain applicable.
 - `README.md` and `README.zh-CN.md`: add concise upgrade guidance for profiles relying on implicit denial, and link the authoritative selection contract.
 - `skills/profile-config/SKILL.md`: none: its existing omission and authoring guidance already matches the intended contract.

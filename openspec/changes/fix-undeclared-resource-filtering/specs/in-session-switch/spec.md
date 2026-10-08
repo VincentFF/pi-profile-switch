@@ -6,7 +6,7 @@
 
 Switching and reload SHALL apply the resource-reference specification's "Sparse skill and extension selection" contract using the current real user settings. Switching to a profile that omits a previously selected kind SHALL remove the previous profile's restriction for that kind. Deleting a resource field from the current profile and reloading SHALL have the same effect, except for restrictions still declared by the current overlay.
 
-The existing session-preservation, rollback, and selection-persistence contracts SHALL apply to these transitions.
+The existing session-preservation, rollback, and selection-persistence contracts SHALL apply to these transitions. Extension-directory representation SHALL transition under the same activation boundary as generated settings. A failed transition SHALL restore the prior instance extension path's absence or exact raw symlink target before reloading; real resource contents MUST remain unchanged.
 
 #### Scenario: Switching restores an omitted kind
 
@@ -27,6 +27,16 @@ The existing session-preservation, rollback, and selection-persistence contracts
 
 - **WHEN** rewriting or reloading fails during a transition between declared and omitted resource selections
 - **THEN** the pre-transition runtime files and resource visibility are restored, and the target profile is not reported as active
+
+#### Scenario: Extension discovery representation follows both switch directions
+
+- **WHEN** a session switches between declared and omitted extension selections in either direction, or reloads after adding or deleting the extension field
+- **THEN** the instance extension representation follows the launcher layout contract, native patterns retain their meaning, and session identity and history remain unchanged
+
+#### Scenario: Failed mirror transition restores the prior representation
+
+- **WHEN** an extension-path transition or subsequent reload fails while switching between declared and omitted selections
+- **THEN** prior settings, plan, extension-path absence or raw link target, and loaded resources are restored without changing real extension files or persisting the failed selection
 
 ### Requirement: Native resource bases for overlays
 
