@@ -5,8 +5,8 @@
  * name or saved state (project state wins when trusted) → catalog lookup →
  * discovery (skills, extensions, MCP server names) → resolver (glob
  * expansion, overlay, model validation) → ActivationPlan + full discovery
- * results for the settings generator. Unknown profiles, malformed catalogs,
- * and unresolvable resources all fail before Pi spawns.
+ * results for the settings generator. Normal default activation bypasses
+ * the catalog; named activation reads only its winning definition.
  *
  * The CLI's initial selection is transient: no runtime state is written here.
  */
@@ -97,8 +97,6 @@ export async function resolveInitialProfile(
 ): Promise<InitialProfile> {
 	const { projectTrusted } = await readTrustInputs(context);
 	const projectDir = projectTrusted ? context.cwd : undefined;
-	const catalog = await ProfileCatalog.load(context.agentDir, { projectDir });
-
 	let selected = name;
 	const warnings: string[] = [];
 	if (selected === undefined) {
@@ -110,7 +108,10 @@ export async function resolveInitialProfile(
 		selected ??= (await new RuntimeStateStore(getGlobalStateDir(context.agentDir)).read()).activeProfile ?? "default";
 	}
 
-	const profile = await catalog.resolve(selected);
+	// Default activation needs no catalog enumeration or definition reads.
+	const profile = selected === "default"
+		? { name: "default", source: "builtin" as const, definition: {} }
+		: await (await ProfileCatalog.load(context.agentDir, { projectDir })).resolve(selected);
 	if (profile === undefined) {
 		// Explicit positional selection fails loudly; a restored selection that
 		// no longer exists falls back to default with a warning instead of
@@ -161,6 +162,7 @@ export async function resolveInitialProfile(
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
+	warnings.push(...(profile.warnings ?? []));
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 
 	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;

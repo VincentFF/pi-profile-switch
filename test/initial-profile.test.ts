@@ -1,7 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as jsonFile from "../src/json-file.ts";
+import { ProfileCatalog } from "../src/profile-catalog.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
 import { addGlobalExtension, addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
@@ -15,6 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	process.env.HOME = savedHome;
 	await rm(fixture.root, { recursive: true, force: true });
 });
@@ -108,6 +111,61 @@ describe("resolveInitialProfile", () => {
 		await writeCatalog({ review: { skills: ["ghost-skill"] } });
 
 		await expect(resolveInitialProfile("review", context())).rejects.toThrow(/ghost-skill/);
+	});
+
+	describe("selected definition isolation", () => {
+		it.each(["default", undefined])("bypasses catalog loading for normal default selection %s", async (name) => {
+			await writeCatalog({ default: [], invalid: { skills: 1 } });
+			await writeFile(path.join(fixture.profileSwitchDir, "profiles", "corrupt.json"), "{ bad");
+			const load = vi.spyOn(ProfileCatalog, "load");
+			const read = vi.spyOn(jsonFile, "readJsonFile");
+			const { plan } = await resolveInitialProfile(name, context());
+			expect(plan.filter).toBe("none");
+			expect(load).not.toHaveBeenCalled();
+			expect(read.mock.calls.map(([file]) => file).filter((file) => file.includes(`${path.sep}profiles${path.sep}`))).toEqual([]);
+		});
+
+		it("does not enumerate a catalog path on normal default activation", async () => {
+			await mkdir(fixture.profileSwitchDir, { recursive: true });
+			await writeFile(path.join(fixture.profileSwitchDir, "profiles"), "not a directory");
+			expect((await resolveInitialProfile("default", context())).plan.filter).toBe("none");
+		});
+
+		it("resolves a valid named profile without reading unrelated invalid definitions", async () => {
+			await writeCatalog({ review: { skills: [] }, invalid: { skills: 1 } });
+			await writeFile(path.join(fixture.profileSwitchDir, "profiles", "corrupt.json"), "{ bad");
+			const read = vi.spyOn(jsonFile, "readJsonFile");
+			expect((await resolveInitialProfile("review", context())).plan.profile).toBe("review");
+			expect(read.mock.calls.map(([file]) => file).filter((file) => file.includes(`${path.sep}profiles${path.sep}`))).toEqual([path.join(fixture.profileSwitchDir, "profiles", "review.json")]);
+		});
+
+		it("rejects a saved existing malformed profile instead of falling back", async () => {
+			await writeCatalog({ review: { skills: 1 } });
+			await writeFile(path.join(fixture.agentDir, "pi-profile-state.json"), JSON.stringify({ activeProfile: "review" }));
+			await expect(resolveInitialProfile(undefined, context())).rejects.toThrow(path.join(fixture.profileSwitchDir, "profiles", "review.json"));
+		});
+
+		it("rejects an invalid trusted-project winner without reading its valid global counterpart", async () => {
+			await writeCatalog({ review: {} });
+			const dir = path.join(fixture.cwd, ".pi", "profiles");
+			await mkdir(dir, { recursive: true });
+			const winner = path.join(dir, "review.json");
+			await writeFile(winner, "{ bad");
+			const read = vi.spyOn(jsonFile, "readJsonFile");
+			await expect(resolveInitialProfile("review", { ...context(), trustOverride: true })).rejects.toThrow(winner);
+			expect(read.mock.calls.map(([file]) => file)).not.toContain(path.join(fixture.profileSwitchDir, "profiles", "review.json"));
+		});
+
+		it("collects unknown-field warnings without forwarding those keys to the plan", async () => {
+			await writeCatalog({ review: { skills: [], defaultTools: ["write"], defaultProjectTrust: "always" } });
+			const { plan, warnings } = await resolveInitialProfile("review", context());
+			expect(warnings).toContainEqual(expect.stringContaining('unknown field "defaultTools" ignored'));
+			expect(warnings).toContainEqual(expect.stringContaining('unknown field "defaultProjectTrust" ignored'));
+			expect(Object.hasOwn(plan, "defaultTools")).toBe(false);
+			expect(Object.hasOwn(plan, "defaultProjectTrust")).toBe(false);
+			expect(plan.tools).toBeUndefined();
+			expect(plan.model).toBeUndefined();
+		});
 	});
 
 	describe("project trust gating", () => {
