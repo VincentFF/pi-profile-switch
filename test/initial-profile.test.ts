@@ -107,10 +107,25 @@ describe("resolveInitialProfile", () => {
 		await expect(readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8")).rejects.toThrow();
 	});
 
-	it("fails activation when a profile references a missing skill", async () => {
-		await writeCatalog({ review: { skills: ["ghost-skill"] } });
-
-		await expect(resolveInitialProfile("review", context())).rejects.toThrow(/ghost-skill/);
+	it("warns and retains usable references when a profile names a missing skill", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalExtension(fixture, "linter");
+		await writeCatalog({ review: { skills: ["missing", "future-*", "alpha-skill"], extensions: ["ghost", "ghost-*", "linter"] } });
+		const file = path.join(fixture.profileSwitchDir, "profiles", "review.json");
+		const before = await readFile(file, "utf8");
+		const { plan, warnings } = await resolveInitialProfile("review", context());
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(warnings.filter((warning) => warning.includes('"missing"'))).toHaveLength(1);
+		expect(warnings.filter((warning) => warning.includes('"ghost"'))).toHaveLength(1);
+		expect(warnings.filter((warning) => warning.includes("future-*"))).toHaveLength(1);
+		expect(warnings.filter((warning) => warning.includes("ghost-*"))).toHaveLength(1);
+		await addGlobalSkill(fixture, "missing");
+		await addGlobalExtension(fixture, "ghost");
+		const next = await resolveInitialProfile("review", context());
+		expect(next.plan.skills.map((entry) => entry.name)).toEqual(["missing", "alpha-skill"]);
+		expect(next.plan.extensions.map((entry) => entry.id)).toEqual(["ghost", "linter"]);
+		expect(await readFile(file, "utf8")).toBe(before);
 	});
 
 	describe("selected definition isolation", () => {

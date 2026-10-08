@@ -30,12 +30,15 @@ export class UnknownProfileError extends Error {
 	}
 }
 
-/** Zero-match glob references surface as launch warnings (ADR-0009):
- *  visible, but never blocking — globs re-expand on every resolution. */
-function unmatchedWarnings(plan: ActivationPlan): string[] {
-	return (plan.unmatched ?? []).map(
-		(reference) => `profile "${plan.profile}": "${reference}" matched nothing this resolution`,
-	);
+/** Keep legacy unmatched notices while emitting each structured miss once. */
+function resolutionWarnings(plan: ActivationPlan): string[] {
+	const diagnostics = plan.diagnostics ?? [];
+	return [
+		...diagnostics.map((issue) => issue.message),
+		...(plan.unmatched ?? [])
+			.filter((reference) => !diagnostics.some((issue) => issue.code === "zero-match" && `${issue.kind}:${issue.reference}` === reference))
+			.map((reference) => `profile "${plan.profile}": "${reference}" matched nothing this resolution`),
+	];
 }
 
 export interface LauncherContext {
@@ -158,7 +161,7 @@ export async function resolveInitialProfile(
 			overlay,
 			liveToolNames: options?.liveToolNames,
 		});
-		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
+		warnings.push(...discovery.extensions.warnings(), ...resolutionWarnings(plan));
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
@@ -187,6 +190,6 @@ export async function resolveInitialProfile(
 		overlay: options?.overlay,
 		liveToolNames: options?.liveToolNames,
 	});
-	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
+	warnings.push(...discovery.extensions.warnings(), ...resolutionWarnings(plan));
 	return { plan, discovery, projectDir, projectTrusted, warnings };
 }

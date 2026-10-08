@@ -6,7 +6,7 @@
  * - Glob references (`*`, `?`) expand against the full registry at every
  *   resolution; zero matches is fine (new matches join on the next start) and
  *   is reported in the plan's `unmatched` list so typos are visible.
- * - Literal references must exist; a missing literal fails activation.
+ * - Missing profile skill and extension references produce diagnostics.
  *   Extension references resolve through ExtensionDiscovery.select (ADR-0007):
  *   package name/alias, loose-file stem, or an on-disk path — no
  *   pre-registration required.
@@ -41,6 +41,14 @@ function extractModel(definition: ProfileDefinition): ProfileModel | undefined {
 }
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
+
+export interface ResolutionDiagnostic {
+	kind: string;
+	code: string;
+	message: string;
+	reference?: string;
+	filePath?: string;
+}
 
 export class ActivationError extends Error {
 	constructor(message: string) {
@@ -125,6 +133,7 @@ export interface ActivationPlan {
 	 *  Tool globs are excluded: extension-contributed tools are unknowable
 	 *  before spawn, so a pre-spawn zero-match proves nothing. */
 	unmatched?: string[];
+	diagnostics?: ResolutionDiagnostic[];
 }
 
 export interface ResolveInput {
@@ -217,6 +226,7 @@ function expandReferences<T>(
 	options?: {
 		literalMustExist?: boolean;
 		onZeroMatch?: (reference: string) => void;
+		onLiteralMiss?: (reference: string) => void;
 		/** Custom literal-miss failure (e.g. with near-miss candidates). Throws. */
 		literalMissError?: (reference: string) => never;
 	},
@@ -239,6 +249,10 @@ function expandReferences<T>(
 			if (options?.literalMustExist === false) {
 				// Pass-through (e.g. extension-provided tool names).
 				selected.set(reference, reference as T);
+				continue;
+			}
+			if (options?.onLiteralMiss !== undefined) {
+				options.onLiteralMiss(reference);
 				continue;
 			}
 			const missError = options?.literalMissError;
@@ -268,6 +282,11 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	const { profile, skills, extensions, overlay } = input;
 	const definition: ProfileDefinition = profile.definition;
 	const unmatched: string[] = [];
+	const diagnostics: ResolutionDiagnostic[] = [];
+	const zeroMatch = (kind: string, reference: string): void => {
+		unmatched.push(`${kind}:${reference}`);
+		diagnostics.push({ kind, code: "zero-match", reference, message: `profile "${profile.name}": "${kind}:${reference}" matched nothing this resolution; not loaded` });
+	};
 
 	if (input.mcpDiscovery !== undefined && input.discoveredMcpServers === undefined) {
 		input.discoveredMcpServers = Object.keys(input.mcpDiscovery.servers).sort();
@@ -283,7 +302,11 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	// full referenceable discovery result as overlay/status vocabulary.
 	let selectedSkills = skillsDeclared
 		? expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
-				onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
+				onZeroMatch: (reference) => zeroMatch("skill", reference),
+				onLiteralMiss: (reference) => {
+					const candidates = skills.map((entry) => entry.name).sort();
+					diagnostics.push({ kind: "skill", code: "unknown-reference", reference, message: `profile "${profile.name}": unknown skill "${reference}"; not loaded. ${candidates.length > 0 ? `Discovered candidates: ${candidates.join(", ")}; correct the reference or install the skill.` : "No skills discovered; install the skill or remove the reference."}` });
+				},
 			})
 		: [...skills];
 
@@ -292,6 +315,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	if (extensionsDeclared) {
 		const selection = await extensions.select(definition.extensions ?? []);
 		for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
+		for (const issue of selection.diagnostics ?? []) {
+			diagnostics.push({ ...issue, message: `profile "${profile.name}": ${issue.message}` });
+		}
 		planExtensions = selection.entries.map((entry) => ({
 			id: entry.id,
 			entry: entry.entry,
@@ -527,6 +553,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(instanceMcpConfig !== undefined ? { instanceMcpConfig } : {}),
 		...(unmatched.length > 0 ? { unmatched } : {}),
+		...(diagnostics.length > 0 ? { diagnostics } : {}),
 	};
 }
 

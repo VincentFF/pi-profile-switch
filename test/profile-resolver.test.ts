@@ -73,14 +73,13 @@ describe("resolveProfile", () => {
 		]);
 	});
 
-	it("fails activation when a literal skill name does not exist", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["no-such-skill"] }),
-				skills: [skill("code-review")],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/no-such-skill/);
+	it("skips a missing literal skill with actionable diagnostics", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { skills: ["no-such-skill"] }), skills: [skill("code-review")], extensions: await extensionsWith() });
+		expect(plan.skills).toEqual([]);
+		expect(plan.filter).toBe("selection");
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "skill", reference: "no-such-skill", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("not loaded");
+		expect(plan.diagnostics?.[0].message).toContain("code-review");
 	});
 
 	it("treats a glob with no current matches as empty, not an error", async () => {
@@ -117,14 +116,12 @@ describe("resolveProfile", () => {
 		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["github-ci", "github-pr"]);
 	});
 
-	it("fails activation when a literal extension is not discovered", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { extensions: ["ghost"] }),
-				skills: [],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/ghost/);
+	it("skips a missing literal extension with diagnostics", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { extensions: ["ghost"] }), skills: [], extensions: await extensionsWith() });
+		expect(plan.extensions).toEqual([]);
+		expect(plan.filter).toBe("selection");
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "extension", reference: "ghost", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("not loaded");
 	});
 
 	it("passes literal tool names through and expands tool globs against Pi's built-in tools", async () => {
@@ -770,14 +767,16 @@ describe("sparse skill and extension selection (fix-undeclared-resource-filterin
 		expect(plan.skills.map((entry) => entry.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
 	});
 
-	it("declared references still fail on an unmatched literal and warn on a zero-match glob", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["ghost-skill"] }),
-				skills: [skill("alpha-skill")],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/ghost-skill/);
+	it("declared references warn on misses without reverting the selection to native visibility", async () => {
+		const missing = await resolveProfile({
+			profile: profile("review", { skills: ["ghost-skill"] }),
+			skills: [skill("alpha-skill")],
+			extensions: await extensionsWith(["linter"]),
+		});
+		expect(missing.resourceSelection).toEqual({ skills: true, extensions: false });
+		expect(missing.skills).toEqual([]);
+		expect(missing.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(missing.diagnostics).toContainEqual(expect.objectContaining({ kind: "skill", code: "unknown-reference", reference: "ghost-skill" }));
 
 		const plan = await resolveProfile({
 			profile: profile("review", { skills: ["future-*"] }),
@@ -887,17 +886,12 @@ describe("discovery-first extension references (ADR-0007)", () => {
 		expect(plan.extensions).toEqual([{ id: file, entry: file }]);
 	});
 
-	it("unknown extension literals fail with actionable guidance", async () => {
+	it("unknown extension literals warn with actionable guidance", async () => {
 		const { registry } = await registryWithPackage("pi-web-access");
-
-		const error = await resolveProfile({
-			profile: profile("review", { extensions: ["web-access"] }),
-			skills: [],
-			extensions: registry,
-		}).catch((caught: unknown) => caught);
-
-		expect((error as Error).message).toContain('did you mean "pi-web-access"');
-		expect((error as Error).message).not.toContain("resources.json");
+		const plan = await resolveProfile({ profile: profile("review", { extensions: ["web-access"] }), skills: [], extensions: registry });
+		expect(plan.extensions).toEqual([]);
+		expect(plan.diagnostics?.[0].message).toContain('did you mean "pi-web-access"');
+		expect(plan.diagnostics?.[0].message).not.toContain("resources.json");
 	});
 
 	it("zero-match globs land in plan.unmatched instead of failing silently", async () => {
@@ -1223,5 +1217,37 @@ describe("mcp_tools resolution and server policy", () => {
 
 		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
 		expect(server.toolExposure).toBeUndefined();
+	});
+});
+
+
+describe("partial skill and extension selections", () => {
+	it("retains usable selections after misses and diagnoses literals and zero-match globs", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["missing", "future-*", "code-review"], extensions: ["ghost", "./relative.ts", "ghost-*", "linter"] }),
+			skills: [skill("code-review"), skill("unselected")], extensions: await extensionsWith(["linter", "unselected"]),
+		});
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(plan.unmatched).toEqual(["skill:future-*", "extension:ghost-*"]);
+		expect(plan.diagnostics?.map((issue) => issue.reference)).toEqual(["missing", "future-*", "ghost", "./relative.ts", "ghost-*"]);
+		for (const issue of plan.diagnostics ?? []) expect(issue.message).toContain('profile "review"');
+	});
+
+	it("re-resolves unchanged declarations when previously missing resources appear", async () => {
+		const target = profile("review", { skills: ["future"], extensions: ["future"] });
+		const before = JSON.stringify(target);
+		const first = await resolveProfile({ profile: target, skills: [skill("unselected")], extensions: await extensionsWith(["unselected"]) });
+		expect(first.skills).toEqual([]);
+		expect(first.extensions).toEqual([]);
+		const next = await resolveProfile({ profile: target, skills: [skill("future"), skill("unselected")], extensions: await extensionsWith(["future"]) });
+		expect(next.skills.map((entry) => entry.name)).toEqual(["future"]);
+		expect(next.extensions.map((entry) => entry.id)).toEqual(["future"]);
+		expect(next.diagnostics).toBeUndefined();
+		expect(JSON.stringify(target)).toBe(before);
+	});
+
+	it.each(["skill", "extension"])("still rejects overlay disabling a skipped %s literal", async (kind) => {
+		await expect(resolveProfile({ profile: profile("review", { skills: ["missing"], extensions: ["missing"] }), skills: [], extensions: await extensionsWith(), overlay: kind === "skill" ? { disabledSkills: ["missing"] } : { disabledExtensions: ["missing"] } })).rejects.toThrow(/overlay disables unknown/);
 	});
 });
