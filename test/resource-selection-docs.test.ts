@@ -23,6 +23,11 @@ function section(markdown: string, heading: RegExp): string {
 	return body.join("\n");
 }
 
+function fieldRows(markdown: string): Map<string, string> {
+	return new Map([...markdown.matchAll(/^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|/gm)]
+		.map((match) => [match[1]!, match[2]!]));
+}
+
 describe("resource-selection documentation", () => {
 	it("architecture overview describes the per-kind control and native-base exclusions", async () => {
 		const overview = await read("docs/architecture/overview.md");
@@ -84,28 +89,43 @@ describe("resource-selection documentation", () => {
 	});
 
 	it.each([
-		["README.md", /^##\s+.*Migration/, "openspec/specs/resource-reference/spec.md"],
-		["README.zh-CN.md", /^##\s+配置详解$/, "schemas/profiles.schema.json"],
-	])("%s documents explicit empty selections and links its reference", async (document, heading, reference) => {
+		["README.md", /^##\s+Configuration$/],
+		["README.zh-CN.md", /^##\s+配置详解$/],
+	])("%s documents explicit empty selections in its configuration guide", async (document, heading) => {
 		const guidance = section(await read(document), heading);
 		expect(guidance.length).toBeGreaterThan(0);
 		expect(guidance).toContain('"skills": []');
 		expect(guidance).toContain('"extensions": []');
-		expect(guidance).toContain(reference);
+		expect(guidance).toContain("schemas/profiles.schema.json");
 	});
 
-	it("Chinese configuration guidance covers the schema fields and nested role settings", async () => {
+	it.each([
+		["README.md", /^##\s+Configuration$/],
+		["README.zh-CN.md", /^##\s+配置详解$/],
+	])("%s configuration covers schema fields regardless of table alignment", async (document, heading) => {
 		const schema = JSON.parse(await read("schemas/profiles.schema.json"));
-		const guidance = section(await read("README.zh-CN.md"), /^##\s+配置详解$/);
+		const fields = fieldRows(section(await read(document), heading));
 		for (const field of Object.keys(schema.properties)) {
-			expect(guidance, `missing field: ${field}`).toContain(`| \`${field}\` |`);
+			expect(fields.has(field), `${document}: missing field ${field}`).toBe(true);
 		}
 		for (const field of Object.keys(schema.properties.subagents.properties)) {
-			expect(guidance, `missing subagent field: ${field}`).toContain(`| \`subagents.${field}\` |`);
+			expect(fields.has(`subagents.${field}`), `${document}: missing subagent field ${field}`).toBe(true);
 		}
 		const roleFields = schema.properties.subagents.properties.agentOverrides.additionalProperties.properties;
 		for (const field of Object.keys(roleFields)) {
-			expect(guidance, `missing role field: ${field}`).toContain(`| \`subagents.agentOverrides.<name>.${field}\` |`);
+			expect(fields.has(`subagents.agentOverrides.<name>.${field}`), `${document}: missing role field ${field}`).toBe(true);
 		}
+	});
+
+	it("keeps field types and runnable command examples synchronized between READMEs", async () => {
+		const english = await read("README.md");
+		const chinese = await read("README.zh-CN.md");
+		expect(fieldRows(english)).toEqual(fieldRows(chinese));
+		const commands = (markdown: string) => [...markdown.matchAll(/```(?:bash|text)\n([\s\S]*?)\n```/g)]
+			.flatMap((match) => match[1]!.split("\n"))
+			.map((line) => line.trim())
+			.filter((line) => /^(?:npm |pi-profile(?: |$)|\/profile(?: |$))/.test(line));
+		expect(commands(english).length).toBeGreaterThan(0);
+		expect(commands(english)).toEqual(commands(chinese));
 	});
 });

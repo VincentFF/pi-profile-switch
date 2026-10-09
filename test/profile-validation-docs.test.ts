@@ -11,7 +11,7 @@ const HISTORY = [
 	["docs/adr/0009-reference-resolution-failure-tiering.md", "71d6a5e6328e99dc6f7e70694c35a4d41409f82b0105eb457e8c18c91b15628e"],
 	["docs/adr/0016-drop-pi-mcp-adapter.md", "ba7b5d01761b61c13a721a45ff2f84cdae553828cde1517db76cd46e096f4ebe"],
 ] as const;
-const CURRENT_DOCS = ["README.md", "skills/profile-config/SKILL.md", "docs/architecture/overview.md", ADR];
+const CURRENT_DOCS = ["README.md", "README.zh-CN.md", "skills/profile-config/SKILL.md", "docs/architecture/overview.md", ADR];
 const read = (file: string) => readFile(path.resolve(file), "utf8");
 
 function anchor(name: string): string {
@@ -63,7 +63,7 @@ describe("profile validation documentation", () => {
 		await checkContractLink(ADR, "launcher", "Native model declaration handoff");
 	});
 
-	it.each(["README.md", "skills/profile-config/SKILL.md"])("links %s editing/usage guidance to authoritative contracts", async (file) => {
+	it.each(["skills/profile-config/SKILL.md"])("links %s authoring guidance to authoritative contracts", async (file) => {
 		await checkContractLink(file, "profile-catalog", "Catalog file format validation");
 		await checkContractLink(file, "profile-catalog", "Profile definition fields");
 		await checkContractLink(file, "resource-reference", "Unified failure tiering for references");
@@ -71,6 +71,17 @@ describe("profile validation documentation", () => {
 		await checkContractLink(file, "in-session-switch", "Observability surface");
 		const relativeSchema = path.relative(path.dirname(file), "schemas/profiles.schema.json").split(path.sep).join("/");
 		expect(await read(file)).toContain(`](${relativeSchema})`);
+	});
+
+	it.each([
+		["README.md", ["Activation continues with warnings", "Pi handles model availability", "Unknown top-level field"]],
+		["README.zh-CN.md", ["激活继续，报告警告", "模型是否可用、认证", "未知顶层字段"]],
+	])("%s provides actionable configuration diagnostics without requiring internal links", async (file, phrases) => {
+		const text = await read(file);
+		expect(text).toContain("](schemas/profiles.schema.json)");
+		expect(text).toContain("/profile reload");
+		expect(text).toContain("/profile status");
+		for (const phrase of phrases) expect(text).toContain(phrase);
 	});
 
 	it("updates architecture ownership, launch ordering and diagnostic transport without the retired module", async () => {

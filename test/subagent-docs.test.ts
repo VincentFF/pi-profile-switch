@@ -17,7 +17,7 @@ function localLinks(markdown: string): string[] {
 describe("subagent authoring documentation", () => {
 	it("links install and authoring guidance to the schema and native inspection", async () => {
 		const readme = await read("README.md");
-		for (const phrase of ["schemas/profiles.schema.json", "/subagents-models", "does not load pi-subagents", "not child prompts", "not whether a role can run", "openspec/specs/launcher/spec.md"]) {
+		for (const phrase of ["schemas/profiles.schema.json", "/subagents-models", "does not load pi-subagents", "not child prompts", "not whether a role can run"]) {
 			expect(readme).toContain(phrase);
 		}
 		const translated = await read("README.zh-CN.md");
@@ -31,10 +31,10 @@ describe("subagent authoring documentation", () => {
 		}
 	});
 
-	it("keeps Chinese README profile examples valid for the schema and runtime parser", async () => {
+	it.each(["README.md", "README.zh-CN.md"])("%s profile examples are valid for the schema and runtime parser", async (document) => {
 		const schema = JSON.parse(await read("schemas/profiles.schema.json"));
 		const validate = new Ajv2020({ strict: true }).compile(schema);
-		const body = await read("README.zh-CN.md");
+		const body = await read(document);
 		const examples = [...body.matchAll(/```json\n([\s\S]*?)\n```/g)];
 		expect(examples.length).toBeGreaterThan(0);
 		for (const [index, match] of examples.entries()) {
@@ -42,6 +42,14 @@ describe("subagent authoring documentation", () => {
 			expect(validate(example), `example ${index + 1}: ${JSON.stringify(validate.errors)}`).toBe(true);
 			expect(() => parseProfileDefinition(`readme-${index + 1}`, example)).not.toThrow();
 		}
+	});
+
+	it("keeps README JSON examples synchronized between languages", async () => {
+		const examples = async (document: string) => [...(await read(document)).matchAll(/```json\n([\s\S]*?)\n```/g)]
+			.map((match) => JSON.parse(match[1]!));
+		const english = await examples("README.md");
+		expect(english.length).toBeGreaterThan(0);
+		expect(english).toEqual(await examples("README.zh-CN.md"));
 	});
 
 	it("keeps the example valid, linked targets present, and starter free of child declarations", async () => {
