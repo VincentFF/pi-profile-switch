@@ -21,13 +21,26 @@ describe("subagent authoring documentation", () => {
 			expect(readme).toContain(phrase);
 		}
 		const translated = await read("README.zh-CN.md");
-		for (const phrase of ["schemas/profiles.schema.json", "/subagents-models", "不会加载 pi-subagents", "不是子 agent prompt", "不控制角色能否运行", "openspec/specs/launcher/spec.md"]) {
+		for (const phrase of ["schemas/profiles.schema.json", "/subagents-models", "不会加载 pi-subagents", "不是子 agent prompt", "不控制角色能否运行"]) {
 			expect(translated).toContain(phrase);
 		}
 
 		const skill = await read("skills/profile-config/SKILL.md");
 		for (const phrase of ["exact role overrides", "does not replace its system prompt", "does not disable the role", "not an availability list", "/profile status", "/subagents-models"]) {
 			expect(skill).toContain(phrase);
+		}
+	});
+
+	it("keeps Chinese README profile examples valid for the schema and runtime parser", async () => {
+		const schema = JSON.parse(await read("schemas/profiles.schema.json"));
+		const validate = new Ajv2020({ strict: true }).compile(schema);
+		const body = await read("README.zh-CN.md");
+		const examples = [...body.matchAll(/```json\n([\s\S]*?)\n```/g)];
+		expect(examples.length).toBeGreaterThan(0);
+		for (const [index, match] of examples.entries()) {
+			const example = JSON.parse(match[1]!);
+			expect(validate(example), `example ${index + 1}: ${JSON.stringify(validate.errors)}`).toBe(true);
+			expect(() => parseProfileDefinition(`readme-${index + 1}`, example)).not.toThrow();
 		}
 	});
 

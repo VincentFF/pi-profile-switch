@@ -10,9 +10,7 @@ function localLinks(markdown: string): string[] {
 		.filter((target) => !/^[a-z]+:\/\//i.test(target) && !target.startsWith("#"));
 }
 
-/** The body of the first level-2 section whose heading matches, up to the next
- *  level-2 heading. Migration assertions are scoped here rather than banning
- *  omission wording across the whole document. */
+/** The body of the first matching level-2 section, up to the next one. */
 function section(markdown: string, heading: RegExp): string {
 	const lines = markdown.split("\n");
 	const start = lines.findIndex((line) => /^##\s/.test(line) && heading.test(line));
@@ -86,13 +84,28 @@ describe("resource-selection documentation", () => {
 	});
 
 	it.each([
-		["README.md", /^##\s+.*Migration/],
-		["README.zh-CN.md", /^##\s+.*迁移/],
-	])("%s documents explicit empty selections and links the contract", async (document, heading) => {
-		const migration = section(await read(document), heading);
-		expect(migration.length).toBeGreaterThan(0);
-		expect(migration).toContain('"skills": []');
-		expect(migration).toContain('"extensions": []');
-		expect(migration).toContain("openspec/specs/resource-reference/spec.md");
+		["README.md", /^##\s+.*Migration/, "openspec/specs/resource-reference/spec.md"],
+		["README.zh-CN.md", /^##\s+配置详解$/, "schemas/profiles.schema.json"],
+	])("%s documents explicit empty selections and links its reference", async (document, heading, reference) => {
+		const guidance = section(await read(document), heading);
+		expect(guidance.length).toBeGreaterThan(0);
+		expect(guidance).toContain('"skills": []');
+		expect(guidance).toContain('"extensions": []');
+		expect(guidance).toContain(reference);
+	});
+
+	it("Chinese configuration guidance covers the schema fields and nested role settings", async () => {
+		const schema = JSON.parse(await read("schemas/profiles.schema.json"));
+		const guidance = section(await read("README.zh-CN.md"), /^##\s+配置详解$/);
+		for (const field of Object.keys(schema.properties)) {
+			expect(guidance, `missing field: ${field}`).toContain(`| \`${field}\` |`);
+		}
+		for (const field of Object.keys(schema.properties.subagents.properties)) {
+			expect(guidance, `missing subagent field: ${field}`).toContain(`| \`subagents.${field}\` |`);
+		}
+		const roleFields = schema.properties.subagents.properties.agentOverrides.additionalProperties.properties;
+		for (const field of Object.keys(roleFields)) {
+			expect(guidance, `missing role field: ${field}`).toContain(`| \`subagents.agentOverrides.<name>.${field}\` |`);
+		}
 	});
 });
