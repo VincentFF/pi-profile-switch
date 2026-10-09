@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.14.0...v0.15.0) (2026-10-09)
+
+
+### Features
+
+* add native subagent overrides and sparse resource selection ([#84](https://github.com/VincentFF/pi-profile-switch/issues/84)) ([e4d06ef](https://github.com/VincentFF/pi-profile-switch/commit/e4d06efdd0a002207b39759f9c14180c6fc609bf))
+
 ## [0.14.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.13.2...v0.14.0) (2026-10-03)
 
 
