@@ -38,7 +38,7 @@ A profile takes over exactly four resource categories (skills, extensions, MCP s
 | packages (user-configured packages) | The settings `packages` array is rewritten in object form with per-type allowlist globs | Declared kind: whitelist. Omitted kind: the native filter or its absence is preserved, with the overlay's package-relative exclusions appended |
 | packages (project) | Read natively by Pi from the project `.pi/settings.json` and installed under the project `.pi/npm`; generated settings do not merge project settings, so they never become an install side effect of the global npm root | Native |
 | tools | Settings `defaultTools` is the built-in boot baseline; after `session_start` and reload, the extension classifies tools by the winning registration's `sourceInfo` and the `builtin:mcp` path, expands only non-MCP references, subtracts overlay disables, and calls `setActiveTools`. `builtin:mcp`-owned registrations remain independent of `tools`. When a profile declares `tools` and the effective MCP set has an enabled server, the generated `defaultTools` baseline and the launch plan marker keep Pi's native MCP discovery entry points (`codemode`, `tool_search`) active; only the built-in registrations count, and an overlay disable still wins | Whitelist |
-| MCP servers & tools | The instance's `mcp.json` is a generated snapshot of the merged user-level configuration: each later user-level source replaces a same-named server in full (no field-wise merge); selected servers keep their winning definitions, unselected user-level servers keep their full winning definition plus `enabled: false`, and an explicit `mcps: []` disables every discovered user-level server while trusted project-level servers stay enabled and are never marked disabled. Per-server `mcp_tools` replaces the server's merged `toolExposure` with `{"*": "hidden", <selector>: "direct", ...}`; an empty list becomes `{"*": "hidden"}`. Source files are never modified. Selector matching and failure conditions are defined by the [resource-reference contract](../../openspec/specs/resource-reference/spec.md). | Whitelist (file filtering) |
+| MCP servers & tools | The instance's `mcp.json` is a generated snapshot of the merged user-level configuration: each later user-level source replaces a same-named server in full (no field-wise merge); selected servers keep their winning definitions, unselected user-level servers keep their full winning definition plus `enabled: false`, and an explicit `mcps: []` disables every discovered user-level server while trusted project-level servers stay enabled and are never marked disabled. For eligible enabled user-level definitions, `mcp_tools` replaces the server's merged `toolExposure` with `{"*": "hidden", <selector>: "direct", ...}`; an empty list becomes `{"*": "hidden"}`. Source files are never modified. Selector matching and failure conditions are defined by the [resource-reference contract](../../openspec/specs/resource-reference/spec.md). | Whitelist (file filtering) |
 | prompts, themes (not taken over) | User arrays kept verbatim, re-including the corresponding directories of the real agentDir; the project-level portion is discovered natively by Pi | Pass-through |
 
 A named profile controls skills and extensions independently. A declared field becomes a selection — an explicit empty array selects none — while an omitted field keeps Pi's native visibility and carries the user's own settings and package filters through unchanged. The ActivationPlan records that intent per kind as `resourceSelection`, and, when a RuntimeOverlay narrows an omitted kind, the concrete removed entries in `disabledSkills`/`disabledExtensions`. An overlay over an omitted kind adds only those concrete force-exclusions to the native base; it never turns the kind into a wildcard allowlist.
@@ -55,9 +55,8 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | --- | --- |
 | `bin/pi-profile.ts` | Entry point. Consumes the first positional argument (profile name) and the `--` that follows it; everything else becomes pi's argv verbatim |
 | `launcher/args.ts` | `parseLauncherArgs(argv)` → `{ profile, piArgs, trustOverride }`; `--approve`/`--no-approve` are rewritten into trust input |
-| `launcher/initial-profile.ts` | Positional argument or saved active profile → `InitialProfile`; unknown profiles fail here |
+| `launcher/initial-profile.ts` | Trust inputs and selected name → targeted catalog resolution and `InitialProfile`; normal default activation bypasses catalog access |
 | `launcher/discovery.ts` | `discoverLauncherResources()` → launcher-side read-only discovery result (skills, package roots) for the resolver |
-| `launcher/model-check.ts` | `checkDeclaredModel(agentDir, model)` → error message or undefined |
 | `launcher/spawn.ts` | Result of `generateRuntimeDir` + user arguments → spawn pi, write the `pid` liveness file, forward signals and exit code |
 | `launcher/runtime-cleanup.ts` | Sweeps stale instance directories by `pid` liveness at startup; routes unrecognized entries by content scan (adopt / delete / keep-with-warning) |
 
@@ -65,12 +64,12 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 
 | Module | Interface |
 | --- | --- |
-| `profile-catalog.ts` | Catalog read side: `ProfileCatalog` lists and parses winning definitions, producing `ResolvedProfile` (with `source: builtin \| global \| project`) |
+| `profile-catalog.ts` | `ProfileCatalog.load` indexes filenames and source metadata; asynchronous `resolve(name)` reads one winner; `list()` captures availability/errors/warnings per winning entry; `hasGlobal` and `diagnostics()` expose index metadata |
 | `project-trust.ts` | `resolveProjectTrust(input)` → boolean; mirrors Pi's decision order; decides whether pi-profile reads the project catalog, project state, and project MCP configuration (project-level resources themselves belong to Pi) |
 | `skill-registry.ts` | `discoverSkills(options)` → `SkillEntry[]`; read-only calls into Pi SDK discovery, never scans directories itself |
 | `extension-discovery.ts` | `discoverExtensions(options)` → `DiscoveredExtensions` (read-only, never executes extension code); `.select(refs)` resolves package names, aliases, loose-file stems, globs, and absolute paths |
-| `mcp-config.ts` | `loadMergedMcpServers()` returns the merged user-level `baseConfig`, effective server definitions (later source replaces same-named server in full), ownership (`serverOwners`), the `projectServers` set, and `diagnostics`. `invalidSource: "throw" \| "diagnose"` selects strict (declared `mcps` or nonempty `mcp_tools`) versus diagnostic (undeclared policy: skip the malformed source with a path-bearing diagnostic and keep valid ones) discovery. Status derives discovered names and user-disabled states from one trust-gated result and uses `projectServers` to keep trusted project-owned servers reported as enabled |
-| `profile-resolver.ts` | `resolveProfile(input)` → immutable `ActivationPlan` (skills, extensions, tools, MCP, model, instructions, `unmatched`, `filter`) |
+| `mcp-config.ts` | `loadMergedMcpServers()` returns the merged user-level `baseConfig`, effective server definitions (later source replaces same-named server in full), ownership (`serverOwners`), the `projectServers` set, and `diagnostics`. Activation, runtime preparation, and status use `invalidSource: "diagnose"`; strict mode remains an option for other callers. The [MCP reference contract](../../openspec/specs/resource-reference/spec.md#requirement-mcp-server-reference-resolution) owns source-content and transport outcomes. Status derives discovered names and user-disabled states from one trust-gated result and uses `projectServers` to keep trusted project-owned servers reported as enabled |
+| `profile-resolver.ts` | `resolveProfile(input)` → immutable `ActivationPlan` (skills, extensions, tools, MCP, model, instructions, `unmatched`, `diagnostics`, `filter`); diagnostic helpers share keyed merging and MCP snapshot inspection |
 
 ### Materialization and state
 
@@ -89,10 +88,18 @@ The `default` profile generates no filtering at all: settings are a verbatim cop
 | `switching/switch-profile.ts` | `switchProfile(profile, deps, options)` → `SwitchResult`; orchestrates snapshot → rewrite → reload → rollback. The write-and-reload interval is one rollback boundary: any write-stage failure after the first managed file, or a reload failure, restores every managed file (and the extension-path representation) exactly and reloads again. Before that rollback reload the optional `SwitchDeps.reportFailure` callback delivers the actionable cause; a reporter failure never interrupts restoration or reload. Subagent settings and declarations use this same settings/plan snapshot boundary; see the [in-session contract](../../openspec/specs/in-session-switch/spec.md) |
 | `switching/apply-plan.ts` | `readLaunchPlanFile(runtimeDir)` + `applyLaunchPlan(input)`; at `session_start` and after reload, classifies the winning tool registrations by source path, applies only the non-MCP tools whitelist while retaining `builtin:mcp`-owned tools, re-applies overlays, persists runtime state, and emits the one-shot change summary |
 | `switching/overlay.ts` | `OVERLAY_USAGE` / `parseOverlayArgs` / `applyOverlayMutation` / `clearOverlay`; reads and writes the runtime overlay (one uniform `disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` grammar) |
-| `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; profile entries for the selector and the degraded bare `/profile` list, with trust gating and the `shadowsGlobal` marker |
-| `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP server tri-state and declared per-server tool policy. When the plan carries a defined `mcps` selection, the optional `projectMcpServers` input (populated from `loadMergedMcpServers().projectServers`) keeps trusted project-owned, non-disabled servers in the enabled group and out of the disabled group. Subagent declaration status and registration observations follow the [in-session contract](../../openspec/specs/in-session-switch/spec.md) |
+| `switching/list-profiles.ts` | `listProfiles` / `formatProfileList`; winning entries for the selector and degraded list carry availability/errors/warnings and `shadowsGlobal`; optional `onDiagnostic` forwards filename diagnostics from the same loaded catalog |
+| `switching/status.ts` | `buildStatusReport` / `formatStatusMarkdown`; resolved paths, overlay, MCP server tri-state, declared per-server tool policy, and active-plan diagnostics. Retained policy entries carry state metadata instead of being presented as applied restrictions. When the plan carries a defined `mcps` selection, the optional `projectMcpServers` input (populated from `loadMergedMcpServers().projectServers`) keeps trusted project-owned, non-disabled servers in the enabled group and out of the disabled group. Subagent declaration status and registration observations follow the [in-session contract](../../openspec/specs/in-session-switch/spec.md) |
 | `switching/tool-references.ts` | `expandToolReferences(refs, nonMcpToolNames, mcpToolNames)`; expands non-MCP tool references against Pi's live registry and identifies legacy MCP references |
 | `startup-notifier.ts` | `runStartupNotifications(options)`; loads notification caches, checks remote sources, and presents notices through the extension's display surface |
+
+### Activation diagnostics
+
+`ResolutionDiagnostic` is defined in `src/profile-resolver.ts`. `mergeResolutionDiagnostics` keys issues by kind, reference, source path, and code. Initial resolution normalizes catalog and extension-discovery warnings alongside reference results; runtime preparation merges its own MCP snapshot diagnostics before serialization.
+
+`LaunchPlanFile.diagnostics` stores the additive array in `pi-profile.json`; older plans omit it. The launcher combines resolution and materialization output on stderr. The reloaded extension delivers persisted diagnostics through its fresh context, while command feedback retains other warnings without replaying those already delivered. Status reads the active plan and fresh trust-gated MCP discovery without parsing catalog definitions. Listing uses one catalog index, with filename diagnostics separate from profile entries.
+
+The [observability contract](../../openspec/specs/in-session-switch/spec.md#requirement-observability-surface) owns display and structured-message behavior; the [partial-materialization contract](../../openspec/specs/launcher/spec.md#requirement-restrictive-partial-materialization) owns restrictive intent. The decision is ADR-0018 ([record](../adr/0018-tolerant-activation-with-restrictive-partial-resolution.md)).
 
 ### Startup notifications (inside the pi process)
 
@@ -108,13 +115,14 @@ Notification state is stored under `<PI_PROFILE_SWITCH_DIR>/notifications/`, apa
 pi-profile review -- --mode rpc
   │
   ├─ parseLauncherArgs: take review, intercept --approve, pass the rest through
-  ├─ ProfileCatalog resolves the winning source of review
-  ├─ project-trust reads the real trust.json → projectTrusted
+  ├─ readTrustInputs: resolve project trust before project-scoped reads
+  ├─ Choose positional or saved name; normal default bypasses the catalog
+  ├─ Named selection: ProfileCatalog.load indexes → resolve(name) reads the winner
   ├─ skill-registry + extension-discovery + mcp-config read-only discovery
-  ├─ resolveProfile → ActivationPlan (glob expansion, overlay application, unmatched collection)
-  ├─ Validation: declared model authenticated, extension entries exist, MCP servers exist
+  ├─ resolveProfile → ActivationPlan (resource expansion, overlays, diagnostics, native declarations)
   ├─ generateRuntimeDir → this run's instance directory (generated files + seed + symlink mirror + env)
   └─ spawnPi: -e <extension> [trust flag] <user args verbatim>
+       ├─ Pi loads extensions before native startup model selection
        └─ the extension reads pi-profile.json at session_start, classifies winning registrations, expands non-MCP tools, retains `builtin:mcp`-owned tools, and applies overlays
 ```
 
@@ -123,9 +131,9 @@ pi-profile review -- --mode rpc
 ```text
 /profile use implement
   │
-  ├─ Validate and resolve (same path as launch)
   ├─ ctx.waitForIdle()
   ├─ Snapshot managed runtime files (settings / plan / mcp / appendSystem / trust)
+  ├─ Re-resolve through the shared launch path
   ├─ Rewrite settings.json, pi-profile.json, mcp.json, APPEND_SYSTEM.md in place; trust.json link unchanged
   ├─ ctx.reload(): Pi re-reads disk, rebuilds resources, re-executes the extension
   │    ├─ the extension re-applies the tools whitelist
@@ -134,7 +142,7 @@ pi-profile review -- --mode rpc
   └─ Failure → write back the snapshot and reload again; the runtime never shows a half-switched state
 ```
 
-The sessionId and message history are identical before and after reload (verified in ADR-0005).
+Native reload refreshes resources and settings without repeating initial model selection. For precedence and lifecycle guarantees, see [native model handoff](../../openspec/specs/launcher/spec.md#requirement-native-model-declaration-handoff) and [in-session switching](../../openspec/specs/in-session-switch/spec.md#requirement-in-session-switching).
 
 ## Runtime directory
 
@@ -212,7 +220,7 @@ The authoritative schema for profile definition files (global `~/.pi-profile-swi
 | `bin/` | CLI entry and postinstall. The published `pi-profile.js` is a jiti wrapper — Node refuses type-stripping for `.ts` under `node_modules`, while the launcher needs to load the shared TS graph; in development, `pi-profile.ts` runs directly. `postinstall.js` remains as a best-effort early optimization: it distributes the starter `ask` profile and the profile-config skill at install time, while runtime distribution is guaranteed by the launcher's ensure step (see `src/starter-assets.ts`); the authoritative behavior contract is [openspec/specs/profile-catalog/spec.md](../../openspec/specs/profile-catalog/spec.md) |
 | `extensions/pi-profile/` | The extension inside the pi process: `/profile` command family, switch orchestration, status views |
 | `src/starter-assets.ts` | Starter-asset ensure at launcher startup: a single TS implementation exporting `ensureStarterAssets()` (returns `path`/`written` per asset; IO failures degrade to `warnings`, never throw — design in [design.md D1/D5](../../openspec/changes/archive/2026-09-24-runtime-ensure-starter-assets/design.md)); the behavior contract is not restated here — see [openspec/specs/profile-catalog/spec.md](../../openspec/specs/profile-catalog/spec.md) |
-| `src/launcher/` | Everything before spawn: argument parsing, initial-profile resolution, read-only discovery, model check, spawn, stale-directory sweep |
+| `src/launcher/` | Everything before spawn: argument parsing, initial-profile resolution, read-only discovery, native settings handoff, spawn, stale-directory sweep |
 | `src/switching/` | In-session switching, overlay, observability surface |
 | `src/*.ts` | Modules shared by both sides: catalog, trust, discovery, resolver, settings generation, state stores |
 | `schemas/` | `profiles.schema.json`, the authoritative definition of user configuration |

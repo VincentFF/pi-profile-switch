@@ -38,12 +38,12 @@ Write the JSON directly (schema: [`schemas/profiles.schema.json`](schemas/profil
 
 When the global profiles directory has no profile yet, pi-profile-switch writes a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely. See [`examples/ask.json`](examples/ask.json).
 
-A profile that uses every field:
+A profile example:
 
 ```json
 {
   "label": "Implementation",
-  "description": "Full-powered implementation profile: every available field, pinned model",
+  "description": "Implementation resources and startup model defaults",
   "skills": ["tdd", "internal-*"],
   "mcps": ["github", "linear"],
   "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"],
@@ -68,7 +68,7 @@ A profile that uses every field:
 }
 ```
 
-How the fields behave:
+Use the [schema](schemas/profiles.schema.json) for supported fields and shapes. For activation and diagnostics, see:
 
 - `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
 - `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`. When a profile declares `tools` and at least one MCP server is enabled, Pi's native MCP discovery entry points (`codemode` and `tool_search`) stay active even if you did not list them; unrelated non-MCP tools excluded by `tools` stay excluded.
@@ -80,20 +80,29 @@ How the fields behave:
   - **Omitting `mcps`** leaves all discovered user-level servers at their normal availability.
   - **`mcps: []`** disables every discovered user-level server, including agentDir-only servers; every unselected user-level server keeps its full definition and is explicitly marked `enabled: false` in the generated instance `mcp.json`. Project-level servers are never narrowed.
   - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
-  - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
   - A later user-level source replaces a same-named server from an earlier source in full (no field-wise merging), so connection and credential fields are never inherited across files.
-  - A profile that declares neither `mcps` nor `mcp_tools` treats a malformed user-level MCP source as a non-fatal diagnostic (printed on stderr with the file path) and starts with the remaining valid sources. Declaring `mcps` or a nonempty `mcp_tools` makes the same malformed source fail activation, because the allowlist cannot be trusted.
 - The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
 - Any field you omit keeps plain Pi behavior.
 - `label` and `description` are display metadata. `defaultProvider` and `defaultModel` (declared together) set the startup model; `defaultThinkingLevel` sets its thinking level; `instructions` is appended to the system prompt.
 - `subagents` optionally supplies native pi-subagents model/thinking defaults and exact role overrides. It does not load pi-subagents or change which roles or tools are available. Role descriptions are metadata, not child prompts; `advertise` controls parent-prompt listing, not whether a role can run. `/profile status` shows declared inputs, while `/subagents-models` inspects the native live mapping. See the [subagent behavior contract](openspec/specs/launcher/spec.md) and [pi-subagents model documentation](https://github.com/nicobailon/pi-subagents/blob/main/docs/models.md).
 - `skills`, `extensions`, `mcps`, and `tools` reference installed resources by name or glob; profiles never copy resources. `tools` covers non-MCP tools only (built-ins and extension tools).
-- `mcp_tools` selects tools inside MCP servers by literal server and tool name — globs are rejected. Omit a server to leave it unchanged, use `[]` to deny all of its tools while keeping the server enabled, or list names to allow only those. A literal selector that matches nothing stays restrictive without warning; a server that is unknown, disabled, or project-only fails activation with candidates.
-- `mcps` names user-level servers from `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`. Omit it to leave all servers as configured; use `[]` to disable every user-level server. Project-level servers (`.pi/mcp.json`) are read by Pi itself and are never narrowed. Legacy SSE servers cannot be selected.
+- `mcp_tools` selects tools inside MCP servers by literal server and tool name — globs are rejected. Omit a server to leave it unchanged, use `[]` to deny all of its tools while keeping the server enabled, or list names to allow only those. A literal selector that matches nothing stays restrictive without warning; missing or dormant server declarations follow the reference failure contract below.
+- `mcps` names user-level servers from `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`. Omit it to leave all servers as configured; use `[]` to disable every user-level server. Project-level servers (`.pi/mcp.json`) are read by Pi itself and are never narrowed. MCP transport usability is decided by native Pi.
 - Older profiles expressed MCP tool access through `mcp__*` or `<server>_*` entries in `tools`; use `mcp_tools` instead.
 - Every omitted field keeps plain Pi behavior.
 
-The instance's `mcp.json` is generated by the launcher. Running `pi mcp add` inside a session only edits that generated copy, and the next profile switch or reload overwrites it — edit your real MCP configuration instead.
+- [Selected-definition validation](openspec/specs/profile-catalog/spec.md#requirement-catalog-file-format-validation) and [field diagnostics](openspec/specs/profile-catalog/spec.md#requirement-profile-definition-fields).
+- [Reference failure tiering](openspec/specs/resource-reference/spec.md#requirement-unified-failure-tiering-for-references) and [per-server MCP tool selection](openspec/specs/resource-reference/spec.md#requirement-per-server-mcp-tool-selection).
+- [Restrictive partial materialization](openspec/specs/launcher/spec.md#requirement-restrictive-partial-materialization) and [native model declaration handoff](openspec/specs/launcher/spec.md#requirement-native-model-declaration-handoff).
+- [Profile listing and status diagnostics](openspec/specs/in-session-switch/spec.md#requirement-observability-surface).
+
+After editing, run `/profile reload` and inspect `/profile status`. Fix reported definition errors; use reference warnings to repair resource names or install the intended resources without erasing the selection. Check model availability through native Pi after its extensions load.
+
+**Migration notes:**
+- Former MCP references in `tools` (for example `mcp__*` or `<server>_*`) no longer govern MCP access. Move restrictions to `mcp_tools`.
+- Replace adapter-era prefixed selectors with literal server tool names from Pi's own MCP interface.
+
+Edit your real MCP configuration rather than the generated instance copy. See the [instance snapshot contract](openspec/specs/launcher/spec.md#requirement-instance-mcp-configuration-snapshot) for in-session edits.
 
 [`examples/`](examples/) contains the full example above and the starter `ask`.
 
