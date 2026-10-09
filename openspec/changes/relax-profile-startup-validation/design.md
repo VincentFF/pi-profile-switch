@@ -2,7 +2,7 @@
 
 ## Context
 
-See [proposal.md](proposal.md) for motivation and scope. The inspected baseline is local `main`, not the original worktree's unmerged implementation.
+See [proposal.md](proposal.md) for motivation and scope. The initial baseline and upstream integration scope are recorded in the proposal.
 
 `ProfileCatalog.load` currently parses every file before lookup. `listProfiles` loads a second global catalog to infer shadowing, which also parses shadowed definitions. `resolveInitialProfile` constructs a standalone model validator and requests strict MCP discovery under declared policy. `writeRuntimeFiles` independently re-reads MCP sources, so changing only the launcher would leave a second fatal gate. Status currently derives missing MCP names from resolved selections, which loses references skipped during partial resolution.
 
@@ -17,7 +17,7 @@ See [proposal.md](proposal.md) for motivation and scope. The inspected baseline 
 - No live model-selection interception, replacement provider registry, preloading extension code, or automatic model substitution.
 - No resource installation, filename migration, extension dependency graph, or profile-file rewrite.
 - No change to overlay command validation: unmatched explicit disable mutations retain their current errors.
-- No incorporation of the original worktree's undeclared-resource filtering or subagent work. Preserve existing native precedence and project-trust behavior.
+- No redesign of upstream sparse selection, native subagent overrides, extension-path safety, or rollback. Preserve native precedence and project-trust behavior.
 
 ## Decisions
 
@@ -80,7 +80,7 @@ The implementation updates all callers and tests in one change. Existing domain 
 | `src/profile-catalog.ts` | `ProfileCatalog.load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog>` becomes index-only; `resolve(name: string): Promise<ResolvedProfile | undefined>` reads one winner; `list(): Promise<CatalogListItem[]>`; `hasGlobal(name: string): boolean`; `diagnostics(): string[]` for invalid/reserved filenames | `CatalogError` remains fatal for selected malformed definitions; list isolates expected definition errors; filesystem failures propagate |
 | `src/profile-catalog.ts` | `CatalogListItem { name: string; source: ProfileSource; shadowsGlobal: boolean; available: boolean; definition?: ProfileDefinition; error?: string; warnings?: string[] }`; `ResolvedProfile.warnings?: string[]`; `parseProfileDefinition(name: string, raw: unknown, filePath?: string, onWarning?: (message: string) => void): ProfileDefinition` | Preserve the parser return type; unknown top-level keys warn rather than become native settings |
 | `src/profile-catalog.ts` | Retire exported `loadCatalogDirectory` if no caller remains after indexing replaces it | It is not a second eager path left in activation |
-| `src/profile-resolver.ts` | Export `ResolutionDiagnostic { kind: string; code: string; message: string; reference?: string; filePath?: string }`; add `ActivationPlan.diagnostics?: ResolutionDiagnostic[]`; retain declared `mcpTools`; remove `ResolveInput.validateModel` | `ActivationError` remains for structural/invariant and overlay failures, not expected selection misses |
+| `src/profile-resolver.ts` | Export `ResolutionDiagnostic { kind: string; code: string; message: string; reference?: string; filePath?: string }`; add `ActivationPlan.diagnostics?: ResolutionDiagnostic[]`; retain declared `mcpTools`; remove `ResolveInput.validateModel` | `ActivationError` remains for structural/invariant and overlay failures, not expected selection misses; upstream `ActivationPlan.resourceSelection` and `subagents` members retain their signatures and ownership |
 | `src/profile-resolver.ts` | `mergeResolutionDiagnostics(...groups: Array<readonly ResolutionDiagnostic[] \| undefined>): ResolutionDiagnostic[]`; `mcpSourceDiagnostics(profile: string, messages?: readonly string[]): ResolutionDiagnostic[]`; `resolutionDiagnostics(plan: Pick<ActivationPlan, "profile" \| "diagnostics" \| "unmatched">): ResolutionDiagnostic[]`; `mcpReferenceDiagnostics(profile: string, discovery: MergedMcpResult, mcps?: readonly string[], mcpTools?: Record<string, string[]>): ResolutionDiagnostic[]` | Shared keyed deduplication, legacy-glob normalization, and MCP snapshot diagnostics; selectors remain opaque and discovery errors propagate |
 | `src/extension-discovery.ts` | Keep `select(references: string[]): Promise<SelectExtensionsResult>`; add `SelectExtensionsResult.diagnostics?: ResolutionDiagnostic[]` using a type-only import | Expected reference issues become result data; unexpected IO and discovery failures are not swallowed |
 | `src/launcher/initial-profile.ts` | Preserve `resolveInitialProfile` and `InitialProfile` signatures; merge targeted-parser and resolver diagnostics into existing warnings | Preserve `UnknownProfileError` and saved-name fallback only for absent profiles |

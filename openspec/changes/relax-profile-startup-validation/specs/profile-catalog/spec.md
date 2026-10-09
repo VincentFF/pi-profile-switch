@@ -36,19 +36,19 @@ Listing SHALL isolate definition errors per winning entry instead of failing the
 
 ### Requirement: Profile definition fields
 
-A profile definition SHALL be an object. Supported fields and their shapes SHALL defer to `schemas/profiles.schema.json`. All fields SHALL remain optional. Undeclared fields MUST NOT gain new behavior through validation or diagnostic handling.
+A profile definition SHALL be an object. Supported fields and their shapes SHALL defer to `schemas/profiles.schema.json`. The optional `subagents` field SHALL follow "Optional native subagent override definitions". All fields SHALL remain optional. Undeclared fields MUST NOT gain new behavior through validation or diagnostic handling.
 
 The existing distinctions between omitted and explicitly empty resource selections SHALL be retained. An empty `mcp_tools` object SHALL have the same effect as omission; an empty selector list for a named server SHALL remain a deny-all tool policy. Glob server names or tool selectors in `mcp_tools` SHALL remain field errors.
 
-On read, unknown top-level keys SHALL be ignored with a warning naming the profile, key, and supported-field candidates derived from the authoritative schema. On write, only supported fields SHALL be emitted. Unknown keys MUST NOT be forwarded to Pi as native settings.
+On read, unknown top-level keys SHALL be ignored with a warning naming the profile, key, and supported-field candidates derived from the authoritative schema. On write, only supported fields SHALL be emitted. Unknown keys MUST NOT be forwarded to Pi as native settings. Unsupported fields inside a declared `subagents` object SHALL follow its field-specific validation contract rather than the top-level unknown-key rule.
 
 #### Scenario: Field type mismatch
-- **WHEN** a selected definition violates the authoritative supported-field shape
+- **WHEN** a selected definition, including a declared `subagents` object, violates the authoritative supported-field shape
 - **THEN** activation fails identifying the file, profile, and offending field
 
 #### Scenario: Undeclared fields do not affect behavior
 - **WHEN** a profile declares only a skill selection
-- **THEN** validation adds no model, thinking-level, or instructions override
+- **THEN** validation adds no model, thinking-level, instructions, or native subagent settings override
 
 #### Scenario: Unknown keys are ignored and not written back
 - **WHEN** a profile contains an unknown top-level key and is later rewritten through a supported writer
