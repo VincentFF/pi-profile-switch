@@ -853,7 +853,7 @@ describe("final-stage diagnostic ownership during switching", () => {
 });
 
 it("retains plain warnings from resolution plans without diagnostic metadata", async () => {
-	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [] }, projectTrusted: true, warnings: ["legacy plain warning"] });
+	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [], resourceSelection: { skills: true, extensions: true } }, projectTrusted: true, warnings: ["legacy plain warning"] });
 	const result = await switchProfile("legacy", deps());
 	expect(result.warnings).toEqual(["legacy plain warning"]);
 	expect((await readPlanFile()).diagnostics).toBeUndefined();

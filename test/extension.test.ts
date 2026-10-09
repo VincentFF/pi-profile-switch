@@ -906,7 +906,7 @@ describe("command feedback after diagnostic message refresh", () => {
 
 it("preserves legacy plain command warnings when the persisted plan has no diagnostics", async () => {
 	await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [] }, projectTrusted: true, warnings: ["legacy plain warning"] });
+	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [], resourceSelection: { skills: true, extensions: true } }, projectTrusted: true, warnings: ["legacy plain warning"] });
 	const pi = fakePi(); piProfileExtension(pi as never);
 	const previous = fakeCtx({ hasUI: true }); const next = fakeCtx({ hasUI: true });
 	const invalidate = previous.reload;
