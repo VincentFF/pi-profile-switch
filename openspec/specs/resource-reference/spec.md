@@ -41,7 +41,7 @@ The existing "Narrowing boundary of project-level resources", "Tool reference re
 #### Scenario: Declared references retain validation
 
 - **WHEN** an explicit skill or extension selection contains an unmatched literal or a zero-match glob
-- **THEN** the literal fails activation and the glob produces the existing non-fatal warning rather than changing the selection into native pass-through
+- **THEN** unmatched literals and zero-match globs produce non-fatal diagnostics, retain successful matches, and do not change the explicit selection into native pass-through
 
 #### Scenario: Native exclusions remain effective
 
@@ -65,23 +65,19 @@ The existing "Narrowing boundary of project-level resources", "Tool reference re
 
 ### Requirement: Skill reference resolution
 
-A skill reference's identity SHALL be Pi's skill name. Resolution SHALL take Pi's own complete discovery result in a read-only manner, MUST NOT implement directory scanning of its own, and MUST NOT execute any extension code or install any package because of resolving a profile.
+A skill reference's identity SHALL be Pi's skill name. Resolution SHALL use Pi's complete read-only discovery result, MUST NOT implement independent skill directory scanning, and MUST NOT execute extensions or install packages. Pi's existing discovery precedence SHALL decide same-named skills.
 
-Same-named skills SHALL be adjudicated by Pi's existing discovery precedence.
+Discovery SHALL run on every resolution. Project-scope skills SHALL participate only when trusted; skills provided by project-scope packages MUST NOT become referenceable. Trusted project-level visibility SHALL follow "Narrowing boundary of project-level resources" independently of profile selection.
 
-Discovery SHALL run again on every resolution, so added or removed skills take effect on the next launch or reload.
-
-Project-scope skills SHALL participate only when the project is trusted. Skills provided by project-scope packages MUST NOT be referenceable. Project-level skills provided by a trusted project stay in the resolution vocabulary, but their visibility does not change with the profile's selection; the narrowing boundary is in "Narrowing boundary of project-level resources".
+A missing literal skill reference SHALL follow "Unified failure tiering for references".
 
 #### Scenario: Skill not matched
-
-- **WHEN** a profile declares a literal skill name absent from the discovery result
-- **THEN** activation fails with an error identifying the name
+- **WHEN** a profile names a skill absent from discovery
+- **THEN** activation continues with a warning identifying the skipped reference
 
 #### Scenario: Untrusted project's skills do not participate
-
-- **WHEN** the project is untrusted and skills exist under the project directory
-- **THEN** those skills do not appear in the referenceable set and the discovery process does not scan that project
+- **WHEN** an untrusted project contains skills
+- **THEN** its skills do not participate in resolution and discovery does not scan that project
 
 ### Requirement: Extension reference resolution
 
@@ -108,30 +104,25 @@ Discovery SHALL be read-only: it MUST NOT install packages, MUST NOT touch the n
 
 ### Requirement: Failure behavior of extension references
 
-An unknown literal reference SHALL fail activation; the error SHALL list the discovered candidate names and provide near-miss hints when they exist.
+An unknown literal SHALL produce a non-fatal diagnostic with discovered candidates and near-miss hints when available. A relative path SHALL be skipped with a warning explaining the required absolute or home-relative form; resolution MUST NOT guess its base directory. A nonexistent path or a selected package with no usable entries SHALL be skipped with a warning stating the cause and correction.
 
-A relative-path reference SHALL fail activation; the error SHALL explain that an absolute or `~/` path is required.
-
-A path reference MUST point at an existing extension file; when the file does not exist it SHALL fail activation.
-
-When none of a package's entries is usable it SHALL fail activation; the error SHALL explain that the package declares no usable extension entries.
-
-A zero-match glob reference SHALL NOT block activation.
+These failures SHALL NOT discard other usable references. Zero-match globs SHALL remain non-blocking. No failure SHALL install a package or execute an extension during discovery.
 
 #### Scenario: Unknown literal reference
-
-- **WHEN** a profile references a name that is neither a package name, nor a loose-file ID, nor an existing path
-- **THEN** activation fails with an error listing the discovered candidates and providing near-miss hints
+- **WHEN** a reference matches no extension name, alias, or usable path
+- **THEN** activation continues without that extension and warns with candidates and available near-miss hints
 
 #### Scenario: Relative-path reference
-
-- **WHEN** a profile references an extension as `./local.ts`
-- **THEN** activation fails with an error explaining that an absolute or `~/` path is required
+- **WHEN** a profile supplies a relative extension path
+- **THEN** activation continues, skips that reference, and warns that an absolute or home-relative path is required
 
 #### Scenario: Package has no usable extension entries
+- **WHEN** a selected package has no usable entries
+- **THEN** activation continues and warns that the package contributes no extension
 
-- **WHEN** a profile references a configured package whose entries are all missing or filtered out
-- **THEN** activation fails with an error explaining that the package declares no usable extension entries
+#### Scenario: Extension path does not exist
+- **WHEN** a selected extension path is absent
+- **THEN** activation continues with a warning naming the path and loads other usable selected extensions
 
 ### Requirement: Extension ID collisions
 
@@ -144,75 +135,65 @@ When a loose file and a package name produce the same ID, the loose file SHALL w
 
 ### Requirement: MCP server reference resolution
 
-An MCP server reference's identity SHALL be a server name defined in the merged user-level MCP configuration snapshot. The snapshot SHALL merge by server name from the existing user-level source locations in their established precedence order (defer to the authoritative source list in `src/mcp-config.ts`); each later definition SHALL replace the earlier definition of the same server in full, without inheriting connection, credential, or exposure fields from the earlier definition.
+MCP server identity SHALL be a name in the merged user-level configuration snapshot. Source precedence SHALL defer to `src/mcp-config.ts`; each later valid source definition SHALL replace an earlier same-named definition in full without inheriting its connection, credential, or exposure fields.
 
-Project-scope configuration SHALL NOT be part of the snapshot: servers defined in a trusted project's `.pi/mcp.json` SHALL be read by Pi itself and SHALL remain outside profile control.
+Trusted project configuration SHALL remain classification-only and outside the generated user-level snapshot. Untrusted project configuration MUST NOT be read.
 
-When a profile explicitly declares `mcps` or names any server in `mcp_tools`, illegal configuration content required for discovery SHALL fail activation with an error identifying its file path; the system MUST NOT silently read it as "no servers". When neither field declares an effective MCP policy, illegal content in one user-level source SHALL be diagnosed with its file path without blocking activation; the valid sources SHALL still participate in the snapshot. Illegal content in a trusted project's classification source SHALL NOT block activation without an explicit MCP policy, and Pi SHALL retain ownership of its own project-file diagnostics.
+Malformed user-level sources SHALL be diagnosed by path and skipped, with or without an explicit MCP policy. Valid sources SHALL still merge in precedence order. A malformed trusted-project classification source SHALL NOT block resolution; Pi SHALL retain ownership of its project-file diagnostics. Unexpected filesystem failures SHALL remain errors rather than being misreported as malformed JSON.
 
-When a profile declares a server name the snapshot does not define, activation SHALL fail with an error identifying the name and near-miss candidates. When `mcps` selects a user-level server explicitly disabled in its winning definition, activation SHALL fail naming the server and telling the user to enable it in the source configuration or remove it from the selection; the profile MUST NOT silently override the source setting. A profile that declares no MCP servers MUST NOT require every MCP source to be valid. An explicitly empty `mcps` list SHALL resolve to an empty server selection.
-
-A server explicitly selected by `mcps` whose definition Pi's built-in MCP extension cannot use — for example the legacy SSE transport — SHALL fail activation with an error naming the server and a migration hint; the authoritative set of supported transports is defined by Pi's built-in MCP extension. A snapshot server not explicitly selected SHALL be passed through to the instance configuration without removing its connection definition, and Pi SHALL report its own configuration errors for it.
+Missing names, project-owned names selected through user-level policy, and source-disabled names SHALL produce non-fatal warnings. They MUST NOT force-enable a disabled server or narrow a project-owned server. Explicit `mcps` selection SHALL retain its declaration intent even if no usable server remains. Transport usability SHALL be judged by Pi; the profile layer MUST NOT reject a selected server solely because of a launcher-maintained transport inventory.
 
 #### Scenario: Untrusted project's MCP configuration does not participate
-
-- **WHEN** the project is untrusted and an MCP configuration file exists under the project directory
-- **THEN** the servers in that file are not merged into the snapshot and the file is not read
+- **WHEN** an untrusted project contains MCP configuration
+- **THEN** that file is not read and its servers do not participate in resolution
 
 #### Scenario: Illegal MCP configuration content
-
-- **WHEN** a profile declares `mcps` and a user-level MCP configuration is not legal JSON, or is not an object
-- **THEN** activation fails with an error identifying the file path, instead of reading it as "no servers"
+- **WHEN** a profile declares `mcps` and a user-level MCP source has invalid JSON or an invalid required container shape
+- **THEN** activation continues, warns with the source path, and uses valid sources without removing the selection restriction
 
 #### Scenario: Invalid source without MCP policy
-
-- **WHEN** a profile declares neither `mcps` nor any server in `mcp_tools`, one user-level source is malformed, and another contains a valid server definition
-- **THEN** activation succeeds with a diagnostic naming the malformed file, and the valid server is present in the generated snapshot
+- **WHEN** no effective MCP policy is declared and one source is malformed while another is valid
+- **THEN** activation continues with a path-bearing diagnostic and the valid server definition participates
 
 #### Scenario: Malformed trusted-project classification without MCP policy
+- **WHEN** a trusted project's classification source is malformed and no MCP policy is declared
+- **THEN** profile activation continues without merging project content into the snapshot and Pi handles the native project diagnostic
 
-- **WHEN** a trusted project's MCP file is malformed and the profile declares no effective MCP policy
-- **THEN** profile activation continues without merging that file into the user-level snapshot, while Pi handles its project-file diagnostic
+#### Scenario: Malformed trusted-project classification with MCP policy
+- **WHEN** a trusted project's classification source is malformed and a profile declares an MCP policy
+- **THEN** profile activation continues and does not rewrite or claim control of that project file
 
 #### Scenario: Empty tool policy does not demand valid configuration
-
-- **WHEN** a profile has `mcp_tools: {}` and no `mcps`, and a user-level source is malformed
-- **THEN** activation does not fail because of that file and reports its path
+- **WHEN** `mcp_tools` is empty, `mcps` is omitted, and a user-level source is malformed
+- **THEN** activation continues with a diagnostic naming the malformed source
 
 #### Scenario: Later user-level source overrides an earlier one per server name
-
-- **WHEN** a later user-level source defines a server with a new URL but omits the earlier definition's authorization header
-- **THEN** the snapshot uses the new definition without the earlier authorization header
+- **WHEN** a later valid source changes a server URL and omits earlier authorization fields
+- **THEN** the winning definition contains no inherited authorization fields
 
 #### Scenario: Project-owned server cannot be selected
-
-- **WHEN** a trusted project's `.pi/mcp.json` defines server P and a profile names P in `mcps`
-- **THEN** activation fails with an error explaining the project-scope boundary, and P remains enabled through Pi's own project read
+- **WHEN** a profile selects a project-owned server through `mcps`
+- **THEN** activation continues with a boundary warning and that server remains governed by Pi's project read
 
 #### Scenario: Unknown server name
-
-- **WHEN** a profile declares a server name no user-level configuration defines
-- **THEN** activation fails with an error identifying the name and near-miss candidates
+- **WHEN** `mcps` names a server absent from valid user-level sources
+- **THEN** activation continues with a warning and usable candidates without inventing a connection definition
 
 #### Scenario: Explicitly selected server is disabled in source
-
-- **WHEN** `mcps` selects a server whose winning user-level definition has `enabled: false`
-- **THEN** activation fails naming that server and explaining how to enable it in the source or remove it from `mcps`
+- **WHEN** `mcps` selects a source-disabled server
+- **THEN** activation continues, warns how to enable it at the source or remove the selection, and the server remains disabled
 
 #### Scenario: Empty selection without any MCP extension
-
-- **WHEN** a named profile declares `mcps: []` and no MCP extension is selected
-- **THEN** resolution retains an empty server selection, activation does not fail for a missing extension, and no MCP availability is changed by the empty declaration
+- **WHEN** a named profile explicitly selects no MCP servers
+- **THEN** activation continues without requiring an MCP extension and the selection remains explicitly empty
 
 #### Scenario: Selected server uses a transport Pi cannot use
-
-- **WHEN** a profile's `mcps` names a server whose definition uses a transport Pi's built-in MCP extension does not support
-- **THEN** activation fails with an error naming the server and a migration hint
+- **WHEN** a selected server's transport cannot be used by Pi
+- **THEN** the profile layer preserves its selected definition without a transport preflight rejection and Pi handles the native error
 
 #### Scenario: Unselected server with a bad transport passes through
-
-- **WHEN** a profile omits `mcps` and the merged snapshot contains a server whose definition Pi's built-in MCP extension does not support
-- **THEN** activation succeeds, the server definition is written to the instance configuration unchanged, and Pi reports its own configuration error for it
+- **WHEN** `mcps` is omitted and a snapshot server uses a transport Pi cannot use
+- **THEN** activation continues, preserves the definition, and Pi handles its native error
 
 ### Requirement: Tool reference resolution
 
@@ -261,44 +242,55 @@ Literal tool references SHALL NOT be validated or recorded at resolution time; l
 
 ### Requirement: Resolution and validation of profile-level settings fields
 
-`defaultProvider`, `defaultModel`, `defaultThinkingLevel`, and `instructions` SHALL all be optional. Undeclared fields MUST NOT enter the resolution result.
+Profile model, thinking, and instruction fields SHALL remain optional. Undeclared fields MUST NOT add overrides. Provider and model fields SHALL constitute a model declaration only when both are declared; otherwise a parent thinking declaration SHALL remain ignored as under the existing contract.
 
-`defaultProvider` and `defaultModel` constitute a model declaration only when declared together. When only one is declared, the model declaration does not hold and `defaultThinkingLevel` is ignored along with it.
+A complete model declaration SHALL be preserved for native Pi settings without launcher-side existence or authentication validation and without loading extensions in the launcher. Pi SHALL own model resolution, availability, credentials, native precedence, fallback, and actual request errors. The profile layer MUST NOT emit a model-missing warning solely because its pre-extension registry cannot see the declaration.
 
-When the model declaration holds, `defaultThinkingLevel` SHALL come from a fixed set; a value outside the set SHALL fail activation. The model SHALL be validated to exist and be authenticated; failed validation, or the absence of any usable validation means, SHALL fail activation and MUST NOT be skipped.
+Accepted thinking values SHALL defer to Pi's authoritative thinking-level contract. An unsupported string in a complete parent model declaration SHALL warn and contribute no thinking override; the model declaration itself SHALL remain. Field-type errors SHALL follow the profile-catalog contract.
 
 #### Scenario: Illegal thinkingLevel
-
-- **WHEN** a profile declares `defaultProvider`, `defaultModel`, and a `defaultThinkingLevel` outside the allowed set
-- **THEN** activation fails with an error identifying the value
+- **WHEN** a complete model declaration includes an unsupported thinking-level string
+- **THEN** activation continues with a warning and no profile thinking override while retaining provider and model
 
 #### Scenario: Only thinkingLevel declared
-
-- **WHEN** a profile declares `defaultThinkingLevel` without `defaultProvider` and `defaultModel`
-- **THEN** the thinking level is ignored — neither validated nor effective — and Pi's current thinking level remains unchanged
+- **WHEN** a profile declares parent thinking without a complete model declaration
+- **THEN** thinking is neither validated nor applied and Pi's native input remains unchanged
 
 #### Scenario: Declared model fails validation
-
-- **WHEN** the model declared by the profile does not exist or is not authenticated
-- **THEN** activation fails with an error identifying the model and the failure reason
+- **WHEN** a declared model is not statically known or authenticated before extensions load
+- **THEN** the profile layer does not reject activation and passes the model declaration to Pi
 
 #### Scenario: Validation not skipped when no validation means
+- **WHEN** model resolution has no launcher-side validation facility
+- **THEN** activation still carries the declaration rather than requiring or fabricating a validation result
 
-- **WHEN** a profile declares a model and the caller provides no model-validation capability
-- **THEN** activation fails instead of being treated as passed
+#### Scenario: Extension provider becomes available
+- **WHEN** a selected extension registers the profile's declared provider during native loading
+- **THEN** Pi can select that model without a profile-layer preflight rejection
 
 ### Requirement: Unified failure tiering for references
 
-Reference resolution SHALL be tiered by error certainty and MUST NOT silently drop any reference.
+Unmatched literals and zero-match globs in profile resource selections SHALL produce non-fatal diagnostics. Each skipped literal diagnostic SHALL identify the profile, kind, reference, effect, and available correction or candidates. Successful references SHALL remain effective. Diagnostics SHALL be visible at activation and in status without modifying source definitions.
 
-An unmatched literal SHALL fail activation. A zero-match glob SHALL be collected as a warning item, visible in launch output and status queries, without blocking activation.
+An explicit selection MUST NOT become omission or unrestricted access when its references fail. When all references fail, its user-level selection SHALL be empty. Missing references SHALL be re-evaluated from the unchanged definition on subsequent launch or reload.
 
-Pi tool references are the exception: they are unknowable before spawn, so they neither fail on a pre-spawn miss nor get recorded as warning items. After session start, missing Pi tool literals SHALL be reported. Literal MCP tool selectors in `mcp_tools` are restrictive policy inputs rather than pre-spawn-resolvable references; they SHALL remain in the policy without a missing-name diagnostic, as specified in "Per-server MCP tool selection".
+Pi tool references SHALL retain their deferred live-registry validation. Literal `mcp_tools` selectors SHALL remain restrictive policy inputs without missing-tool-name validation. Runtime overlay mutation errors SHALL retain their separate in-session contract.
 
 #### Scenario: Different outcomes for literals and globs
+- **WHEN** a profile references a missing literal skill and a zero-match skill glob
+- **THEN** activation continues and both misses are diagnosed rather than either aborting activation
 
-- **WHEN** a profile references both a nonexistent literal skill name and a zero-match skill glob
-- **THEN** activation fails because of the literal, while the glob itself only produces a warning item
+#### Scenario: Partial selection stays restrictive
+- **WHEN** a declared resource selection contains one usable reference and one missing reference
+- **THEN** only the usable selected user-level resource is made available and the miss is diagnosed
+
+#### Scenario: All missing references retain an empty selection
+- **WHEN** every reference in a declared resource selection is missing
+- **THEN** activation continues with an explicitly empty user-level selection instead of restoring the native full selection
+
+#### Scenario: Previously missing resource becomes available
+- **WHEN** a skipped resource is installed and the profile is activated again
+- **THEN** the original reference resolves without any profile-file rewrite
 
 ### Requirement: Narrowing boundary of project-level resources
 
@@ -332,64 +324,57 @@ A named profile MUST NOT make visible a user-level skill that the user's own set
 
 ### Requirement: Per-server MCP tool selection
 
-`mcp_tools` SHALL narrow tools within each explicitly named MCP server, independently of the Pi `tools` field, by exposing only tools matched by the listed selectors and hiding all others. A selector SHALL be a literal tool name as registered by Pi's built-in MCP extension; prefixed or aliased selector spellings from the adapter era SHALL NOT match. The profile-catalog field contract defines which literals are accepted.
+`mcp_tools` SHALL narrow each named eligible user-level server independently of `tools`, exposing only literal tool selectors matched by Pi's built-in MCP extension. Selector spellings SHALL follow Pi's authoritative registered-name contract rather than adapter-era aliases. A server not named in `mcp_tools` SHALL retain its configured tool availability. Empty objects SHALL change nothing; empty server lists SHALL deny all callable tools while leaving server non-tool functions intact. A nonempty policy SHALL replace the server's merged tool exposure wholesale.
 
-A server not named in `mcp_tools` SHALL retain its configured tool availability. An empty object SHALL change nothing. A server mapped to an empty list SHALL offer no callable MCP tools while remaining an enabled server; a nonempty list SHALL permit only tools matched by listed selectors. The profile's per-server policy SHALL replace the server's tool exposure from the merged configuration wholesale: a tool the merged configuration hides SHALL become available only when a selector matches it.
+A missing, disabled, or project-owned server key SHALL produce an actionable non-fatal warning instead of aborting activation. Policy input SHALL be retained for diagnostics and re-resolution without creating a server, force-enabling it, changing project-owned resources, or treating a disabled policy as unrestricted. If a named user-level server is enabled, its declared policy MUST be materialized before it becomes callable.
 
-Every server key SHALL resolve to an enabled user-level server in the merged configuration snapshot; an unknown, disabled, or project-only server SHALL fail activation with an error naming the server and usable candidates or the project-scope boundary. An absent or empty `mcp_tools` object SHALL introduce no MCP configuration dependency.
-
-Literal selectors in `mcp_tools` SHALL NOT be checked against a server's tool list or produce missing-name notifications or validation status. A selector matching no tool SHALL remain restrictive: it MUST NOT silently become an unrestricted server. The resulting restriction SHALL hold for direct tools and indirect routes through MCP gateways, proxies, and scripts, including tools added after the initial session start.
+Selectors SHALL NOT be checked against a server's tool catalog or produce missing-tool-name diagnostics. An unmatched selector SHALL remain restrictive across direct and indirect invocation, including tools discovered later. Empty or absent policy SHALL add no MCP discovery requirement.
 
 #### Scenario: Missing server key defaults to all tools
-
-- **WHEN** an enabled `github` server offers `search` and `delete`, and `mcp_tools` has no `github` entry
-- **THEN** both tools remain available, subject to the server's configured tool exposure, regardless of the profile's `tools` list
+- **WHEN** an enabled server is not named in `mcp_tools`
+- **THEN** its tools retain native availability independently of `tools`
 
 #### Scenario: Explicit per-server whitelist
-
-- **WHEN** `mcp_tools` sets `github` to `["search"]` and the server offers `search` and `delete`
-- **THEN** only `search` is available through direct and indirect MCP tool invocation; `delete` is not exposed or callable
+- **WHEN** a server offers selected and unselected tools
+- **THEN** only tools matching its selectors are callable through direct and indirect routes
 
 #### Scenario: Prefixed adapter alias no longer matches
-
-- **WHEN** server `fixture` registers original tool `search` and `mcp_tools` sets `fixture` to `["fixture_search"]`, the adapter-era prefixed spelling
-- **THEN** no `fixture` tool is exposed, because a selector must be the tool's literal registered name; the restriction remains in force without a missing-name diagnostic
+- **WHEN** a selector uses an adapter-era alias rather than a registered tool name
+- **THEN** unmatched tools remain hidden without a selector-validity warning
 
 #### Scenario: Empty server list denies all tools
-
-- **WHEN** `mcp_tools` sets `github` to `[]`
-- **THEN** no tool offered by `github` can be exposed or called, while the server remains enabled for its non-tool functions
+- **WHEN** a server is assigned an empty selector list
+- **THEN** it exposes no callable MCP tools while retaining its enabled non-tool functions
 
 #### Scenario: Server name typo fails before activation
-
-- **WHEN** `mcp_tools` names a server absent from the merged user-level snapshot
-- **THEN** activation fails with the name and usable server candidates
+- **WHEN** a policy names a server absent from the merged snapshot
+- **THEN** activation continues with a server-name warning and usable candidates, without creating an unrestricted server
 
 #### Scenario: Special-looking unknown server is not discovered
-
-- **WHEN** `mcp_tools` names `toString` or `__proto__` but no such server was defined in the merged snapshot
-- **THEN** activation fails with that server name and usable candidates instead of treating the key as implicitly present
+- **WHEN** a policy names a special-looking property absent from the snapshot's own server entries
+- **THEN** activation warns and does not treat an inherited property as a discovered server
 
 #### Scenario: Unmatched literal selector stays restrictive without a diagnosis
-
-- **WHEN** `mcp_tools` lists `serach` for `github` but no registered `github` tool has that name
-- **THEN** `search` remains unavailable through direct and indirect MCP tool calls, and the user receives no tool-name validation warning or missing-name status
+- **WHEN** a literal selector matches no registered tool on an eligible server
+- **THEN** all unselected tools remain unavailable and no selector-validity diagnostic is produced
 
 #### Scenario: Profile policy replaces merged tool exposure
-
-- **WHEN** the merged configuration hides one of a server's tools and `mcp_tools` lists a selector matching that tool
-- **THEN** that tool becomes available through direct and indirect MCP tool calls, and every unlisted tool on the server is hidden
+- **WHEN** a declared selector names a tool hidden in the merged source exposure
+- **THEN** that tool follows the profile's replacement policy and every unlisted tool remains hidden
 
 #### Scenario: Project-only server is outside the narrowing boundary
+- **WHEN** a policy names a project-only server
+- **THEN** activation continues with a boundary warning and the project server remains unchanged
 
-- **WHEN** `mcp_tools` names a server defined only by trusted project configuration
-- **THEN** activation fails with an explanation that a profile cannot narrow that project-level server, and the project server is unchanged
+#### Scenario: Disabled server policy stays non-enabling
+- **WHEN** a named policy server is source-disabled or excluded by `mcps`
+- **THEN** activation continues with a warning and does not enable the server or remove its declared restriction
 
 ### Requirement: Subagent override resolution boundaries
 
 Resolution SHALL preserve the profile's validated native subagent declaration without treating its role keys as selectable Resources, registering agents, expanding globs, or applying Resource-reference failure tiering to those keys. Effectively empty declarations SHALL contribute no subagent override to activation.
 
-The declaration alone MUST NOT import pi-subagents, execute extension code, discover agent files, install packages, contact providers, or require child-model authentication. Parent-model validation SHALL retain its existing behavior and MUST NOT be reused to reinterpret child model strings. Final child-model selection, native clearing behavior, runner-specific model handling, and launch failures SHALL remain owned by pi-subagents.
+The declaration alone MUST NOT import pi-subagents, execute extension code, discover agent files, install packages, contact providers, or require child-model authentication. Parent-model declarations SHALL follow "Resolution and validation of profile-level settings fields"; that contract MUST NOT be reused to reinterpret child model strings. Final child-model selection, native clearing behavior, runner-specific model handling, and launch failures SHALL remain owned by pi-subagents.
 
 Agent names and advertisement or description declarations MUST NOT enable delegation, alter child prompts directly, or filter unmentioned agents. Existing extension and tool selection SHALL remain the only profile-controlled loading and parent-tool mechanisms in this change.
 

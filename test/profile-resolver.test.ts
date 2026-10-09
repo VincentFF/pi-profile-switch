@@ -7,6 +7,7 @@ import { ActivationError, resolveProfile } from "../src/profile-resolver.ts";
 import { DiscoveredExtensions, discoverExtensions } from "../src/extension-discovery.ts";
 import { loadMergedMcpServers, type MergedMcpResult } from "../src/mcp-config.ts";
 import type { SkillEntry } from "../src/skill-registry.ts";
+import { resolveModelProfileInNode } from "./helpers/model-profile-runner.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -45,15 +46,15 @@ async function extensionsWith(names: string[] = []): Promise<DiscoveredExtension
 
 describe("resolveProfile", () => {
 	it("carries child settings verbatim without parent-model validation or resource selection", async () => {
-		const validateModel = vi.fn(async () => undefined);
 		const subagents = { defaultModel: "provider/model:high", agentOverrides: { unknownRole: { model: "inherit" } } };
 		const plan = await resolveProfile({
-			profile: profile("review", { subagents }), skills: [], extensions: await extensionsWith(), validateModel,
+			profile: profile("review", { subagents }), skills: [], extensions: await extensionsWith(),
 		});
 		expect(plan.subagents).toEqual(subagents);
 		expect(plan.extensions).toEqual([]);
 		expect(plan.tools).toBeUndefined();
-		expect(validateModel).not.toHaveBeenCalled();
+		expect(plan.model).toBeUndefined();
+		expect(plan.resourceSelection).toEqual({ skills: false, extensions: false });
 	});
 
 	it("expands literal and glob skill references against the registry, deduped", async () => {
@@ -73,14 +74,13 @@ describe("resolveProfile", () => {
 		]);
 	});
 
-	it("fails activation when a literal skill name does not exist", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["no-such-skill"] }),
-				skills: [skill("code-review")],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/no-such-skill/);
+	it("skips a missing literal skill with actionable diagnostics", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { skills: ["no-such-skill"] }), skills: [skill("code-review")], extensions: await extensionsWith() });
+		expect(plan.skills).toEqual([]);
+		expect(plan.filter).toBe("selection");
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "skill", reference: "no-such-skill", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("not loaded");
+		expect(plan.diagnostics?.[0].message).toContain("code-review");
 	});
 
 	it("treats a glob with no current matches as empty, not an error", async () => {
@@ -117,14 +117,12 @@ describe("resolveProfile", () => {
 		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["github-ci", "github-pr"]);
 	});
 
-	it("fails activation when a literal extension is not discovered", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { extensions: ["ghost"] }),
-				skills: [],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/ghost/);
+	it("skips a missing literal extension with diagnostics", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { extensions: ["ghost"] }), skills: [], extensions: await extensionsWith() });
+		expect(plan.extensions).toEqual([]);
+		expect(plan.filter).toBe("selection");
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "extension", reference: "ghost", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("not loaded");
 	});
 
 	it("passes literal tool names through and expands tool globs against Pi's built-in tools", async () => {
@@ -177,37 +175,29 @@ describe("resolveProfile", () => {
 		expect(plan.instructions).toBeUndefined();
 	});
 
-	it("carries a declared model after successful validation", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "high" }),
-			skills: [],
-			extensions: await extensionsWith(),
-			validateModel: async () => undefined,
-		});
-
-		expect(plan.model).toEqual({ provider: "openai", id: "gpt-5.4", thinkingLevel: "high" });
+	it("carries a declared model without standalone validation", async () => {
+		const plan = await resolveModelProfileInNode({ defaultProvider: "extension-provider", defaultModel: "local-model", defaultThinkingLevel: "high" });
+		expect(plan.model).toEqual({ provider: "extension-provider", id: "local-model", thinkingLevel: "high" });
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
-	it("fails activation when the declared model is missing or unauthenticated", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4" }),
-				skills: [],
-				extensions: await extensionsWith(),
-				validateModel: async () => "No API key found for \"openai\"",
-			}),
-		).rejects.toThrow(/No API key found/);
+	it("preserves a complete declaration even without a static registry or credentials", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { defaultProvider: "unknown-provider", defaultModel: "unknown-model" }), skills: [], extensions: await extensionsWith() });
+		expect(plan.model).toEqual({ provider: "unknown-provider", id: "unknown-model" });
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
-	it("fails activation on an invalid thinking level", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "extreme" }),
-				skills: [],
-				extensions: await extensionsWith(),
-				validateModel: async () => undefined,
-			}),
-		).rejects.toThrow(/thinkingLevel/);
+	it("warns and omits only an unsupported thinking contribution", async () => {
+		const plan = await resolveModelProfileInNode({ defaultProvider: "extension-provider", defaultModel: "local-model", defaultThinkingLevel: "extreme" });
+		expect(plan.model).toEqual({ provider: "extension-provider", id: "local-model" });
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "thinking", reference: "extreme", message: expect.stringContaining('profile "review"') }));
+		expect(plan.diagnostics?.[0].message).toContain("ignored");
+	});
+
+	it.each([{}, { defaultThinkingLevel: "extreme" }, { defaultProvider: "provider", defaultThinkingLevel: "extreme" }, { defaultModel: "model", defaultThinkingLevel: "extreme" }])("ignores thinking without a complete model declaration %j", async (definition) => {
+		const plan = await resolveProfile({ profile: profile("review", definition), skills: [], extensions: await extensionsWith() });
+		expect(plan.model).toBeUndefined();
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
 	it("expands mcp references against the discovered server names", async () => {
@@ -221,15 +211,14 @@ describe("resolveProfile", () => {
 		expect(plan.mcps).toEqual(["github", "internal-docs", "internal-ci"]);
 	});
 
-	it("fails activation on a literal mcp reference the snapshot never discovered", async () => {
-		await expect(
-			resolveProfile({
+	it("warns on a literal mcp reference the snapshot never discovered", async () => {
+		const plan = await resolveProfile({
 				profile: profile("review", { mcps: ["github-ro"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				discoveredMcpServers: ["github"],
-			}),
-		).rejects.toThrow(/unknown MCP server: "github-ro" \(usable candidates: github\)/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/unknown MCP server: "github-ro" \(usable candidates: github\)/);
 	});
 
 	it("names usable user-level candidates when an mcps reference is unknown", async () => {
@@ -244,14 +233,13 @@ describe("resolveProfile", () => {
 			serverOwners: { github: "user", linear: "user", "proj-srv": "project" },
 		};
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", { mcps: ["typo"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unknown MCP server: "typo" \(usable candidates: github\)/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/unknown MCP server: "typo" \(usable candidates: github\)/);
 	});
 
 	it("states no user-level servers when an unknown mcps reference has no candidates", async () => {
@@ -262,14 +250,13 @@ describe("resolveProfile", () => {
 			serverOwners: { "proj-srv": "project" },
 		};
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", { mcps: ["typo"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unknown MCP server: "typo" \(no user-level servers are discovered\)/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/unknown MCP server: "typo" \(no user-level servers are discovered\)/);
 	});
 
 	it("fails activation when mcp is declared without server discovery", async () => {
@@ -282,7 +269,7 @@ describe("resolveProfile", () => {
 		).rejects.toThrow(/no MCP server discovery is available/);
 	});
 
-	it("fails activation when mcps selects a server disabled in its winning definition", async () => {
+	it("warns when mcps selects a server disabled in its winning definition", async () => {
 		const mcpDiscovery: MergedMcpResult = {
 			servers: { github: { url: "https://gh", enabled: false } },
 			sharedServers: new Set(),
@@ -290,34 +277,23 @@ describe("resolveProfile", () => {
 			serverOwners: { github: "user" },
 		};
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", { mcps: ["github"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				discoveredMcpServers: ["github"],
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/selected MCP server "github" is disabled in its source configuration/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/selected MCP server "github" is disabled in its source configuration/);
 	});
 
-	it("fails activation when an explicitly selected server uses the legacy SSE transport", async () => {
-		const mcpDiscovery: MergedMcpResult = {
-			servers: { github: { type: "sse", url: "http://localhost:3000/sse" } },
-			sharedServers: new Set(),
-			projectServers: new Set(),
-			serverOwners: { github: "user" },
-		};
-
-		await expect(
-			resolveProfile({
-				profile: profile("review", { mcps: ["github"] }),
-				skills: [],
-				extensions: await extensionsWith(),
-				discoveredMcpServers: ["github"],
-				mcpDiscovery,
-			}),
-		).rejects.toThrow(/selected MCP server "github" uses the legacy SSE transport/);
+	it("hands selected transport definitions to native Pi unchanged", async () => {
+		const definition = { type: "sse", url: "http://localhost:3000/sse", headers: { fixture: "kept" } };
+		const mcpDiscovery: MergedMcpResult = { servers: { github: definition }, sharedServers: new Set(), projectServers: new Set(), serverOwners: { github: "user" } };
+		const plan = await resolveProfile({ profile: profile("review", { mcps: ["github"] }), skills: [], extensions: await extensionsWith(), mcpDiscovery });
+		expect(plan.mcps).toEqual(["github"]);
+		expect(plan.instanceMcpConfig?.mcpServers).toEqual({ github: definition });
+		expect(plan.diagnostics).toBeUndefined();
 	});
 
 	it("passes an unselected SSE server through without failing activation", async () => {
@@ -340,7 +316,7 @@ describe("resolveProfile", () => {
 		expect(plan.instanceMcpConfig).toBeUndefined();
 	});
 
-	it("fails activation when mcps names a project-owned server", async () => {
+	it("warns when mcps names a project-owned server", async () => {
 		const mcpDiscovery: MergedMcpResult = {
 			servers: { github: { url: "https://gh" }, "proj-srv": { url: "https://proj" } },
 			sharedServers: new Set(["github"]),
@@ -348,14 +324,13 @@ describe("resolveProfile", () => {
 			serverOwners: { github: "user", "proj-srv": "project" },
 		};
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", { mcps: ["github", "proj-srv"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/cannot select project-level MCP server "proj-srv"/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/cannot select project-level MCP server "proj-srv"/);
 	});
 
 	it("a non-empty mcps selection does not materialize project-owned servers", async () => {
@@ -770,14 +745,16 @@ describe("sparse skill and extension selection (fix-undeclared-resource-filterin
 		expect(plan.skills.map((entry) => entry.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
 	});
 
-	it("declared references still fail on an unmatched literal and warn on a zero-match glob", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["ghost-skill"] }),
-				skills: [skill("alpha-skill")],
-				extensions: await extensionsWith(),
-			}),
-		).rejects.toThrow(/ghost-skill/);
+	it("declared references warn on misses without reverting the selection to native visibility", async () => {
+		const missing = await resolveProfile({
+			profile: profile("review", { skills: ["ghost-skill"] }),
+			skills: [skill("alpha-skill")],
+			extensions: await extensionsWith(["linter"]),
+		});
+		expect(missing.resourceSelection).toEqual({ skills: true, extensions: false });
+		expect(missing.skills).toEqual([]);
+		expect(missing.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(missing.diagnostics).toContainEqual(expect.objectContaining({ kind: "skill", code: "unknown-reference", reference: "ghost-skill" }));
 
 		const plan = await resolveProfile({
 			profile: profile("review", { skills: ["future-*"] }),
@@ -887,17 +864,12 @@ describe("discovery-first extension references (ADR-0007)", () => {
 		expect(plan.extensions).toEqual([{ id: file, entry: file }]);
 	});
 
-	it("unknown extension literals fail with actionable guidance", async () => {
+	it("unknown extension literals warn with actionable guidance", async () => {
 		const { registry } = await registryWithPackage("pi-web-access");
-
-		const error = await resolveProfile({
-			profile: profile("review", { extensions: ["web-access"] }),
-			skills: [],
-			extensions: registry,
-		}).catch((caught: unknown) => caught);
-
-		expect((error as Error).message).toContain('did you mean "pi-web-access"');
-		expect((error as Error).message).not.toContain("resources.json");
+		const plan = await resolveProfile({ profile: profile("review", { extensions: ["web-access"] }), skills: [], extensions: registry });
+		expect(plan.extensions).toEqual([]);
+		expect(plan.diagnostics?.[0].message).toContain('did you mean "pi-web-access"');
+		expect(plan.diagnostics?.[0].message).not.toContain("resources.json");
 	});
 
 	it("zero-match globs land in plan.unmatched instead of failing silently", async () => {
@@ -956,25 +928,24 @@ describe("mcp_tools resolution and server policy", () => {
 		};
 	}
 
-	it("fails activation when mcp_tools names prototype properties absent from discovered servers", async () => {
+	it("warns when mcp_tools names prototype properties absent from discovered servers", async () => {
 		const mcpDiscovery = mockMcpDiscovery({ servers: { github: { url: "https://gh" } } });
 
 		for (const serverName of ["toString", "__proto__"]) {
 			const definition = JSON.parse(
 				`{"mcp_tools":{${JSON.stringify(serverName)}:["search"]}}`,
 			);
-			await expect(
-				resolveProfile({
+			const plan = await resolveProfile({
 					profile: profile("review", definition),
 					skills: [],
 					extensions: await extensionsWith(),
 					mcpDiscovery,
-				}),
-			).rejects.toThrow(`unknown MCP server "${serverName}"`);
+				});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(`unknown MCP server "${serverName}"`);
 		}
 	});
 
-	it("rejects configured __proto__ when discovery can only represent toString", async () => {
+	it("diagnoses configured __proto__ when discovery can only represent toString", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "mcp.json"),
 			'{"mcpServers":{"toString":{"url":"https://string"},"__proto__":{"url":"https://proto"}}}',
@@ -984,34 +955,32 @@ describe("mcp_tools resolution and server policy", () => {
 			'{"mcp_tools":{"toString":["search"],"__proto__":["lookup"]}}',
 		);
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", definition),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unknown MCP server "__proto__".*toString/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/unknown MCP server "__proto__".*toString/);
 	});
 
-	it("fails activation when mcp_tools names an unknown server, providing usable candidates", async () => {
+	it("warns when mcp_tools names an unknown server, providing usable candidates", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: { github: { url: "https://gh" } },
 		});
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", {
 					mcp_tools: { typo_server: ["search"] },
 				} as any),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/unknown MCP server "typo_server".*github/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/unknown MCP server "typo_server".*github/);
 	});
 
-	it("fails activation when mcp_tools names a disabled server, providing usable candidates", async () => {
+	it("warns when mcp_tools names a disabled server, providing usable candidates", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -1019,19 +988,18 @@ describe("mcp_tools resolution and server policy", () => {
 			},
 		});
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", {
 					mcp_tools: { disabled_server: ["search"] },
 				} as any),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/MCP server "disabled_server" is disabled.*github/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/MCP server "disabled_server" is disabled.*github/);
 	});
 
-	it("fails activation when mcp_tools names a server disabled by mcps allowlist", async () => {
+	it("warns when mcp_tools names a server disabled by mcps allowlist", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -1039,8 +1007,7 @@ describe("mcp_tools resolution and server policy", () => {
 			},
 		});
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", {
 					mcps: ["github"],
 					mcp_tools: { linear: ["search"] },
@@ -1048,11 +1015,11 @@ describe("mcp_tools resolution and server policy", () => {
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/MCP server "linear" is disabled.*github/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/MCP server "linear" is disabled.*github/);
 	});
 
-	it("fails activation when mcp_tools names a project-only server", async () => {
+	it("warns when mcp_tools names a project-only server", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				github: { url: "https://gh" },
@@ -1061,19 +1028,18 @@ describe("mcp_tools resolution and server policy", () => {
 			projectServers: ["proj-srv"],
 		});
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", {
 					mcp_tools: { "proj-srv": ["search"] },
 				} as any),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/cannot narrow project-level MCP server "proj-srv"/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/cannot narrow project-level MCP server "proj-srv"/);
 	});
 
-	it("fails activation when mcp_tools names a project-shadowed server", async () => {
+	it("warns when mcp_tools names a project-shadowed server", async () => {
 		const mcpDiscovery = mockMcpDiscovery({
 			servers: {
 				"shared-shadowed": { url: "https://proj-override" },
@@ -1082,16 +1048,15 @@ describe("mcp_tools resolution and server policy", () => {
 			serverOwners: { "shared-shadowed": "project" },
 		});
 
-		await expect(
-			resolveProfile({
+		const plan = await resolveProfile({
 				profile: profile("review", {
 					mcp_tools: { "shared-shadowed": ["search"] },
 				} as any),
 				skills: [],
 				extensions: await extensionsWith(),
 				mcpDiscovery,
-			}),
-		).rejects.toThrow(/cannot narrow project-level MCP server "shared-shadowed"/);
+			});
+		expect(plan.diagnostics?.map((issue) => issue.message).join("\n")).toMatch(/cannot narrow project-level MCP server "shared-shadowed"/);
 	});
 
 	it("does not require an adapter extension for mcp_tools", async () => {
@@ -1223,5 +1188,87 @@ describe("mcp_tools resolution and server policy", () => {
 
 		const server = (plan.instanceMcpConfig?.mcpServers as Record<string, any>).github;
 		expect(server.toolExposure).toBeUndefined();
+	});
+});
+
+
+describe("partial skill and extension selections", () => {
+	it("retains usable selections after misses and diagnoses literals and zero-match globs", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["missing", "future-*", "code-review"], extensions: ["ghost", "./relative.ts", "ghost-*", "linter"] }),
+			skills: [skill("code-review"), skill("unselected")], extensions: await extensionsWith(["linter", "unselected"]),
+		});
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(plan.unmatched).toEqual(["skill:future-*", "extension:ghost-*"]);
+		expect(plan.diagnostics?.map((issue) => issue.reference)).toEqual(["missing", "future-*", "ghost", "./relative.ts", "ghost-*"]);
+		for (const issue of plan.diagnostics ?? []) expect(issue.message).toContain('profile "review"');
+	});
+
+	it("re-resolves unchanged declarations when previously missing resources appear", async () => {
+		const target = profile("review", { skills: ["future"], extensions: ["future"] });
+		const before = JSON.stringify(target);
+		const first = await resolveProfile({ profile: target, skills: [skill("unselected")], extensions: await extensionsWith(["unselected"]) });
+		expect(first.skills).toEqual([]);
+		expect(first.extensions).toEqual([]);
+		const next = await resolveProfile({ profile: target, skills: [skill("future"), skill("unselected")], extensions: await extensionsWith(["future"]) });
+		expect(next.skills.map((entry) => entry.name)).toEqual(["future"]);
+		expect(next.extensions.map((entry) => entry.id)).toEqual(["future"]);
+		expect(next.diagnostics).toBeUndefined();
+		expect(JSON.stringify(target)).toBe(before);
+	});
+
+	it.each(["skill", "extension"])("still rejects overlay disabling a skipped %s literal", async (kind) => {
+		await expect(resolveProfile({ profile: profile("review", { skills: ["missing"], extensions: ["missing"] }), skills: [], extensions: await extensionsWith(), overlay: kind === "skill" ? { disabledSkills: ["missing"] } : { disabledExtensions: ["missing"] } })).rejects.toThrow(/overlay disables unknown/);
+	});
+});
+
+
+describe("partial MCP selection intent", () => {
+	function discovery(): MergedMcpResult {
+		return { servers: { kept: { command: "fixture", toolExposure: { original: "hidden" } }, unselected: { url: "https://unselected" }, disabled: { url: "https://disabled", enabled: false }, project: { url: "https://project" } }, sharedServers: new Set(), projectServers: new Set(["project"]), serverOwners: { kept: "user", unselected: "user", disabled: "user", project: "project" } };
+	}
+
+	it("keeps partial MCP selections restrictive and retains dormant policy keys", async () => {
+		const mcpDiscovery = discovery();
+		const before = JSON.stringify(mcpDiscovery.servers);
+		const target = profile("review", { mcps: ["missing", "disabled", "project", "kept"], mcp_tools: { kept: ["opaque-unmatched"], missing: [], disabled: ["future"], project: [], unselected: [] } });
+		const definitionBefore = JSON.stringify(target.definition);
+		const plan = await resolveProfile({ profile: target, skills: [], extensions: await extensionsWith(), mcpDiscovery });
+		expect(plan.mcps).toEqual(["kept"]);
+		expect(plan.mcpTools).toEqual(target.definition.mcp_tools);
+		expect(plan.instanceMcpConfig?.mcpServers).toEqual({ kept: { command: "fixture", toolExposure: { "*": "hidden", "opaque-unmatched": "direct" } }, unselected: { url: "https://unselected", enabled: false }, disabled: { url: "https://disabled", enabled: false } });
+		expect(plan.diagnostics?.filter((issue) => issue.reference === "opaque-unmatched")).toEqual([]);
+		for (const name of ["missing", "disabled", "project", "unselected"]) expect(plan.diagnostics?.some((issue) => issue.reference === name)).toBe(true);
+		expect(JSON.stringify(mcpDiscovery.servers)).toBe(before);
+		expect(JSON.stringify(target.definition)).toBe(definitionBefore);
+	});
+
+	it("all skipped MCP references retain empty selection rather than omission", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { mcps: ["missing", "disabled", "project"] }), skills: [], extensions: await extensionsWith(), mcpDiscovery: discovery() });
+		expect(plan.mcps).toEqual([]);
+		const servers = plan.instanceMcpConfig?.mcpServers as Record<string, Record<string, unknown>>;
+		expect(Object.keys(servers).sort()).toEqual(["disabled", "kept", "unselected"]);
+		for (const server of Object.values(servers)) expect(server.enabled).toBe(false);
+	});
+
+	it("policy-only dormant keys do not invent connections or narrow unmentioned servers", async () => {
+		const plan = await resolveProfile({ profile: profile("review", { mcp_tools: { missing: ["future"], disabled: [], project: [] } }), skills: [], extensions: await extensionsWith(), mcpDiscovery: discovery() });
+		expect(plan.mcps).toBeUndefined();
+		expect(plan.mcpTools).toEqual({ missing: ["future"], disabled: [], project: [] });
+		expect(plan.instanceMcpConfig?.mcpServers).toEqual({ kept: { command: "fixture", toolExposure: { original: "hidden" } }, unselected: { url: "https://unselected" }, disabled: { url: "https://disabled", enabled: false } });
+	});
+
+	it("re-evaluates dormant policies and missing selections when a server appears", async () => {
+		const target = profile("review", { mcps: ["future"], mcp_tools: { future: [] } });
+		const mcpDiscovery = discovery();
+		expect((await resolveProfile({ profile: target, skills: [], extensions: await extensionsWith(), mcpDiscovery })).mcps).toEqual([]);
+		mcpDiscovery.servers.future = { command: "fixture" };
+		mcpDiscovery.serverOwners.future = "user";
+		const next = await resolveProfile({ profile: target, skills: [], extensions: await extensionsWith(), mcpDiscovery });
+		expect(next.mcps).toEqual(["future"]);
+		expect((next.instanceMcpConfig?.mcpServers as Record<string, any>).future.toolExposure).toEqual({ "*": "hidden" });
+		expect(next.diagnostics).toBeUndefined();
+		expect(target.definition).toEqual({ mcps: ["future"], mcp_tools: { future: [] } });
 	});
 });

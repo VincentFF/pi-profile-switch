@@ -34,6 +34,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
+import { mergeResolutionDiagnostics, type ResolutionDiagnostic } from "../profile-resolver.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import type { ProfileSubagentSettings } from "../subagent-settings.ts";
@@ -66,6 +67,7 @@ export interface LaunchPlanFile {
 	};
 	/** Glob references that matched nothing at resolution (ADR-0009). */
 	unmatched?: string[];
+	diagnostics?: ResolutionDiagnostic[];
 	previousResolved?: {
 		skills: string[];
 		extensions: string[];
@@ -134,7 +136,9 @@ export async function applyLaunchPlan(input: {
 	if (plan === undefined) {
 		return { warnings: [] };
 	}
-	const warnings: string[] = [];
+	const warnings: string[] = input.reason === "reload"
+		? mergeResolutionDiagnostics(plan.diagnostics).map((issue) => issue.message)
+		: [];
 	const subagentWarnings = new Set<string>();
 
 	if (plan.subagents !== undefined) {
@@ -264,10 +268,10 @@ export async function applyLaunchPlan(input: {
 		await clearSwitchMarker(input.runtimeDir);
 	}
 
-	for (const warning of warnings) {
+	for (const warning of new Set(warnings)) {
 		if (!subagentWarnings.has(warning)) surface.notify?.(warning, "warning");
 	}
-	return { summary, warnings };
+	return { summary, warnings: [...new Set(warnings)] };
 }
 
 function buildSwitchSummary(plan: LaunchPlanFile): string {

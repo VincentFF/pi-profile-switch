@@ -13,6 +13,7 @@ Read per task; do not read everything up front.
 | About to propose a more convenient design | `docs/adr/`; the design has likely already been rejected |
 | Starting a new change | The `context` section of `openspec/config.yaml` |
 | Editing `## Purpose` of a main spec | `docs/prd.md`; replace duplicated positioning with a link |
+| Editing `README.md` or `README.zh-CN.md` | [README authoring](#readme-authoring) |
 
 Terminology is defined by `CONTEXT.md`; the avoid-words flagged there must not be used.
 
@@ -32,11 +33,20 @@ Terminology is defined by `CONTEXT.md`; the avoid-words flagged there must not b
 
 ### Documentation
 
-- Fact-ownership criteria and capability domains live in the `context` section of `openspec/config.yaml`; do not repeat them elsewhere.
-- Write each fact exactly once; link instead of restating when referencing facts owned elsewhere.
+- Follow the fact-ownership criteria, reference policy, and capability domains in the `context` section of `openspec/config.yaml`.
 - Do not rewrite the decisions of existing ADRs. When a decision changes, add a new numbered file and mark the old one with a single top line: `**Superseded by ADR-XXXX.**`
 - New ADRs use the next available number in `docs/adr/`; numbers are never reused.
 - Reference ADRs by number, e.g. `ADR-0005`. Use repo-relative paths for file links.
+
+### README authoring
+
+- Keep only three parts, in order: tool introduction, installation and usage, and detailed configuration guidance. The introduction explains what the tool does; usage gets the reader started quickly; configuration explains how to write a profile.
+- Exclude migration and release history, architectural reasoning, internal implementation details, and internal-document link inventories. Keep practical limits and actionable diagnostics next to the affected operation or field.
+- Write `README.md` in English and `README.zh-CN.md` in Chinese. Synchronize both editions whenever content changes; technical identifiers, JSON and command examples, behavior, and limitations must agree. Preserve human edits when synchronizing.
+- Make configuration guidance self-contained. Cover every supported top-level and nested field, its type and meaning, reference forms, omitted versus empty values, and valid examples. A schema link supplements this explanation; internal spec links do not replace it.
+- Use short, direct sentences. Use tables for fields and comparisons, and fenced blocks for complete commands and JSON. Explain each fact once within an edition.
+- Derive field coverage from `schemas/profiles.schema.json`. Check installation requirements against `package.json`, and operational facts against their owning sources. Refer to native documentation for evolving native value inventories instead of copying them.
+- Keep documentation tests focused on scope, supported-field coverage, valid examples, bilingual agreement, and working links. Allow table alignment and equivalent prose; do not require migration sections, internal spec links, exact wording, or exact spacing.
 
 ### Code
 

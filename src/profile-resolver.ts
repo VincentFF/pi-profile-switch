@@ -6,15 +6,15 @@
  * - Glob references (`*`, `?`) expand against the full registry at every
  *   resolution; zero matches is fine (new matches join on the next start) and
  *   is reported in the plan's `unmatched` list so typos are visible.
- * - Literal references must exist; a missing literal fails activation.
+ * - Missing profile skill and extension references produce diagnostics.
  *   Extension references resolve through ExtensionDiscovery.select (ADR-0007):
  *   package name/alias, loose-file stem, or an on-disk path — no
  *   pre-registration required.
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
  * - MCP references (`mcps`) expand against the merged user-level MCP
- *   configuration snapshot: literal misses fail loudly; globs expand to zero
- *   or more matches (consistent with skills/extensions).
+ *   configuration snapshot: misses are diagnosed and usable selections
+ *   remain restrictive (consistent with skills/extensions).
  * - Tool globs expand against Pi's built-in tool names for settings
  *   `defaultTools`; raw tool references are also carried into the launch
  *   plan so the in-session extension can expand them against Pi's live
@@ -41,6 +41,71 @@ function extractModel(definition: ProfileDefinition): ProfileModel | undefined {
 }
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
+
+export interface ResolutionDiagnostic {
+	kind: string;
+	code: string;
+	message: string;
+	reference?: string;
+	filePath?: string;
+}
+
+/** One issue per kind/reference/source/code, retaining the first message. */
+export function mergeResolutionDiagnostics(...groups: Array<readonly ResolutionDiagnostic[] | undefined>): ResolutionDiagnostic[] {
+	const issues = new Map<string, ResolutionDiagnostic>();
+	for (const group of groups) {
+		for (const issue of group ?? []) {
+			const key = JSON.stringify([issue.kind, issue.reference, issue.filePath, issue.code]);
+			if (!issues.has(key)) issues.set(key, issue);
+		}
+	}
+	return [...issues.values()];
+}
+
+export function mcpSourceDiagnostics(profile: string, messages?: readonly string[]): ResolutionDiagnostic[] {
+	return (messages ?? []).map((message) => {
+		const separator = message.indexOf(": ");
+		return { kind: "mcp-source", code: "invalid-source", message: `profile "${profile}": ${message}; source skipped; fix the configuration at that path`, ...(separator >= 0 ? { filePath: message.slice(separator + 2) } : {}) };
+	});
+}
+
+/** Normalize legacy unmatched notices, including overlay globs, for storage. */
+export function resolutionDiagnostics(plan: Pick<ActivationPlan, "profile" | "diagnostics" | "unmatched">): ResolutionDiagnostic[] {
+	return mergeResolutionDiagnostics(plan.diagnostics, (plan.unmatched ?? []).map((entry) => {
+		const separator = entry.indexOf(":");
+		return { kind: entry.slice(0, separator), code: "zero-match", reference: entry.slice(separator + 1), message: `profile "${plan.profile}": "${entry}" matched nothing this resolution` };
+	}));
+}
+
+/** Inspect declaration intent against this snapshot without validating tools. */
+export function mcpReferenceDiagnostics(profile: string, discovery: MergedMcpResult, mcps?: readonly string[], mcpTools?: Record<string, string[]>): ResolutionDiagnostic[] {
+	const diagnostics: ResolutionDiagnostic[] = [];
+	const candidates = userLevelMcpCandidates(discovery);
+	const candidateMessage = (names: string[]): string => names.length > 0 ? ` (usable candidates: ${names.join(", ")})` : " (no user-level servers are discovered)";
+	const add = (kind: string, code: string, reference: string, message: string): void => {
+		diagnostics.push({ kind, code, reference, message: `profile "${profile}": ${message}` });
+	};
+	for (const name of mcps ?? []) {
+		if (!Object.hasOwn(discovery.servers, name)) {
+			add("mcp", "unknown-reference", name, `unknown MCP server: "${name}"${candidateMessage(candidates)}; not loaded; correct the reference or configure the server`);
+		} else if (discovery.serverOwners[name] === "project" || discovery.projectServers.has(name)) {
+			add("mcp", "project-boundary", name, `cannot select project-level MCP server "${name}"; not loaded through user-level selection; project-level servers are outside profile selection and remain governed by Pi`);
+		} else if (discovery.servers[name]?.enabled === false) {
+			add("mcp", "source-disabled", name, `selected MCP server "${name}" is disabled in its source configuration; remains disabled; enable it there or remove it from "mcps"`);
+		}
+	}
+	const usable = candidates.filter((name) => mcps === undefined || mcps.includes(name));
+	for (const name of Object.keys(mcpTools ?? {})) {
+		if (!Object.hasOwn(discovery.servers, name)) {
+			add("mcp-tools", "unknown-reference", name, `unknown MCP server "${name}"${candidateMessage(usable)}; policy retained without creating a connection; correct the server name or configure it`);
+		} else if (discovery.serverOwners[name] === "project" || discovery.projectServers.has(name)) {
+			add("mcp-tools", "project-boundary", name, `cannot narrow project-level MCP server "${name}"; policy retained but not applied; project-level servers are outside profile narrowing and remain governed by Pi`);
+		} else if (discovery.servers[name]?.enabled === false || (mcps !== undefined && !mcps.includes(name))) {
+			add("mcp-tools", "disabled-server", name, `MCP server "${name}" is disabled${candidateMessage(usable)}; remains disabled with policy retained; enable it in its source and select it through "mcps", or remove the policy`);
+		}
+	}
+	return mergeResolutionDiagnostics(diagnostics);
+}
 
 export class ActivationError extends Error {
 	constructor(message: string) {
@@ -69,8 +134,6 @@ function userLevelMcpCandidates(mcpDiscovery: MergedMcpResult): string[] {
 		})
 		.sort();
 }
-
-const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 /** Immutable, fully resolved activation set. */
 export interface ActivationPlan {
@@ -125,6 +188,7 @@ export interface ActivationPlan {
 	 *  Tool globs are excluded: extension-contributed tools are unknowable
 	 *  before spawn, so a pre-spawn zero-match proves nothing. */
 	unmatched?: string[];
+	diagnostics?: ResolutionDiagnostic[];
 }
 
 export interface ResolveInput {
@@ -132,13 +196,6 @@ export interface ResolveInput {
 	/** The full SkillRegistry result (not just selected skills). */
 	skills: SkillEntry[];
 	extensions: DiscoveredExtensions;
-	/**
-	 * Validates a declared model (exists and is authenticated) against the
-	 * user's real model/auth state. Returns an error message or undefined.
-	 * The launcher always provides this; a declared model without a validator
-	 * fails activation rather than silently skipping the check.
-	 */
-	validateModel?: (model: ProfileModel) => Promise<string | undefined>;
 	/**
 	 * Server names discovered from the merged user-level MCP configuration
 	 * snapshot (see mcp-config.ts). Required when the profile declares `mcps`
@@ -217,6 +274,7 @@ function expandReferences<T>(
 	options?: {
 		literalMustExist?: boolean;
 		onZeroMatch?: (reference: string) => void;
+		onLiteralMiss?: (reference: string) => void;
 		/** Custom literal-miss failure (e.g. with near-miss candidates). Throws. */
 		literalMissError?: (reference: string) => never;
 	},
@@ -239,6 +297,10 @@ function expandReferences<T>(
 			if (options?.literalMustExist === false) {
 				// Pass-through (e.g. extension-provided tool names).
 				selected.set(reference, reference as T);
+				continue;
+			}
+			if (options?.onLiteralMiss !== undefined) {
+				options.onLiteralMiss(reference);
 				continue;
 			}
 			const missError = options?.literalMissError;
@@ -268,6 +330,11 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	const { profile, skills, extensions, overlay } = input;
 	const definition: ProfileDefinition = profile.definition;
 	const unmatched: string[] = [];
+	const diagnostics: ResolutionDiagnostic[] = [];
+	const zeroMatch = (kind: string, reference: string): void => {
+		unmatched.push(`${kind}:${reference}`);
+		diagnostics.push({ kind, code: "zero-match", reference, message: `profile "${profile.name}": "${kind}:${reference}" matched nothing this resolution; not loaded` });
+	};
 
 	if (input.mcpDiscovery !== undefined && input.discoveredMcpServers === undefined) {
 		input.discoveredMcpServers = Object.keys(input.mcpDiscovery.servers).sort();
@@ -283,7 +350,11 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	// full referenceable discovery result as overlay/status vocabulary.
 	let selectedSkills = skillsDeclared
 		? expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
-				onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
+				onZeroMatch: (reference) => zeroMatch("skill", reference),
+				onLiteralMiss: (reference) => {
+					const candidates = skills.map((entry) => entry.name).sort();
+					diagnostics.push({ kind: "skill", code: "unknown-reference", reference, message: `profile "${profile.name}": unknown skill "${reference}"; not loaded. ${candidates.length > 0 ? `Discovered candidates: ${candidates.join(", ")}; correct the reference or install the skill.` : "No skills discovered; install the skill or remove the reference."}` });
+				},
 			})
 		: [...skills];
 
@@ -292,6 +363,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	if (extensionsDeclared) {
 		const selection = await extensions.select(definition.extensions ?? []);
 		for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
+		for (const issue of selection.diagnostics ?? []) {
+			diagnostics.push({ ...issue, message: `profile "${profile.name}": ${issue.message}` });
+		}
 		planExtensions = selection.entries.map((entry) => ({
 			id: entry.id,
 			entry: entry.entry,
@@ -305,48 +379,31 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}));
 	}
 
+	const mcpDiscovery = input.mcpDiscovery;
+	diagnostics.push(...mcpSourceDiagnostics(profile.name, mcpDiscovery?.diagnostics));
+
+	const candidates = mcpDiscovery !== undefined
+		? userLevelMcpCandidates(mcpDiscovery)
+		: [...(input.discoveredMcpServers ?? [])].sort();
+	const candidateMessage = (usable: string[]): string => usable.length > 0
+		? ` (usable candidates: ${usable.join(", ")})`
+		: " (no user-level servers are discovered)";
+	const diagnoseMcp = (kind: string, code: string, reference: string, message: string): void => {
+		diagnostics.push({ kind, code, reference, message: `profile "${profile.name}": ${message}` });
+	};
+
 	let mcps: string[] | undefined;
 	if (definition.mcps !== undefined) {
-		if (definition.mcps.length > 0) {
-			if (input.discoveredMcpServers === undefined) {
-				throw new ActivationError(
-					`profile "${profile.name}" declares MCP servers but no MCP server discovery is available`,
-				);
-			}
-			mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
-				onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
-				literalMissError: (reference) => {
-					const candidates =
-						input.mcpDiscovery !== undefined
-							? userLevelMcpCandidates(input.mcpDiscovery)
-							: [...(input.discoveredMcpServers ?? [])].sort();
-					const suffix =
-						candidates.length > 0
-							? ` (usable candidates: ${candidates.join(", ")})`
-							: " (no user-level servers are discovered)";
-					throw new ActivationError(`unknown MCP server: "${reference}"${suffix}`);
-				},
-			});
-			if (input.mcpDiscovery !== undefined) {
-				const discovery = input.mcpDiscovery;
-				const projectNamed = mcps.find(
-					(name) => discovery.serverOwners[name] === "project" || discovery.projectServers.has(name),
-				);
-				if (projectNamed !== undefined) {
-					throw new ActivationError(
-						`profile "${profile.name}": cannot select project-level MCP server "${projectNamed}" (project-level servers are outside profile selection)`,
-					);
-				}
-			}
-		} else {
-			// Explicitly empty mcps: requires discovery so the empty selection
-			// disables every discovered user-level server.
-			if (input.mcpDiscovery === undefined) {
-				throw new ActivationError(
-					`profile "${profile.name}" declares an empty MCP server selection but no MCP server discovery is available`,
-				);
-			}
-			mcps = [];
+		if (input.discoveredMcpServers === undefined && (definition.mcps.length > 0 || mcpDiscovery === undefined)) {
+			throw new ActivationError(`profile "${profile.name}" declares ${definition.mcps.length === 0 ? "an empty MCP server selection" : "MCP servers"} but no MCP server discovery is available`);
+		}
+		mcps = expandReferences(definition.mcps, input.discoveredMcpServers ?? [], (name) => name, "MCP server", {
+			onZeroMatch: (reference) => zeroMatch("mcp", reference),
+			onLiteralMiss: (reference) => diagnoseMcp("mcp", "unknown-reference", reference, `unknown MCP server: "${reference}"${candidateMessage(candidates)}; not loaded; correct the reference or configure the server`),
+		});
+		if (mcpDiscovery !== undefined) {
+			diagnostics.push(...mcpReferenceDiagnostics(profile.name, mcpDiscovery, mcps));
+			mcps = mcps.filter((name) => !mcpDiscovery.projectServers.has(name) && mcpDiscovery.serverOwners[name] === "user" && mcpDiscovery.servers[name]?.enabled !== false);
 		}
 	}
 
@@ -412,34 +469,8 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			);
 		}
 
-		const mcpDiscovery = input.mcpDiscovery;
-		const usableCandidates = userLevelMcpCandidates(mcpDiscovery).filter(
-			(s) => mcps === undefined || mcps.includes(s),
-		);
-		const candidateMsg = usableCandidates.length > 0 ? ` (usable candidates: ${usableCandidates.join(", ")})` : "";
-
-		for (const serverKey of mcpToolKeys) {
-			if (!Object.hasOwn(mcpDiscovery.servers, serverKey)) {
-				throw new ActivationError(`profile "${profile.name}": unknown MCP server "${serverKey}"${candidateMsg}`);
-			}
-			const isProject =
-				mcpDiscovery.serverOwners[serverKey] === "project" || mcpDiscovery.projectServers.has(serverKey);
-			if (isProject) {
-				throw new ActivationError(
-					`profile "${profile.name}": cannot narrow project-level MCP server "${serverKey}" (project-level servers are outside profile narrowing)`,
-				);
-			}
-			const isDisabled =
-				mcpDiscovery.servers[serverKey]?.enabled === false ||
-				(mcps !== undefined && !mcps.includes(serverKey));
-			if (isDisabled) {
-				throw new ActivationError(`profile "${profile.name}": MCP server "${serverKey}" is disabled${candidateMsg}`);
-			}
-		}
-
-		mcpTools = Object.fromEntries(
-			Object.entries(mcpToolsDef ?? {}).map(([server, selectors]) => [server, [...selectors]]),
-		);
+		mcpTools = Object.fromEntries(Object.entries(mcpToolsDef ?? {}).map(([server, selectors]) => [server, [...selectors]]));
+		diagnostics.push(...mcpReferenceDiagnostics(profile.name, input.mcpDiscovery, mcps, mcpTools));
 	}
 
 	const toolReferences = definition.tools;
@@ -490,23 +521,17 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		}
 	}
 
-	let model: ProfileModel | undefined;
-	const declaredModel = extractModel(definition);
-	if (declaredModel !== undefined) {
-		const declared = declaredModel;
-		if (declared.thinkingLevel !== undefined && !VALID_THINKING_LEVELS.has(declared.thinkingLevel)) {
-			throw new ActivationError(
-				`profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(declared.thinkingLevel)}`,
-			);
+	const model = extractModel(definition);
+	if (model?.thinkingLevel !== undefined) {
+		// Pi does not export this predicate through its SDK. Resolve its
+		// installed CLI module rather than copy a second accepted-value set.
+		const nativeThinking: { isValidThinkingLevel: (level: string) => boolean } = await import(
+			new URL("./cli/args.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+		);
+		if (!nativeThinking.isValidThinkingLevel(model.thinkingLevel)) {
+			diagnostics.push({ kind: "thinking", code: "unsupported-thinking", reference: model.thinkingLevel, message: `profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(model.thinkingLevel)}; ignored; choose a thinking value supported by Pi or remove "defaultThinkingLevel"` });
+			delete model.thinkingLevel;
 		}
-		if (input.validateModel === undefined) {
-			throw new ActivationError(`profile "${profile.name}" declares a model but no model validator is available`);
-		}
-		const error = await input.validateModel(declared);
-		if (error !== undefined) {
-			throw new ActivationError(`profile "${profile.name}": model ${declared.provider}/${declared.id}: ${error}`);
-		}
-		model = declared;
 	}
 
 	return {
@@ -527,6 +552,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(instanceMcpConfig !== undefined ? { instanceMcpConfig } : {}),
 		...(unmatched.length > 0 ? { unmatched } : {}),
+		...(diagnostics.length > 0 ? { diagnostics: mergeResolutionDiagnostics(diagnostics) } : {}),
 	};
 }
 
@@ -561,25 +587,10 @@ export function buildInstanceMcpConfig(
 			mcpDiscovery.serverOwners[serverName] === "project" || mcpDiscovery.projectServers.has(serverName);
 		if (isProjectOwned) continue;
 
-		// A selected server the winning source explicitly disables fails with a
-		// fix, never a silent enablement override (D1).
-		if (mcps?.includes(serverName) === true && originalDef.enabled === false) {
-			throw new ActivationError(
-				`profile "${profileName}": selected MCP server "${serverName}" is disabled in its source configuration; enable it there or remove it from "mcps"`,
-			);
-		}
-
-		// A server explicitly selected by mcps whose definition uses a
-		// transport Pi's built-in MCP extension cannot use fails activation.
-		if (mcps?.includes(serverName) === true && originalDef.type === "sse") {
-			throw new ActivationError(
-				`profile "${profileName}": selected MCP server "${serverName}" uses the legacy SSE transport, which Pi does not support; switch to the server's streamable HTTP URL or remove it from "mcps"`,
-			);
-		}
 
 		const def = { ...originalDef };
 
-		if (mcpTools && Object.hasOwn(mcpTools, serverName)) {
+		if (originalDef.enabled !== false && mcpTools && Object.hasOwn(mcpTools, serverName)) {
 			// Profile policy replaces the merged toolExposure wholesale.
 			const requested = mcpTools[serverName];
 			const exposure: Record<string, string> = { "*": "hidden" };

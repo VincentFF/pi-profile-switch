@@ -2,7 +2,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as initialProfile from "../src/launcher/initial-profile.ts";
+import * as jsonFile from "../src/json-file.ts";
 import piProfileExtension from "../extensions/pi-profile/index.ts";
 
 let root: string;
@@ -21,6 +23,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
 	if (savedSwitchDir === undefined) delete process.env.PI_PROFILE_SWITCH_DIR;
@@ -521,7 +524,7 @@ describe("pi-profile extension", () => {
 			const content = String(pi.sentMessages[0]?.content);
 			expect(content).toContain("profile: review (global)");
 			expect(content).toContain("code-review → /x/SKILL.md");
-			expect(content).toContain("mcp: enabled=[github]");
+			expect(content).toContain("mcp: enabled=[] disabled=[] missing=[github]");
 		});
 
 		it("reports declared subagent inputs separately from live extension ownership", async () => {
@@ -808,4 +811,107 @@ describe("pi-profile extension", () => {
 			expect(JSON.stringify(report)).not.toMatch(/validation|missing.*candidates|did you mean/i);
 		});
 	});
+});
+
+
+describe("unavailable listing and diagnostic status", () => {
+	it("lists unavailable definitions and filename diagnostics in displayed and structured payloads", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ bad: { skills: 1 }, valid: {}, default: {}, "bad name": {} });
+		const pi = fakePi(); piProfileExtension(pi as never);
+		await pi.commands.get("profile")?.handler("" as never, fakeCtx() as never);
+		const message = pi.sentMessages[0]!;
+		expect(String(message.content)).toContain("bad [global] — unavailable:");
+		expect(String(message.content)).toContain("bad name.json");
+		const details = message.details as { profiles: Array<{ name: string; available: boolean; error?: string }>; diagnostics: string[] };
+		expect(details.profiles.find((entry) => entry.name === "bad")).toMatchObject({ available: false, error: expect.stringContaining("bad.json") });
+		expect(details.diagnostics.join("\n")).toContain("default.json");
+	});
+	it("offers only available choices, shows unavailable errors, and rejects a forged unavailable choice", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ bad: { skills: 1 }, valid: {} });
+		const before = await readFile(path.join(root, "pi-profile.json"), "utf8");
+		const pi = fakePi(); piProfileExtension(pi as never);
+		const ctx = fakeCtx({ hasUI: true, selectAnswer: "bad [global]" });
+		await pi.commands.get("profile")?.handler("" as never, ctx as never);
+		expect(ctx.selectCalls[0]?.options).toEqual(["default [builtin]", "valid [global]"]);
+		expect(ctx.notifications.some((entry) => entry.message.includes("bad.json"))).toBe(true);
+		expect(await readFile(path.join(root, "pi-profile.json"), "utf8")).toBe(before);
+	});
+	it("explicit use still reports the unavailable selected-definition error without writes", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ bad: { skills: 1 } });
+		const pi = fakePi(); piProfileExtension(pi as never); const ctx = fakeCtx();
+		await pi.commands.get("profile")?.handler("use bad" as never, ctx as never);
+		expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("bad.json"))).toBe(true);
+		expect(JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8")).profile).toBe("default");
+	});
+	it("status never reads catalog definitions and stays available with a bad catalog path", async () => {
+		await writeLaunchPlan({ profile: "review", source: "global", agentDir: root, mcps: [], diagnostics: [{ kind: "skill", code: "unknown-reference", reference: "missing", message: "missing skill; not loaded" }] });
+		await writeFile(path.join(root, "profiles"), "not a directory");
+		await writeFile(path.join(root, "mcp.json"), "{ malformed");
+		const pi = fakePi(); piProfileExtension(pi as never); const ctx = fakeCtx();
+		const read = vi.spyOn(jsonFile, "readJsonFile");
+		await pi.commands.get("profile")?.handler("status" as never, ctx as never);
+		expect(pi.sentMessages).toHaveLength(1);
+		const report = (pi.sentMessages[0]?.details as { report: { diagnostics: Array<{ kind: string }> } }).report;
+		expect(report.diagnostics.some((issue) => issue.kind === "skill")).toBe(true);
+		expect(report.diagnostics.some((issue) => issue.kind === "mcp-source")).toBe(true);
+		expect(read.mock.calls.map(([file]) => file).some((file) => file.includes(`${path.sep}profiles${path.sep}`))).toBe(false);
+	});
+	it("reload owns persisted warnings once while non-persisted warnings remain observable after a stale context", async () => {
+		const issue = { kind: "extension-discovery", code: "discovery-warning", reference: "collision", message: 'profile "review": collision; local file wins' };
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "review", source: "global", filter: "selection", skills: [], extensions: [], resourceSelection: { skills: true, extensions: true }, diagnostics: [issue] }, projectTrusted: true, warnings: [issue.message, "non-persisted warning"] });
+		const pi = fakePi(); piProfileExtension(pi as never);
+		const next = fakeCtx({ hasUI: true });
+		const previous = fakeCtx({ hasUI: true });
+		const ui = previous.ui;
+		const invalidate = previous.reload;
+		previous.reload = async () => { await fireSessionStart(pi, "reload", next); await invalidate(); };
+		Object.defineProperty(previous, "ui", { get() { void previous.cwd; return ui; } });
+		await pi.commands.get("profile")?.handler("use review" as never, previous as never);
+		const notices = [...previous.notifications, ...next.notifications];
+		expect(notices.filter((entry) => entry.message === issue.message)).toHaveLength(1);
+		expect(notices.filter((entry) => entry.message === "non-persisted warning")).toHaveLength(1);
+		expect(notices.some((entry) => entry.message.includes("context invalidated"))).toBe(false);
+	});
+});
+
+
+describe("command feedback after diagnostic message refresh", () => {
+	it.each([false, true])("does not replay replaced/cleared diagnostics (cleared=%s) and retains plain warnings", async (cleared) => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ policy: { mcp_tools: { late: ["search"] } } });
+		await writeFile(path.join(root, "mcp.json"), '{"mcpServers":{"alpha":{"command":"alpha"}}}');
+		const resolve = initialProfile.resolveInitialProfile;
+		vi.spyOn(initialProfile, "resolveInitialProfile").mockImplementation(async (...args) => {
+			const result = await resolve(...args);
+			await writeFile(path.join(root, "mcp.json"), JSON.stringify({ mcpServers: cleared ? { late: { command: "late" } } : { beta: { command: "beta" } } }));
+			return { ...result, warnings: [...result.warnings, "plain discovery warning"] };
+		});
+		const pi = fakePi(); piProfileExtension(pi as never);
+		const next = fakeCtx({ hasUI: true }); const previous = fakeCtx({ hasUI: true });
+		const invalidate = previous.reload;
+		previous.reload = async () => { await fireSessionStart(pi, "reload", next); await invalidate(); };
+		await pi.commands.get("profile")?.handler("use policy" as never, previous as never);
+		const warnings = [...previous.notifications, ...next.notifications].filter((entry) => entry.level === "warning").map((entry) => entry.message);
+		expect(warnings.filter((message) => message === "plain discovery warning")).toHaveLength(1);
+		expect(warnings.some((message) => message.includes("candidates: alpha"))).toBe(false);
+		const issues = warnings.filter((message) => message.includes('unknown MCP server "late"'));
+		expect(issues).toHaveLength(cleared ? 0 : 1);
+		if (!cleared) expect(issues[0]).toContain("candidates: beta");
+	});
+});
+
+it("preserves legacy plain command warnings when the persisted plan has no diagnostics", async () => {
+	await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [], resourceSelection: { skills: true, extensions: true } }, projectTrusted: true, warnings: ["legacy plain warning"] });
+	const pi = fakePi(); piProfileExtension(pi as never);
+	const previous = fakeCtx({ hasUI: true }); const next = fakeCtx({ hasUI: true });
+	const invalidate = previous.reload;
+	previous.reload = async () => { await fireSessionStart(pi, "reload", next); await invalidate(); };
+	await pi.commands.get("profile")?.handler("use legacy" as never, previous as never);
+	expect([...previous.notifications, ...next.notifications].filter((entry) => entry.message === "legacy plain warning")).toHaveLength(1);
+	expect(JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8")).diagnostics).toBeUndefined();
 });

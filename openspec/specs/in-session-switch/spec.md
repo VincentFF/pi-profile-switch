@@ -102,56 +102,53 @@ All forms SHALL be available in every mode, including non-TUI modes; the bare se
 
 ### Requirement: In-session switching
 
-`/profile use <name>` SHALL execute in order: wait for the current agent turn to finish, snapshot the runtime files, re-resolve the target profile through the full launch path, rewrite the runtime files in place, and trigger Pi's native reload.
+`/profile use <name>` SHALL wait for Pi's native idle boundary without interrupting a turn, snapshot managed runtime files, re-resolve the target through the launch path, rewrite runtime files in place, and trigger Pi's native reload.
 
-Waiting SHALL use Pi's native idle wait and MUST NOT interrupt an in-flight turn.
+Re-resolution SHALL use the same trust, selected-definition validation, discovery, partial-reference diagnostics, MCP source handling, and native model handoff as launch. Non-fatal diagnostics SHALL NOT prevent switching or reload. A fatal selected-definition or execution failure SHALL retain the existing no-write or rollback guarantees.
 
-Re-resolution SHALL include the same validation as the launch path: trust determination, catalog read, resource discovery, model and MCP validation. When resolution fails, NO runtime file SHALL be written and the runtime stays in its pre-switch state.
+Switching MUST NOT restart Pi or change sessionId, message history, or the instance's project-trust input. The `trust.json` link form SHALL remain unchanged. Post-switch project visibility SHALL match direct launch of the target profile.
 
-Switching SHALL NOT restart the Pi process; the current session's sessionId and message history SHALL remain unchanged.
-
-Switching SHALL NOT change Pi's project-trust input: the instance's `trust.json` link form is identical before and after a switch, so project-level resource visibility stays stable within one process. Post-switch project-level visibility SHALL match launching directly with the target profile and MUST NOT require a process restart to take effect.
-
-`/profile use` SHALL persist the selection and SHALL discard the pre-switch profile's overlay.
-
-`/profile reload` SHALL follow the same path, but SHALL NOT produce a change summary and SHALL preserve the current profile's existing selection persistence (a one-shot selection made at launch remains one-shot after reload).
-
-An explicit empty `mcps` selection SHALL have the same effect after `/profile use` and `/profile reload` as at launch: the rewritten instance configuration disables every user-level server in the merged snapshot. Switching to a profile that omits `mcps` SHALL restore the merged snapshot's full user-level server availability.
+`/profile use` SHALL persist the selection and discard the previous profile's overlay. `/profile reload` SHALL follow the same path, omit the change summary, and preserve the existing selection-persistence intent. Explicit empty MCP selection SHALL remain restrictive across use and reload; returning to omitted selection SHALL restore native snapshot availability.
 
 #### Scenario: Successful switch
-
-- **WHEN** `/profile use implement` is executed and both resolution and reload succeed
-- **THEN** the runtime files are rewritten with that profile's resolution result and the session is not interrupted
+- **WHEN** target resolution and native reload succeed
+- **THEN** the runtime uses the target's resolution result without interrupting or restarting the session
 
 #### Scenario: Project-level visibility unchanged by switching
-
-- **WHEN** the project is trusted, started with a named profile, and `/profile use default` is executed
-- **THEN** project-level skills and extensions are visible under both profiles, the process is not restarted, and sessionId and message history are unchanged
+- **WHEN** a trusted-project session switches between a named profile and `default`
+- **THEN** native project visibility, sessionId, and history are preserved
 
 #### Scenario: Failure at resolution stage
+- **WHEN** the target's winning definition contains a fatal JSON or supported-field shape error
+- **THEN** switching reports the cause and writes no runtime files
 
-- **WHEN** the target profile's references cannot resolve
-- **THEN** the operation fails reporting the cause, and no runtime file is modified
+#### Scenario: Missing references do not reject switching
+- **WHEN** the target contains usable references and missing references
+- **THEN** switching completes with warnings and keeps only its resolved user-level selection
+
+#### Scenario: Reload retries missing references
+- **WHEN** a previously missing selected resource becomes discoverable before `/profile reload`
+- **THEN** reload re-resolves the original declaration and makes that selected resource available
 
 #### Scenario: Reload preserves one-shot selection
-
-- **WHEN** launched as `pi-profile review` (one-shot selection), followed by `/profile reload`
-- **THEN** `review` is still running and the selection is not thereby written into runtime state
+- **WHEN** a one-shot launch selection is followed by `/profile reload`
+- **THEN** reload does not newly persist that selection
 
 #### Scenario: Switching to an empty MCP selection
-
-- **WHEN** a session switches from a profile that omits `mcps` to a named profile declaring `mcps: []`
-- **THEN** the user-level servers from the merged snapshot are unavailable without restarting the Pi session
+- **WHEN** a session switches from omitted MCP selection to explicit empty selection
+- **THEN** discovered user-level servers become unavailable without a process restart
 
 #### Scenario: Empty MCP selection survives reload
-
-- **WHEN** a named profile with `mcps: []` executes `/profile reload`
-- **THEN** the user-level servers from the merged snapshot remain unavailable
+- **WHEN** a profile with an explicit empty MCP selection reloads
+- **THEN** discovered user-level servers remain unavailable
 
 #### Scenario: Switching back to omitted MCP selection
+- **WHEN** a session switches from explicit MCP selection to omitted selection
+- **THEN** native merged-snapshot user-level availability returns
 
-- **WHEN** a session switches from a named profile with `mcps: []` to a profile omitting `mcps`
-- **THEN** user-level servers return to their merged-snapshot availability
+#### Scenario: Extension model survives switch and reload
+- **WHEN** a target declares a model registered by an extension loaded during native reload
+- **THEN** no standalone pre-extension model check rejects the operation and Pi's native model lifecycle owns selection
 
 ### Requirement: Rollback on switch failure
 
@@ -325,35 +322,45 @@ A missing or corrupt state file SHALL be read as empty state and MUST NOT produc
 
 ### Requirement: Observability surface
 
-Bare `/profile` SHALL open the interactive selector over the visible profiles; outside TUI mode it SHALL degrade to printing the profile list, with the structured payload serving non-interactive consumers.
+Bare `/profile` SHALL open the interactive selector in TUI mode and otherwise print a profile list with a structured payload. The selector and degraded list SHALL preserve activation's project-trust gating and existing source ordering. Each entry SHALL identify its winning source and whether a project definition shadows a global one.
 
-The selector and the degraded list SHALL show only visible profiles and SHALL use the same trust gating as activation: profiles from an untrusted project MUST NOT appear.
+Invalid winning definitions SHALL be shown as unavailable with a file-bearing error while other entries remain usable. The selector MUST NOT activate an unavailable entry; explicit `/profile use` SHALL report that entry's validation error. Reserved-name and illegal-filename entries SHALL be diagnosed under the profile-catalog contract rather than replacing `default` or breaking the list.
 
-Each list entry SHALL report the winning definition's source and be marked when the project definition shadows a same-named global definition.
+`/profile status` SHALL report the active profile, overlay, resolved resource paths, MCP enabled/disabled/missing states, and actual registration winners for conflicts. Empty effective user-level MCP selection SHALL report discovered user servers as disabled while native trusted project servers retain their own state. Skipped-reference and source diagnostics SHALL be visible in displayed and structured status without claiming skipped resources are active or validating MCP tool selector names.
 
-`/profile status` SHALL report the active profile, the stored overlay, resolved resources and paths, the MCP server tri-state (enabled, discovered but not enabled, referenced but not discovered), and same-named tool or command conflicts with their actual winners. For a named profile declaring `mcps: []`, the discovered user-level servers in the merged snapshot SHALL be reported as disabled, not enabled, while trusted project-owned servers SHALL remain reported as enabled.
-
-The degraded list and `status` SHALL be emitted as messages carrying structured payloads for non-interactive consumers.
+List and status messages SHALL retain structured payloads for non-interactive consumers.
 
 #### Scenario: Untrusted project's profiles are invisible
-
-- **WHEN** the project is untrusted and profiles exist in the project catalog
-- **THEN** neither the selector nor the list shows those profiles
+- **WHEN** an untrusted project contains profiles
+- **THEN** neither selector nor degraded list exposes those profiles
 
 #### Scenario: Same-named project definition shadows the global one
-
-- **WHEN** the project and global catalogs define the same-named profile
-- **THEN** the list entry reports its source as project and is marked as shadowing the global definition
+- **WHEN** a trusted project overrides a global profile
+- **THEN** its list entry reports project source and the shadowing marker
 
 #### Scenario: Empty MCP selection is visible in status
-
-- **WHEN** a named profile declares `mcps: []` and user-level servers have been discovered in the merged snapshot
-- **THEN** `/profile status` reports no selected user-level servers and reports the discovered user-level servers as disabled
+- **WHEN** a profile has an explicit empty effective MCP selection and user servers are discovered
+- **THEN** status reports those user servers as disabled rather than enabled
 
 #### Scenario: Project-owned server remains enabled in status
+- **WHEN** an explicit empty user-level selection coexists with an enabled trusted-project server
+- **THEN** status preserves that server's native enabled state
 
-- **WHEN** a named profile declares `mcps: []` and a trusted project defines an enabled server
-- **THEN** `/profile status` reports the project-owned server as enabled rather than disabled
+#### Scenario: Unavailable profile remains visible
+- **WHEN** a winning profile file is malformed
+- **THEN** listing shows it as unavailable with its file and error, while valid profiles remain selectable
+
+#### Scenario: Skipped resource is not reported as active
+- **WHEN** activation skipped a missing resource reference
+- **THEN** status contains its diagnostic and does not include it among resolved active resources
+
+#### Scenario: Missing policy server is not enabled in status
+- **WHEN** `mcp_tools` names a missing or disabled server
+- **THEN** status retains the declared-policy diagnostic without presenting that server as enabled or unrestricted
+
+#### Scenario: Catalog listing does not parse shadowed files
+- **WHEN** a valid trusted-project profile shadows a malformed global file
+- **THEN** listing shows the valid project winner and its shadowing marker without an error from parsing the global file
 
 ### Requirement: MCP tool policy status and switch rollback
 

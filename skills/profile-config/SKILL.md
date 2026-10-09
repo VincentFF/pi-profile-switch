@@ -44,6 +44,8 @@ Profile files live in one of two locations:
 
 The file content must be formatted JSON, with **the bare definition object at the top level** — strictly no `schemaVersion`, `profiles`, or other outer envelope fields.
 
+Use the authoritative [profile schema](../../schemas/profiles.schema.json) for supported fields and shapes, and the [field contract](../../openspec/specs/profile-catalog/spec.md#requirement-profile-definition-fields) for read/write diagnostics. When working from an installed copy of this skill, locate `schemas/profiles.schema.json` in the installed `pi-profile-switch` package before validating edits.
+
 All fields are optional. Undeclared fields keep native Pi behavior or current state and produce no side effects.
 
 ### Field semantics
@@ -59,9 +61,16 @@ All fields are optional. Undeclared fields keep native Pi behavior or current st
 | `mcp_tools` | `Record<string, string[]>` | Per-server MCP tool selection: literal server names mapped to literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are rejected. An omitted server allows all tools; a nonempty array allows only matches; an empty array (`[]`) denies all tools while keeping the server enabled. An empty object (`{}`) behaves like omission. |
 | `defaultProvider` | `string` | Default model provider (e.g. `"anthropic"`, `"openai"`). Effective only when declared together with `defaultModel`. |
 | `defaultModel` | `string` | Default model name (e.g. `"claude-sonnet-4-5"`). Effective only when declared together with `defaultProvider`. |
-| `defaultThinkingLevel` | `string` | Default thinking level; allowed values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Effective only when the model declaration holds. |
+| `defaultThinkingLevel` | `string` | Parent thinking contribution; accepted values defer to Pi's authoritative thinking-level contract. See [profile-level settings](../../openspec/specs/resource-reference/spec.md#requirement-resolution-and-validation-of-profile-level-settings-fields). |
 | `instructions` | `string` | Instruction text appended to the system prompt when this profile is active. |
 | `subagents` | `object` | Optional native pi-subagents defaults and exact role overrides. Use only the subset in the [profile schema](../../schemas/profiles.schema.json). It neither loads pi-subagents nor selects or disables roles. |
+
+### Validation workflow
+
+- **Fatal shapes**: validate the selected file's JSON object and supported-field types before writing. Follow [selected-definition validation](../../openspec/specs/profile-catalog/spec.md#requirement-catalog-file-format-validation); remove unsupported keys according to the field contract above.
+- **Reference warnings**: inspect discovery and `/profile status`, then correct names or install resources. Preserve explicit empty selections and dormant MCP policies rather than replacing them with omission. Follow [reference failure tiering](../../openspec/specs/resource-reference/spec.md#requirement-unified-failure-tiering-for-references).
+- **Native model handoff**: use native Pi to check models after extension loading; do not add a separate existence or credential preflight. Follow [native model declaration handoff](../../openspec/specs/launcher/spec.md#requirement-native-model-declaration-handoff).
+- After activation or reload, review [listing and status diagnostics](../../openspec/specs/in-session-switch/spec.md#requirement-observability-surface). Resource overlay mutations retain their [separate validation contract](../../openspec/specs/in-session-switch/spec.md#requirement-runtime-overlay).
 
 ### Example
 ```json
@@ -119,7 +128,7 @@ When helping the user configure a profile, check or consult the following locati
 3. **MCP servers**:
    - Discovery locations: Pi's user-level MCP configuration files — on the global side `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, `<agentDir>/mcp.json`; trusted projects additionally have `<projectDir>/.pi/mcp.json`.
    - Reference identity: the server key names under the `mcpServers` object in those configuration files.
-   - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
+   - Use Pi to check connection usability; follow the [MCP reference contract](../../openspec/specs/resource-reference/spec.md#requirement-mcp-server-reference-resolution) for skipped sources, server diagnostics, and transport ownership.
 4. **Tools**:
    - Reference identity: non-MCP tool names in Pi's live tool registry.
    - Includes built-in tools (`read`, `write`, `edit`, `bash`, etc.) and extension-contributed tools.
@@ -169,7 +178,7 @@ When creating or generating a new profile that declares `skills` for the user, f
 ### 5.2 Edit
 1. Read the existing content of the target profile file.
 2. Adjust the requested fields per the user's requirements, keeping all other fields intact.
-3. Validate and write back formatted JSON.
+3. Apply the validation workflow above and write back only supported fields as formatted JSON.
 4. Tell the user to run `/profile reload`.
 
 ### 5.3 Delete

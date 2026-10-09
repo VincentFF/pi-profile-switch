@@ -3,10 +3,11 @@ import { mkdir, lstat, readFile, readlink, realpath, rm, symlink, writeFile } fr
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { resolveInitialProfile } from "../src/launcher/initial-profile.ts";
 import { defaultPlan, type ActivationPlan } from "../src/profile-resolver.ts";
 import { generateRuntimeDir, writeRuntimeFiles, type DiscoveryContext } from "../src/settings-generator.ts";
 import type { SkillEntry } from "../src/skill-registry.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
 let savedHome: string | undefined;
@@ -460,21 +461,18 @@ describe("generateRuntimeDir (named profile selection)", () => {
 			discovery: { skills: [], packages: [] },
 		});
 
-		expect(result.warnings).toEqual([`MCP config is not valid JSON: ${path.resolve(malformedPath)}`]);
+		expect(result.warnings).toEqual([expect.stringContaining(`MCP config is not valid JSON: ${path.resolve(malformedPath)}`)]);
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
 		expect(mcpInstance.mcpServers).toEqual({ github: { url: "https://x" } });
 	});
 
-	it("fails generation under an explicit MCP policy when a required source is malformed", async () => {
+	it("skips malformed sources even under explicit MCP policy", async () => {
 		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
-		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), "{ invalid");
-
-		await expect(
-			generateRuntimeDir(selectionPlan({ mcps: ["github"] }), {
-				agentDir: fixture.agentDir,
-				discovery: { skills: [], packages: [] },
-			}),
-		).rejects.toThrow(/not valid JSON/);
+		const file = path.join(fixture.root, ".agents", "mcp.json");
+		await writeFile(file, "{ invalid");
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["github"] }), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+		expect(result.warnings).toContainEqual(expect.stringContaining(file));
+		expect(JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8")).mcpServers).toEqual({});
 	});
 
 	it("returns an empty warnings list when every MCP source is valid", async () => {
@@ -1226,5 +1224,83 @@ describe("declared-selection extension-path refusal (fix-undeclared-resource-fil
 		// Refusal happens before managed writes and never deletes or adopts content.
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
 		expect(await readFile(path.join(runtimeDir, "extensions", "sneaky", "index.ts"), "utf8")).toBe("export default 1");
+	});
+});
+
+describe("restrictive partial runtime materialization", () => {
+	it("keeps all-missing resource selections empty and user resources excluded", async () => {
+		await addGlobalSkill(fixture, "unselected");
+		await addGlobalExtension(fixture, "unselected");
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), '{"mcpServers":{"unselected":{"command":"fixture"}}}');
+		const dir = path.join(fixture.profileSwitchDir, "profiles");
+		await mkdir(dir, { recursive: true });
+		const file = path.join(dir, "review.json");
+		const content = '{"skills":["missing"],"extensions":["missing"],"mcps":["missing"],"unknownField":"ignored"}';
+		await writeFile(file, content);
+		const resolved = await resolveInitialProfile("review", { agentDir: fixture.agentDir, cwd: fixture.cwd });
+		const result = await generateRuntimeDir(resolved.plan, { agentDir: fixture.agentDir, discovery: resolved.discovery, projectDir: resolved.projectDir });
+		const settings = await generatedSettings(result.runtimeDir);
+		expect(settings.extensions).toEqual([]);
+		expect(settings.skills).toEqual([
+			`-${path.join(result.runtimeDir, "skills", "unselected", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "unselected", "SKILL.md")}`,
+		]);
+		expect(JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8")).mcpServers).toEqual({ unselected: { command: "fixture", enabled: false } });
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcps).toEqual([]);
+		for (const kind of ["skill", "extension", "mcp", "catalog"]) expect(plan.diagnostics.some((issue: { kind: string }) => issue.kind === kind)).toBe(true);
+		expect(plan.resolved).toEqual({ skills: [], extensions: [] });
+		expect(settings.unknownField).toBeUndefined();
+		expect(await readFile(file, "utf8")).toBe(content);
+	});
+
+	it("preserves partial MCP restrictions, dormant keys, and source/project boundaries with a bad later source", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const valid = path.join(fixture.root, ".agents", "mcp.json");
+		const content = '{"mcpServers":{"kept":{"command":"fixture"},"disabled":{"command":"disabled","enabled":false},"unselected":{"command":"other"}}}';
+		await writeFile(valid, content);
+		const invalid = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(invalid, "{ bad");
+		const project = path.join(fixture.cwd, ".pi", "mcp.json");
+		await writeFile(project, '{"mcpServers":{"project":{"command":"project"}}}');
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["kept"], mcpTools: { kept: ["opaque"], missing: [], disabled: [], project: [], unselected: [] } }), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] }, projectDir: fixture.cwd });
+		const servers = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8")).mcpServers;
+		expect(servers).toEqual({ kept: { command: "fixture", toolExposure: { "*": "hidden", opaque: "direct" } }, disabled: { command: "disabled", enabled: false }, unselected: { command: "other", enabled: false } });
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(Object.keys(plan.mcpTools).sort()).toEqual(["disabled", "kept", "missing", "project", "unselected"]);
+		expect(plan.diagnostics.some((issue: { filePath?: string }) => issue.filePath === invalid)).toBe(true);
+		for (const name of ["missing", "disabled", "project", "unselected"]) expect(plan.diagnostics.some((issue: { reference?: string }) => issue.reference === name)).toBe(true);
+		expect(await readFile(valid, "utf8")).toBe(content);
+		expect(await readFile(invalid, "utf8")).toBe("{ bad");
+		expect(await readFile(project, "utf8")).toBe('{"mcpServers":{"project":{"command":"project"}}}');
+	});
+
+	it("persists diagnostics once and uses the final source snapshot without discarding other warnings", async () => {
+		const issue = { kind: "skill", code: "unknown-reference", reference: "missing", message: 'profile "review": missing skill; not loaded' };
+		const result = await generateRuntimeDir(selectionPlan({ diagnostics: [issue, { ...issue }], unmatched: ["overlay skill:zero-*"] }), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.diagnostics.filter((entry: { reference?: string }) => entry.reference === "missing")).toEqual([issue]);
+		expect(result.warnings.filter((warning) => warning === issue.message)).toHaveLength(1);
+		expect(result.warnings.some((warning) => warning.includes("overlay skill:zero-*"))).toBe(true);
+	});
+
+	it("uses final MCP source/policy diagnostics rather than stale earlier content errors", async () => {
+		const file = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(file, '{"mcpServers":{"kept":{"command":"fixture","enabled":false}}}');
+		const stale = { kind: "mcp-source", code: "invalid-source", filePath: file, message: "stale content error" };
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["kept"], mcpTools: { kept: [] }, diagnostics: [stale] }), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+		expect(result.warnings).not.toContain("stale content error");
+		expect(result.warnings.some((message) => message.includes("remains disabled"))).toBe(true);
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.diagnostics.some((issue: { kind: string }) => issue.kind === "mcp-source")).toBe(false);
+		expect(JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8")).mcpServers.kept).toEqual({ command: "fixture", enabled: false });
+	});
+
+	it("propagates genuine MCP IO errors before rewriting managed files", async () => {
+		const first = await generateRuntimeDir(selectionPlan({}), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
+		const before = await readFile(path.join(first.runtimeDir, "settings.json"), "utf8");
+		await mkdir(path.join(fixture.agentDir, "mcp.json"));
+		await expect(writeRuntimeFiles(first.runtimeDir, selectionPlan({ mcps: [] }), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } })).rejects.toMatchObject({ code: "EISDIR" });
+		expect(await readFile(path.join(first.runtimeDir, "settings.json"), "utf8")).toBe(before);
 	});
 });

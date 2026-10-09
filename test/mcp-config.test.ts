@@ -278,3 +278,20 @@ describe("loadMergedMcpServers", () => {
 		expect(result.diagnostics).toEqual([`MCP config is not valid JSON: ${path.resolve(projectPath)}`]);
 	});
 });
+
+
+describe("MCP source error boundaries", () => {
+	it("skips a malformed later source without erasing an earlier complete definition", async () => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		await writeFile(path.join(fixture.root, ".agents", "mcp.json"), JSON.stringify({ mcpServers: { kept: { command: "fixture", enabled: false, toolExposure: { "*": "hidden" } } } }));
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), '{"mcpServers":[]}');
+		const result = await loadMergedMcpServers(fixture.agentDir, undefined, { invalidSource: "diagnose" });
+		expect(result.servers.kept).toEqual({ command: "fixture", enabled: false, toolExposure: { "*": "hidden" } });
+		expect(result.diagnostics).toHaveLength(1);
+	});
+
+	it.each(["throw", "diagnose"] as const)("propagates unexpected read failures in %s mode", async (invalidSource) => {
+		await mkdir(path.join(fixture.agentDir, "mcp.json"));
+		await expect(loadMergedMcpServers(fixture.agentDir, undefined, { invalidSource })).rejects.toMatchObject({ code: "EISDIR" });
+	});
+});

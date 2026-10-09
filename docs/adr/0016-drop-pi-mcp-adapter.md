@@ -1,3 +1,5 @@
+**Superseded by ADR-0018.**
+
 # Drop pi-mcp-adapter; target Pi's built-in MCP extension
 
 ## Context

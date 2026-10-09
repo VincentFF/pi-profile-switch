@@ -4,8 +4,8 @@
  * managing them.
  *
  * pi-profile never stores MCP connection parameters or credentials
- * (ADR-0016); this module reads config definitions to validate references
- * before spawn and to build the instance `mcp.json` snapshot.
+ * (ADR-0016); this module reads definitions for reference discovery and
+ * the instance `mcp.json` snapshot.
  *
  * Discovery scope: standard user-global configs (~/.config/mcp/mcp.json,
  * ~/.agents/mcp.json, ~/.agents/mcp/mcp.json), the Pi-global
@@ -14,9 +14,9 @@
  * The legacy project-root `.mcp.json` source is not read.
  *
  * Malformed config files follow the discovery tier: strict mode throws
- * `McpConfigError` (a broken mcp.json must not silently read as "no servers"
- * under an explicit MCP policy); diagnostic mode skips the malformed source
- * with a path-bearing diagnostic so valid sources still merge.
+ * `McpConfigError`; activation uses diagnostic mode, which skips malformed
+ * sources with path-bearing diagnostics so valid sources still merge.
+ * Unexpected filesystem failures propagate in either mode.
  */
 
 import { homedir } from "node:os";

@@ -2,65 +2,133 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile is a named set of resources you define: skills, extensions, MCP servers, tools, per-server MCP tool selections (`mcp_tools`), model defaults, and extra system-prompt instructions. Switch profiles inside a running Pi session — no restart.
+## About
 
-## Install
+pi-profile-switch adds named profiles to [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), letting you configure Pi's resources for a task or scenario:
+
+- Filter skills, extensions, tools, MCP servers, and individual MCP server tools.
+- Set a profile's default model, thinking level, and additional instructions.
+- Configure pi-subagents child-agent role settings.
+- Switch profiles within the same session without restarting or losing history.
+- Use global and project-level profiles.
+- Temporarily disable resources in a profile session with an overlay.
+
+## Installation and usage
+
+### Install
 
 ```bash
 npm install -g pi-profile-switch
 ```
 
-Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 0.99.1 or newer (installed automatically as a peer dependency). Use `npm install -g`, not `pi install` — this package provides the `pi-profile` launcher.
+Requires Pi 0.99.1 or newer, which npm installs as a peer dependency. This package provides the `pi-profile` launcher; use `npm install -g`, not `pi install`.
 
-## Quick start
+### Launch
 
 ```bash
-# Built-in default profile: all resources, plain Pi behavior
+# Use the remembered profile, or default if none is saved
 pi-profile
 
-# Starter read-only ask profile
+# Explicitly use default, keeping native Pi behavior
+pi-profile default
+
+# Use the starter ask profile for Q&A and code reading
 pi-profile ask
 
-# Anything after -- is passed to pi verbatim
+# Pass Pi arguments after -- unchanged
 pi-profile ask -- --model openai/gpt-5.4
 ```
 
-## Define your own profiles
+Without a profile name, the launcher tries the trusted project's saved selection, then the global saved selection, then `default`. A profile specified on the command line applies only to that launch.
 
-Profiles live in two directories, one JSON file per profile:
+When the global profile directory is empty, installation or startup writes the starter [`ask`](examples/ask.json). It disables user-level skills and extensions and keeps only read-only file tools; MCP servers remain available according to Pi's configuration. You can edit or delete it.
+
+### Create and edit profiles
+
+Save a JSON file directly; see [Configuration](#configuration) below for its format and location. You can also use the shipped [`profile-config`](skills/profile-config/SKILL.md) skill to create, edit, and delete profiles conversationally:
+
+```text
+Create a global profile named review that keeps only read-only file tools and disables user-level MCP servers.
+```
+
+Conversational configuration requires the active profile to allow the `profile-config` skill and file-writing tools. You can switch to `default` first.
+
+When `profile-config` creates a profile with a `skills` list, it includes itself unless you explicitly exclude it or a glob already covers it. Editing JSON manually does not add the skill automatically.
+
+### In-session commands
+
+| Command | Action |
+| --- | --- |
+| `/profile` | View and select profiles; prints the list in non-interactive modes. |
+| `/profile use <name>` | Switch profiles and remember the selection for the next launch; restores the previous profile if switching fails. |
+| `/profile reload` | Re-read the current profile and apply file edits. |
+| `/profile status` | Inspect the current profile, resolved resources, paths, overlay, MCP state, and diagnostics. |
+| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Add or remove resource-disable entries for the current session. |
+| `/profile overlay clear` | Clear every overlay entry and restore the profile's resource selection. |
+
+These commands also work in Pi's non-interactive modes, including `--mode text`, `--mode json`, and `--mode rpc`.
+
+### Temporarily disable resources
+
+```text
+/profile overlay disable tool bash
+/profile overlay enable tool bash
+/profile overlay clear
+```
+
+An overlay affects only the current runtime, does not edit profile files, and expires on restart. `enable` must match the stored disable entry exactly; to undo a glob disable, use the same glob.
+
+Overlays only narrow resources; they cannot add resources the profile did not select. The `default` profile does not support disabling MCP servers through an overlay.
+
+## Configuration
+
+### File locations and names
+
+Each profile is a `<name>.json` file. The filename supplies the name used when launching or switching profiles.
 
 | Path | Scope |
 | --- | --- |
-| `~/.pi-profile-switch/profiles/<name>.json` | Global, all projects. `PI_PROFILE_SWITCH_DIR` overrides the root directory. |
-| `<project>/.pi/profiles/<name>.json` | Project-level, trusted projects only. Completely replaces a global profile with the same name. |
+| `~/.pi-profile-switch/profiles/<name>.json` | Global. With `PI_PROFILE_SWITCH_DIR` set, use `profiles/<name>.json` under that directory instead. |
+| `<project>/.pi/profiles/<name>.json` | The current project; read only when the project is trusted. |
 
-Write the JSON directly (schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json)), or configure profiles conversationally: the package ships a [`profile-config`](skills/profile-config/SKILL.md) skill that creates, edits, and deletes profiles. Profiles created with a `skills` list include `"profile-config"` by default (unless you opt out or cover it with a wildcard like `"*"`), keeping configuration available after switching.
+A project-level profile completely replaces a same-named global profile without merging fields. Deleting the project file makes the global definition available again.
 
-When the global profiles directory has no profile yet, pi-profile-switch writes a starter **`ask`** profile — read-only Q&A and code exploration. It assumes nothing about your setup; edit or delete it freely. See [`examples/ask.json`](examples/ask.json).
+Names must start with an ASCII letter or digit and may then contain ASCII letters, digits, dots, underscores, and hyphens. `default` is reserved: you cannot create `default.json`, or edit or delete the `default` profile.
 
-A profile that uses every field:
+For an untrusted project, run `/trust` in Pi and restart, or trust only this launch:
+
+```bash
+pi-profile review -- --approve
+```
+
+### Complete example
+
+Save the following as `review.json`. Replace the resource names with ones you have installed or configured, and use a provider and model you can access.
 
 ```json
 {
-  "label": "Implementation",
-  "description": "Full-powered implementation profile: every available field, pinned model",
-  "skills": ["tdd", "internal-*"],
+  "label": "Code Review",
+  "description": "Review code with selected resources",
+  "skills": ["profile-config", "code-review"],
+  "extensions": ["pi-subagents"],
   "mcps": ["github", "linear"],
-  "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"],
+  "tools": ["read", "grep", "find", "ls"],
   "mcp_tools": {
     "github": ["search", "get_issue"],
     "linear": []
   },
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-sonnet-4-5",
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-5.4",
   "defaultThinkingLevel": "high",
-  "instructions": "Prefer small, verifiable changes. Run the test suite before claiming completion.",
+  "instructions": "Focus on correctness and security. Do not modify files.",
   "subagents": {
-    "defaultModel": "anthropic/claude-sonnet-4-5",
+    "defaultModel": "openai/gpt-5.4",
+    "defaultThinking": "medium",
     "agentOverrides": {
       "reviewer": {
+        "model": "inherit",
         "thinking": "high",
-        "description": "Independent review for this project",
+        "description": "Independent code review",
         "advertise": true
       }
     }
@@ -68,71 +136,116 @@ A profile that uses every field:
 }
 ```
 
-How the fields behave:
+The profile object is the JSON top-level value. Every field is optional; omitted fields add no profile control and keep native Pi behavior. Validate field types with [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
-- `skills`, `extensions`, `mcps`, `tools` take names or globs (e.g. `"internal-*"`) referencing resources you already installed or configured — profiles never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed.
-- `tools` expands strictly against Pi's non-MCP tool registry — built-ins and extension-contributed tools, attributed by registration ownership (`sourceInfo`). Available MCP tools remain usable independently of `tools`. When a profile declares `tools` and at least one MCP server is enabled, Pi's native MCP discovery entry points (`codemode` and `tool_search`) stay active even if you did not list them; unrelated non-MCP tools excluded by `tools` stay excluded.
-- `mcp_tools` defines per-server MCP tool filtering: keys are literal configured server names and values are literal MCP tool names as exposed by Pi's built-in MCP extension. Globs are not accepted. An omitted server keeps native access to all its tools; a nonempty array allows only matched tools; an empty array (`[]`) denies all tools for that server while leaving it enabled. Unmatched selectors remain restrictive and are not diagnosed, so confirm selectors with the server before writing them.
-- **Migration notes:**
-  - Former MCP references in `tools` (e.g. `mcp__*`, `<server>_*`) no longer govern MCP access. Move desired MCP tool restrictions to `mcp_tools`.
-  - Prefixed selectors (e.g. `<server>_<tool>` forms used by previous MCP integrations) no longer apply; replace them with the literal tool names from Pi's built-in MCP extension.
-- `mcps` references servers from your Pi user-level MCP configuration (`~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`); connection details stay in those files.
-  - **Omitting `mcps`** leaves all discovered user-level servers at their normal availability.
-  - **`mcps: []`** disables every discovered user-level server, including agentDir-only servers; every unselected user-level server keeps its full definition and is explicitly marked `enabled: false` in the generated instance `mcp.json`. Project-level servers are never narrowed.
-  - Trusted project-level MCP servers are always kept enabled and are never narrowed by `mcps`.
-  - Servers using `type: "sse"` cannot be selected; migrate them to streamable HTTP before referencing them in a profile.
-  - A later user-level source replaces a same-named server from an earlier source in full (no field-wise merging), so connection and credential fields are never inherited across files.
-  - A profile that declares neither `mcps` nor `mcp_tools` treats a malformed user-level MCP source as a non-fatal diagnostic (printed on stderr with the file path) and starts with the remaining valid sources. Declaring `mcps` or a nonempty `mcp_tools` makes the same malformed source fail activation, because the allowlist cannot be trusted.
-- The instance `mcp.json` is always a generated snapshot of the merged user-level configuration. In-session `pi mcp add` edits the instance copy, and the next `/profile use` or `/profile reload` overwrites it with the profile's snapshot.
-- Any field you omit keeps plain Pi behavior.
-- `label` and `description` are display metadata. `defaultProvider` and `defaultModel` (declared together) set the startup model; `defaultThinkingLevel` sets its thinking level; `instructions` is appended to the system prompt.
-- `subagents` optionally supplies native pi-subagents model/thinking defaults and exact role overrides. It does not load pi-subagents or change which roles or tools are available. Role descriptions are metadata, not child prompts; `advertise` controls parent-prompt listing, not whether a role can run. `/profile status` shows declared inputs, while `/subagents-models` inspects the native live mapping. See the [subagent behavior contract](openspec/specs/launcher/spec.md) and [pi-subagents model documentation](https://github.com/nicobailon/pi-subagents/blob/main/docs/models.md).
-- `skills`, `extensions`, `mcps`, and `tools` reference installed resources by name or glob; profiles never copy resources. `tools` covers non-MCP tools only (built-ins and extension tools).
-- `mcp_tools` selects tools inside MCP servers by literal server and tool name — globs are rejected. Omit a server to leave it unchanged, use `[]` to deny all of its tools while keeping the server enabled, or list names to allow only those. A literal selector that matches nothing stays restrictive without warning; a server that is unknown, disabled, or project-only fails activation with candidates.
-- `mcps` names user-level servers from `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `<agentDir>/mcp.json`. Omit it to leave all servers as configured; use `[]` to disable every user-level server. Project-level servers (`.pi/mcp.json`) are read by Pi itself and are never narrowed. Legacy SSE servers cannot be selected.
-- Older profiles expressed MCP tool access through `mcp__*` or `<server>_*` entries in `tools`; use `mcp_tools` instead.
-- Every omitted field keeps plain Pi behavior.
+### Field reference
 
-The instance's `mcp.json` is generated by the launcher. Running `pi mcp add` inside a session only edits that generated copy, and the next profile switch or reload overwrites it — edit your real MCP configuration instead.
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `label` | `string` | Display name in the selector; does not change the profile's filename. |
+| `description` | `string` | Description in the selector. |
+| `skills` | `string[]` | Select skills by name or glob. |
+| `extensions` | `string[]` | Select extensions by identifier, glob, or specified path. |
+| `mcps` | `string[]` | Select user-level MCP servers by name or glob. |
+| `tools` | `string[]` | Select non-MCP tools by name or glob, including built-in and extension-contributed tools. |
+| `mcp_tools` | `Record<string, string[]>` | Select tools per MCP server; see MCP configuration below. |
+| `defaultProvider` | `string` | Default model provider; declare together with `defaultModel`. |
+| `defaultModel` | `string` | Model ID within the provider; declare together with `defaultProvider`. |
+| `defaultThinkingLevel` | `string` | Default model thinking level; takes effect only when both model fields above are declared. Use a value supported by Pi. |
+| `instructions` | `string` | Text appended to the system prompt without replacing it. |
+| `subagents` | `object` | pi-subagents defaults and role-specific settings; see Child-agent configuration below. |
 
-[`examples/`](examples/) contains the full example above and the starter `ask`.
+Pi handles model availability, authentication, and command-line precedence. Declaring only `defaultProvider` or `defaultModel` does not set a profile default model. When both model fields are declared, an invalid `defaultThinkingLevel` string produces a warning and is ignored without removing the model declaration.
 
-## Commands
+### Resource selection
 
-| Command | What it does |
+Profiles reference existing resources without installing or copying them. Use these reference forms:
+
+| Resource field | Reference forms and examples |
 | --- | --- |
-| `/profile` | Show the available profiles and pick one (interactive selector; prints the list outside the TUI). |
-| `/profile use <name>` | Switch profiles now. The session reloads with the new resources; a failed switch rolls back. The choice is remembered for the next launch. |
-| `/profile reload` | Re-read the active profile file after editing it. |
-| `/profile status` | Report the active profile, resolved resources and paths, overlay, MCP server state, and conflicts. |
-| `/profile overlay disable\|enable skill\|extension\|mcp\|tool <name-or-glob>` | Narrow or restore resources for this session only. |
-| `/profile overlay clear` | Drop the overlay and use the profile as written. |
+| `skills` | Skill names such as `"profile-config"`, or globs such as `"review-*"`. |
+| `extensions` | Installed package names or source aliases; `<package>:<relative path>` for multi-entry packages; loose-file identifiers; globs; absolute or `~/` paths. |
+| `mcps` | Server names from MCP configuration such as `"github"`, or globs such as `"internal-*"`. |
+| `tools` | Non-MCP tool names in Pi such as `"read"` and `"bash"`, or globs such as `"test_*"`. |
 
-All forms work in every mode, including non-interactive ones (`--mode rpc|text|json`); the bare selector degrades to the profile list where no interactive UI exists. The overlay is a runtime-only narrowing: it is never written to a catalog file and never survives a restart. Tools follow the same disable/enable model as the other resource kinds: a tool `disable` entry narrows the profile's resolved tool references — or the runtime's full available tool set when the profile declares no `tools`.
-All of these work in every mode, including non-interactive ones (`--mode text`, `--mode json`, `--mode rpc`). An overlay lives only in the current runtime: it is never written to your profile files and is gone after a restart. Disabling MCP servers with an overlay is not possible on the built-in `default` profile — it has no server list to narrow.
+A loose extension file's identifier is its path relative to the extensions directory without the `.ts` or `.js` suffix. For example, `conventions.ts` is `conventions`, and `sub/index.ts` is `sub`. Extension paths must be absolute or start with `~/`; relative paths are not accepted.
 
-## Migration: undeclared resource fields
-
-Earlier releases treated an omitted `skills` or `extensions` field as an empty selection, hiding that kind. Omission now keeps Pi's native visibility for that kind, so a profile that relied on the old behavior can expose more resources after upgrading.
-
-To hide a kind, declare it explicitly empty instead of omitting it:
+For resource lists, omitting a field leaves that resource kind unrestricted by the profile; `[]` selects none; a nonempty array selects only matching resources. For example:
 
 ```json
 {
   "skills": [],
-  "extensions": []
+  "extensions": [],
+  "mcps": [],
+  "tools": ["read", "grep", "find", "ls"]
 }
 ```
 
-The authoritative selection contract is [Sparse skill and extension selection](openspec/specs/resource-reference/spec.md).
+Skill, extension, and MCP server selections narrow only user-level resources. Pi's project-trust decision governs project-level visibility; profiles do not hide those resources. Pi's existing resource exclusions remain effective.
 
-## Docs
+`tools` does not restrict MCP tools or disable the entry points Pi needs to invoke them. Use `mcp_tools` to restrict MCP tools; a read-only file-tool list does not automatically prevent MCP write operations.
 
-- Field reference: [`schemas/profiles.schema.json`](schemas/profiles.schema.json)
-- Architecture and terminology: [`docs/architecture/overview.md`](docs/architecture/overview.md) and [`CONTEXT.md`](CONTEXT.md)
-- Decisions: [`docs/adr/`](docs/adr/)
-- Authoring guide: [`skills/profile-config/SKILL.md`](skills/profile-config/SKILL.md)
+### MCP configuration
 
-## License
+MCP server addresses, start commands, and credentials stay in Pi's MCP configuration. Profiles only select servers and tools.
 
-MIT
+User-level configuration is read in this order. A later source completely replaces an earlier same-named server definition without merging fields:
+
+1. `~/.config/mcp/mcp.json`
+2. `~/.agents/mcp.json`
+3. `~/.agents/mcp/mcp.json`
+4. `<agentDir>/mcp.json`, where `<agentDir>` is Pi's user directory, usually `~/.pi/agent`
+
+Pi reads a trusted project's `.pi/mcp.json`; its servers are not narrowed by `mcps` or `mcp_tools`. Selecting a server does not force-enable it if its source configuration disables it.
+
+Each `mcp_tools` key must be a server name. Array entries must be tool names shown by Pi's native MCP interface. Neither accepts globs.
+
+| Declaration | Effect |
+| --- | --- |
+| Omit `mcp_tools`, or use `{}` | Keep each server's existing tool configuration. |
+| Omit a server from `mcp_tools` | Keep that server's existing tool configuration. |
+| `"github": ["search", "get_issue"]` | Replace that server's existing tool selection, allowing only matches. |
+| `"github": []` | Deny all tools from that server without disabling the server itself. |
+
+MCP tool names are not validated in advance. A misspelled name stays restrictive but produces no tool-name diagnostic; inspect the actual names exposed by the server in Pi before configuring them.
+
+For lasting MCP connection changes, edit the user-level files above. Changes made through `pi mcp add` in a `pi-profile` session are overwritten on the next profile switch or reload.
+
+### Child-agent configuration
+
+`subagents` does not load pi-subagents, automatically add extensions, authorize delegation tools, or create roles. Install and load pi-subagents normally through Pi and allow the relevant tools before using these settings.
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `subagents.defaultModel` | `string` | Default model for child agents without a specified model. Uses native pi-subagents model syntax, such as `openai/gpt-5.4`. |
+| `subagents.defaultThinking` | `string` | Default thinking level for child agents without a specified level. |
+| `subagents.agentOverrides` | `object` | Overrides keyed by exact, case-sensitive role names; globs and surrounding whitespace are not allowed. |
+| `subagents.agentOverrides.<name>.model` | `string \| false` | Set the role model; `"inherit"` uses the current parent session model, and `false` clears the role's explicit model setting. |
+| `subagents.agentOverrides.<name>.thinking` | `string \| false` | Set the role thinking level; `false` clears the role's explicit thinking setting. |
+| `subagents.agentOverrides.<name>.description` | `string` | Role-description metadata, not child prompts. |
+| `subagents.agentOverrides.<name>.advertise` | `boolean` | Controls listing in the parent prompt, not whether a role can run; `false` hides the listing. |
+
+Child-agent thinking levels use the schema's supported `thinkingLevel` values. Every child-agent text field must be nonempty.
+
+Omitting `subagents`, using `{}`, or supplying only empty role objects adds no child-agent control. Declaring one role does not exclude others. Undeclared role fields retain native settings; explicit `false` is not equivalent to omission.
+
+Native pi-subagents project, provider, and per-run settings can still override these declarations. `/profile status` shows profile declarations; `/subagents-models` shows live model mappings. See the [pi-subagents model documentation](https://github.com/nicobailon/pi-subagents/blob/main/docs/models.md) for model syntax and native precedence.
+
+### Apply edits and diagnose problems
+
+After editing the active profile file, run these in the session:
+
+```text
+/profile reload
+/profile status
+```
+
+| Condition | Action |
+| --- | --- |
+| Invalid JSON, a non-object top-level value, or a field-type error | Activation fails; fix the file and field named in the error, then retry. |
+| Unknown top-level field | The field is ignored with a warning; use a supported field from the diagnostic. |
+| Unsupported nested field in `subagents` | Activation fails; remove or correct the field as directed. |
+| Unmatched skill, extension, MCP server, or non-MCP tool reference | Activation continues with warnings and usable matches; correct the name or install the resource, then reload. If every reference misses, the selection stays empty rather than restoring all resources. |
+| An MCP server is unknown, disabled, or project-owned only | A warning is reported without creating or force-enabling servers or changing project-owned servers; check user-level MCP configuration and names. |
+| Malformed user-level MCP configuration | Its path is reported and the source is skipped while valid sources remain usable; fix the file and reload. |
+| Model or authentication error | Follow Pi's native diagnostic to check the provider, model, and credentials. |

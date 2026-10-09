@@ -91,13 +91,23 @@ describe("launcher integration: optional subagent settings", () => {
 		}
 	});
 
-	it("keeps explicit missing extension-reference failures unchanged", { timeout: 30_000 }, async () => {
+	it("warns for a missing explicit extension without widening its declared selection", { timeout: 30_000 }, async () => {
+		const marker = path.join(fixture.root, "unselected-extension-loaded");
+		const extensions = path.join(fixture.agentDir, "extensions");
+		await mkdir(extensions, { recursive: true });
+		await writeFile(path.join(extensions, "unselected.ts"), `import { writeFileSync } from "node:fs";\nexport default function () { writeFileSync(${JSON.stringify(marker)}, "loaded"); }\n`);
 		await writeCatalog({ review: { extensions: ["pi-subagents"] } });
 
 		const result = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 
-		expect(result.code).toBe(2);
+		expect(result.code).toBe(0);
 		expect(result.stderr).toContain('unknown extension: "pi-subagents"');
+		const instance = await soleInstanceDir(fixture);
+		const plan = JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8"));
+		expect(plan.resolved.extensions).toEqual([]);
+		expect(plan.diagnostics).toContainEqual(expect.objectContaining({ kind: "extension", reference: "pi-subagents" }));
+		const { existsSync } = await import("node:fs");
+		expect(existsSync(marker)).toBe(false);
 	});
 
 	it("switches, reloads deleted overrides and native edits without changing the session", { timeout: 90_000 }, async () => {

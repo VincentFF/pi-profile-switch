@@ -3,8 +3,12 @@ import { lstat, mkdir, readFile, readlink, realpath, rm, writeFile } from "node:
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { defaultPlan } from "../src/profile-resolver.ts";
+import { DiscoveredExtensions } from "../src/extension-discovery.ts";
+import type { ProfileDefinition } from "../src/profile-catalog.ts";
+import { defaultPlan, resolveProfile } from "../src/profile-resolver.ts";
 import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
+import { resolveModelProfileInNode } from "./helpers/model-profile-runner.ts";
+import { runLauncher } from "./helpers/launcher-runner.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -223,5 +227,67 @@ describe("generateRuntimeDir (default profile)", () => {
 			.rejects.toThrow(/settings\.json.*subagents\.agentOverrides\.reviewer.*correct/);
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(sentinelSettings);
 		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(sentinelPlan);
+	});
+});
+
+
+describe("native model declaration inputs", () => {
+	const native = { defaultProvider: "native-provider", defaultModel: "native-model", defaultThinkingLevel: "low", theme: "dark" };
+
+	async function materialize(definition: ProfileDefinition): Promise<Record<string, unknown>> {
+		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify(native));
+		const plan = definition.defaultProvider !== undefined && definition.defaultModel !== undefined && definition.defaultThinkingLevel !== undefined
+			? await resolveModelProfileInNode(definition)
+			: await resolveProfile({ profile: { name: "review", source: "global", definition }, skills: [], extensions: new DiscoveredExtensions([], [], []) });
+		const { runtimeDir } = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, homeDir: fixture.root, discovery: { skills: [], packages: [] } });
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(await readFile(path.join(fixture.agentDir, "settings.json"), "utf8")).toBe(JSON.stringify(native));
+		expect(settings.theme).toBe("dark");
+		return settings;
+	}
+
+	it("hands complete model declarations to Pi without registry/auth preflight", async () => {
+		const settings = await materialize({ defaultProvider: "extension-provider", defaultModel: "local-model", defaultThinkingLevel: "high" });
+		expect(settings.defaultProvider).toBe("extension-provider");
+		expect(settings.defaultModel).toBe("local-model");
+		expect(settings.defaultThinkingLevel).toBe("high");
+	});
+
+	it.each([undefined, "extreme"])("preserves native thinking when the complete model contributes no supported thinking (%s)", async (thinking) => {
+		const settings = await materialize({ defaultProvider: "extension-provider", defaultModel: "local-model", ...(thinking !== undefined ? { defaultThinkingLevel: thinking } : {}) });
+		expect(settings.defaultProvider).toBe("extension-provider");
+		expect(settings.defaultModel).toBe("local-model");
+		expect(settings.defaultThinkingLevel).toBe(native.defaultThinkingLevel);
+	});
+
+	it.each([{}, { defaultThinkingLevel: "extreme" }, { defaultProvider: "profile-provider", defaultThinkingLevel: "extreme" }, { defaultModel: "profile-model", defaultThinkingLevel: "extreme" }])("keeps undeclared and incomplete native model inputs unchanged %j", async (definition) => {
+		const settings = await materialize(definition);
+		for (const key of ["defaultProvider", "defaultModel", "defaultThinkingLevel"] as const) expect(settings[key]).toBe(native[key]);
+	});
+
+	it("does not delete native thinking even for an already-resolved plan without thinking", async () => {
+		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify(native));
+		const plan = { ...defaultPlan(), profile: "review", source: "global" as const, filter: "selection" as const, model: { provider: "extension-provider", id: "local-model" } };
+		const { runtimeDir } = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, homeDir: fixture.root, discovery: { skills: [], packages: [] } });
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.defaultThinkingLevel).toBe(native.defaultThinkingLevel);
+	});
+});
+
+
+describe("launcher activation diagnostic deduplication", () => {
+	it("prints resolution/generation warnings once on stderr and stores them for status", { timeout: 45_000 }, async () => {
+		const dir = path.join(fixture.profileSwitchDir, "profiles");
+		await mkdir(dir, { recursive: true });
+		await writeFile(path.join(dir, "review.json"), '{"skills":["missing"],"mcps":[],"unknownField":"ignored"}');
+		const malformed = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(malformed, "{ bad");
+		const output = await runLauncher(fixture, ["review", "--", "--version"]);
+		expect(output.code).toBe(0);
+		const warnings = output.stderr.split("\n").filter((line) => line.startsWith("pi-profile: warning:"));
+		expect(warnings.filter((line) => line.includes(malformed))).toHaveLength(1);
+		expect(warnings.filter((line) => line.includes('unknown skill "missing"'))).toHaveLength(1);
+		expect(warnings.filter((line) => line.includes('unknown field "unknownField"'))).toHaveLength(1);
+		expect(output.stdout).not.toContain("warning");
 	});
 });

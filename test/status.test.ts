@@ -311,3 +311,59 @@ describe("formatStatusMarkdown", () => {
 		expect(markdown).toContain("mcp: enabled=[github] disabled=[linear]");
 	});
 });
+
+
+describe("diagnostic status and dormant MCP policies", () => {
+	it("includes skipped-reference diagnostics without claiming skipped resources are resolved", () => {
+		const issue = { kind: "skill", code: "unknown-reference", reference: "missing", message: 'profile "review": missing skill; not loaded' };
+		const report = buildStatusReport({ plan: { profile: "review", source: "global", resolved: { skills: [], extensions: [] }, diagnostics: [issue, { ...issue }] }, discoveredMcpServers: [], ...emptyRuntime });
+		expect(report.skills).toEqual([]);
+		expect(report.extensions).toEqual([]);
+		expect(report.diagnostics).toEqual([issue]);
+		expect(formatStatusMarkdown(report)).toContain(issue.message);
+	});
+	it("reports missing declarations lost from the effective selection and marks retained policies dormant", () => {
+		const diagnostics = [{ kind: "mcp", code: "unknown-reference", reference: "missing-selection", message: "selection not loaded" }];
+		const report = buildStatusReport({ plan: { profile: "review", source: "global", mcps: [], mcpTools: { missing: ["opaque"], disabled: [], project: ["opaque"] }, diagnostics }, discoveredMcpServers: ["disabled", "project"], disabledMcpServers: ["disabled"], projectMcpServers: ["project"], commands: [], tools: [] });
+		expect(report.mcp).toEqual({ enabled: ["project"], disabled: ["disabled"], missing: ["missing", "missing-selection"] });
+		expect(report.mcpTools).toContainEqual({ server: "missing", policy: "restricted", tools: ["opaque"], state: "missing" });
+		expect(report.mcpTools).toContainEqual({ server: "disabled", policy: "none", tools: [], state: "disabled" });
+		expect(report.mcpTools).toContainEqual({ server: "project", policy: "restricted", tools: ["opaque"], state: "project" });
+		const text = formatStatusMarkdown(report);
+		expect(text).toContain("missing: declared policy [opaque] (missing; not applied)");
+		expect(text).toContain("disabled: declared policy [] (disabled; not applied)");
+		expect(text).toContain("project: declared policy [opaque] (project-owned; not applied)");
+		expect(text).not.toContain("disabled: no enabled MCP tools");
+		expect(text).not.toContain("project: [opaque]");
+	});
+	it("never classifies missing or newly source-disabled selected names as enabled", () => {
+		const report = buildStatusReport({ plan: { profile: "review", source: "global", mcps: ["missing", "disabled", "kept"] }, discoveredMcpServers: ["disabled", "kept"], disabledMcpServers: ["disabled"], commands: [], tools: [] });
+		expect(report.mcp).toEqual({ enabled: ["kept"], disabled: ["disabled"], missing: ["missing"] });
+	});
+});
+
+
+describe("retained activation knowledge before MCP reload", () => {
+	it.each([{ code: "unknown-reference", state: "missing" }, { code: "disabled-server", state: "disabled" }] as const)("keeps a $state policy dormant after source changes until reload", ({ code, state }) => {
+		const issue = { kind: "mcp-tools", code, reference: "late", message: "late policy was not applied this activation" };
+		const plan = { profile: "policy", source: "global", mcpTools: { late: ["search"] }, diagnostics: [issue] };
+		const input = { discoveredMcpServers: ["late", "native", "project"], disabledMcpServers: [], projectMcpServers: ["project"], commands: [], tools: [] };
+		const beforeReload = buildStatusReport({ ...input, plan });
+		expect(beforeReload.mcp.enabled).toEqual(["native", "project"]);
+		expect(beforeReload.mcp.disabled).toContain("late");
+		expect(beforeReload.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"], state });
+		expect(formatStatusMarkdown(beforeReload)).toContain(`late: declared policy [search] (${state}; not applied)`);
+		expect(beforeReload.diagnostics).toEqual([issue]);
+		const afterReload = buildStatusReport({ ...input, plan: { ...plan, diagnostics: undefined } });
+		expect(afterReload.mcp.enabled).toEqual(["late", "native", "project"]);
+		expect(afterReload.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"] });
+	});
+	it("preserves older plans and native project precedence even with an old user-level miss", () => {
+		const input = { discoveredMcpServers: ["late"], disabledMcpServers: [], commands: [], tools: [] };
+		const plan = { profile: "policy", source: "global", mcpTools: { late: ["search"] } };
+		expect(buildStatusReport({ ...input, plan }).mcp.enabled).toEqual(["late"]);
+		const report = buildStatusReport({ ...input, projectMcpServers: ["late"], plan: { ...plan, diagnostics: [{ kind: "mcp-tools", code: "unknown-reference", reference: "late", message: "old user miss" }] } });
+		expect(report.mcp.enabled).toEqual(["late"]);
+		expect(report.mcpTools).toEqual([{ server: "late", policy: "restricted", tools: ["search"], state: "project" }]);
+	});
+});

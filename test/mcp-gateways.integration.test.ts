@@ -1,8 +1,9 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runLauncherRpc } from "./helpers/launcher-runner.ts";
+import { MCP_INVOCATION_ARGS, invokeNativeTool, localMcpServer, mcpCalls } from "./helpers/mcp-invocation.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 import type { RpcDriver } from "./helpers/rpc-driver.ts";
 
@@ -193,4 +194,24 @@ describe("MCP gateway entry points against a real spawned pi", () => {
 			expect(activeTools).not.toContain("bash");
 		},
 	);
+});
+
+
+describe("partial selections preserve native gateway restrictions", () => {
+	it("keeps both native gateways and allowed MCP invocation without unrelated Pi tools or unselected servers", { timeout: 90_000 }, async () => {
+		const calls = path.join(fixture.root, "calls.jsonl"); const marker = path.join(fixture.root, "unselected-started");
+		await writeMcpConfig({ fixture: localMcpServer(undefined, calls), unselected: localMcpServer(marker) });
+		await writeFixtureExtension();
+		await writeCatalog({ partial: { tools: ["read"], mcps: ["missing", "fixture"], mcp_tools: { fixture: ["search"] }, extensions: ["missing-ext", "report-tools"] } });
+		const original = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+		driver = runLauncherRpc(fixture, ["partial", "--", ...MCP_INVOCATION_ARGS]);
+		expect((await invokeNativeTool(driver, "codemode", { code: 'text(await tools.mcp__fixture__search({query:"gateway"}));' })).isError).toBe(false);
+		expect((await invokeNativeTool(driver, "mcp__fixture__delete", { id: "forbidden" })).isError).toBe(true);
+		const tools = await reportActiveTools();
+		expect(tools).toContain("read"); expect(tools).toContain("codemode"); expect(tools).toContain("tool_search");
+		expect(tools).not.toContain("bash"); expect(tools).not.toContain("fixture_unrelated");
+		expect((await mcpCalls(calls)).map((call) => call.name)).toEqual(["search"]);
+		expect((await import("node:fs")).existsSync(marker)).toBe(false);
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(original);
+	});
 });

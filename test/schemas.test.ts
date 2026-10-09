@@ -128,7 +128,7 @@ describe("shipped JSON schemas", () => {
 				await readFile(path.resolve("examples/example.json"), "utf8"),
 			);
 			const catalog = await ProfileCatalog.load(fixture.agentDir);
-			expect(catalog.resolve("impl")?.definition.label).toBe("Implementation");
+			expect((await catalog.resolve("impl"))?.definition.label).toBe("Implementation");
 		} finally {
 			await rm(fixture.root, { recursive: true, force: true });
 		}

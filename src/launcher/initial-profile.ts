@@ -4,9 +4,9 @@
  * Flow: trust check (gatekeeper for everything project-scoped) → positional
  * name or saved state (project state wins when trusted) → catalog lookup →
  * discovery (skills, extensions, MCP server names) → resolver (glob
- * expansion, overlay, model validation) → ActivationPlan + full discovery
- * results for the settings generator. Unknown profiles, malformed catalogs,
- * and unresolvable resources all fail before Pi spawns.
+ * expansion, overlay, native model handoff) → ActivationPlan + full discovery
+ * results for the settings generator. Normal default activation bypasses
+ * the catalog; named activation reads only its winning definition.
  *
  * The CLI's initial selection is transient: no runtime state is written here.
  */
@@ -16,12 +16,11 @@ import path from "node:path";
 import { isRecord, readJsonFile } from "../json-file.ts";
 import { loadMergedMcpServers } from "../mcp-config.ts";
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
-import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
+import { ActivationError, defaultPlan, mergeResolutionDiagnostics, resolutionDiagnostics, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { discoverLauncherResources, type LauncherDiscovery } from "./discovery.ts";
-import { checkDeclaredModel } from "./model-check.ts";
 
 export class UnknownProfileError extends Error {
 	constructor(name: string) {
@@ -30,12 +29,17 @@ export class UnknownProfileError extends Error {
 	}
 }
 
-/** Zero-match glob references surface as launch warnings (ADR-0009):
- *  visible, but never blocking — globs re-expand on every resolution. */
-function unmatchedWarnings(plan: ActivationPlan): string[] {
-	return (plan.unmatched ?? []).map(
-		(reference) => `profile "${plan.profile}": "${reference}" matched nothing this resolution`,
+function collectPlanDiagnostics(plan: ActivationPlan, discovery: LauncherDiscovery, profile?: ResolvedProfile): string[] {
+	const diagnostics = mergeResolutionDiagnostics(
+		resolutionDiagnostics(plan),
+		discovery.extensions.warnings().map((message) => ({ kind: "extension-discovery", code: "discovery-warning", reference: message, message: `profile "${plan.profile}": ${message}` })),
+		(profile?.warnings ?? []).map((message) => {
+			const separator = message.indexOf(': profile "');
+			return { kind: "catalog", code: "unknown-field", reference: message.match(/unknown field "([^"]*)"/)?.[1] ?? message, message, ...(separator >= 0 ? { filePath: message.slice(0, separator) } : {}) };
+		}),
 	);
+	if (diagnostics.length > 0) plan.diagnostics = diagnostics;
+	return diagnostics.map((issue) => issue.message);
 }
 
 export interface LauncherContext {
@@ -97,8 +101,6 @@ export async function resolveInitialProfile(
 ): Promise<InitialProfile> {
 	const { projectTrusted } = await readTrustInputs(context);
 	const projectDir = projectTrusted ? context.cwd : undefined;
-	const catalog = await ProfileCatalog.load(context.agentDir, { projectDir });
-
 	let selected = name;
 	const warnings: string[] = [];
 	if (selected === undefined) {
@@ -110,7 +112,10 @@ export async function resolveInitialProfile(
 		selected ??= (await new RuntimeStateStore(getGlobalStateDir(context.agentDir)).read()).activeProfile ?? "default";
 	}
 
-	const profile = catalog.resolve(selected);
+	// Default activation needs no catalog enumeration or definition reads.
+	const profile = selected === "default"
+		? { name: "default", source: "builtin" as const, definition: {} }
+		: await (await ProfileCatalog.load(context.agentDir, { projectDir })).resolve(selected);
 	if (profile === undefined) {
 		// Explicit positional selection fails loudly; a restored selection that
 		// no longer exists falls back to default with a warning instead of
@@ -157,34 +162,25 @@ export async function resolveInitialProfile(
 			overlay,
 			liveToolNames: options?.liveToolNames,
 		});
-		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
+		warnings.push(...collectPlanDiagnostics(plan, discovery));
 		return { plan, discovery, projectDir, projectTrusted, warnings };
 	}
 
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
 
-	const mcpToolsDef = (profile.definition as { mcp_tools?: Record<string, string[]> }).mcp_tools;
-	const hasMcpTools = mcpToolsDef !== undefined && Object.keys(mcpToolsDef).length > 0;
-	const declaredMcps = profile.definition.mcps;
-	const needsMcp = Boolean(
-		declaredMcps !== undefined ||
-		hasMcpTools ||
-		(options?.overlay?.disabledMcps?.length ?? 0) > 0,
-	);
-	const mcpDiscovery = needsMcp
-		? await loadMergedMcpServers(context.agentDir, projectDir, { invalidSource: "throw" })
-		: undefined;
+	// Diagnose source content regardless of whether the profile declares an
+	// MCP policy; unexpected filesystem failures still propagate.
+	const mcpDiscovery = await loadMergedMcpServers(context.agentDir, projectDir, { invalidSource: "diagnose" });
 
 	const plan = await resolveProfile({
 		profile,
 		skills: discovery.skills,
 		extensions: discovery.extensions,
-		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
 		discoveredMcpServers: mcpDiscovery ? Object.keys(mcpDiscovery.servers).sort() : undefined,
 		mcpDiscovery,
 		overlay: options?.overlay,
 		liveToolNames: options?.liveToolNames,
 	});
-	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
+	warnings.push(...collectPlanDiagnostics(plan, discovery, profile));
 	return { plan, discovery, projectDir, projectTrusted, warnings };
 }
