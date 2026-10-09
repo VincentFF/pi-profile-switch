@@ -69,6 +69,34 @@
     "instructions": {
       "type": "string",
       "description": "Appended to Pi's fully built system prompt on every turn."
+    },
+    "subagents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultModel": { "type": "string", "pattern": "\\S" },
+        "defaultThinking": { "$ref": "#/$defs/thinkingLevel" },
+        "agentOverrides": {
+          "type": "object",
+          "propertyNames": { "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[*?\\[\\]{}]).+$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": { "anyOf": [{ "type": "string", "pattern": "\\S" }, { "const": false }] },
+              "thinking": { "anyOf": [{ "$ref": "#/$defs/thinkingLevel" }, { "const": false }] },
+              "description": { "type": "string", "pattern": "\\S" },
+              "advertise": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "thinkingLevel": {
+      "type": "string",
+      "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
     }
   }
 }

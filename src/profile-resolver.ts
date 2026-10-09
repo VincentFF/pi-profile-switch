@@ -28,6 +28,7 @@ import type { DiscoveredExtensions } from "./extension-discovery.ts";
 import { isRecord } from "./json-file.ts";
 import type { MergedMcpResult } from "./mcp-config.ts";
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
+import type { ProfileSubagentSettings } from "./subagent-settings.ts";
 
 /** Extracts a ProfileModel from flat definition keys, if declared. */
 function extractModel(definition: ProfileDefinition): ProfileModel | undefined {
@@ -77,10 +78,23 @@ export interface ActivationPlan {
 	source: ProfileSource;
 	/** "none" exposes everything Pi can discover (the default profile). */
 	filter: "none" | "selection";
-	/** Selected skills with their resolved SKILL.md paths. Empty for default. */
+	/** Selected skills with their resolved SKILL.md paths: the declared
+	 *  selection for a declared kind, or the full referenceable discovery
+	 *  result for an undeclared kind (overlay/status vocabulary). Empty for
+	 *  default. */
 	skills: SkillEntry[];
-	/** Selected extensions. Empty for default. */
+	/** Selected extensions, same declared/undeclared distinction as `skills`. */
 	extensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
+	/** Per-kind declaration intent: true exactly when the profile declared the
+	 *  field, including an explicitly empty array. An undeclared kind keeps
+	 *  Pi's native visibility and must not be materialized as a selection. */
+	resourceSelection: { skills: boolean; extensions: boolean };
+	/** Concrete skill entries the overlay disabled on an undeclared kind.
+	 *  Set only when the kind is undeclared; a declared kind already carries
+	 *  the narrowed selection in `skills`. */
+	disabledSkills?: SkillEntry[];
+	/** Concrete extension entries the overlay disabled on an undeclared kind. */
+	disabledExtensions?: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
 	/** Expanded tool allowlist; undefined when the profile declares no tools. */
 	tools?: string[];
 	/** Overlay tool disable entries (names or globs, verbatim); undefined
@@ -96,6 +110,8 @@ export interface ActivationPlan {
 	/** Declared instructions; written to the generated APPEND_SYSTEM.md,
 	 *  which Pi natively appends to the system prompt. */
 	instructions?: string;
+	/** Bounded native subagent settings declaration, passed through untouched. */
+	subagents?: ProfileSubagentSettings;
 	/** Expanded MCP server allowlist: written by SettingsGenerator into the
 	 *  instance `mcp.json` snapshot and surfaced in `/profile status`;
 	 *  undefined when the profile declares no `mcps` (no restriction). */
@@ -238,7 +254,14 @@ function expandReferences<T>(
 
 /** The built-in default profile: everything Pi can discover, no filtering. */
 export function defaultPlan(): ActivationPlan {
-	return { profile: "default", source: "builtin", filter: "none", skills: [], extensions: [] };
+	return {
+		profile: "default",
+		source: "builtin",
+		filter: "none",
+		skills: [],
+		extensions: [],
+		resourceSelection: { skills: false, extensions: false },
+	};
 }
 
 export async function resolveProfile(input: ResolveInput): Promise<ActivationPlan> {
@@ -250,20 +273,37 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		input.discoveredMcpServers = Object.keys(input.mcpDiscovery.servers).sort();
 	}
 
-	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
-		onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
-	});
+	// Declaration intent is preserved separately from the resolved array: an
+	// omitted field keeps Pi's native visibility, an explicit empty array is a
+	// restrictive selection, and the two must not be confused.
+	const skillsDeclared = definition.skills !== undefined;
+	const extensionsDeclared = definition.extensions !== undefined;
+
+	// A declared kind expands its references; an undeclared kind carries the
+	// full referenceable discovery result as overlay/status vocabulary.
+	let selectedSkills = skillsDeclared
+		? expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
+				onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
+			})
+		: [...skills];
 
 	// Extension references resolve directly against discovered extensions.
-	const selection = await extensions.select(definition.extensions ?? []);
-	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
-	let planExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }> = selection.entries.map(
-		(entry) => ({
+	let planExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
+	if (extensionsDeclared) {
+		const selection = await extensions.select(definition.extensions ?? []);
+		for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
+		planExtensions = selection.entries.map((entry) => ({
 			id: entry.id,
 			entry: entry.entry,
 			...(entry.origin ? { origin: entry.origin } : {}),
-		}),
-	);
+		}));
+	} else {
+		planExtensions = extensions.list().map((entry) => ({
+			id: entry.id,
+			entry: entry.entry,
+			...(entry.origin ? { origin: entry.origin } : {}),
+		}));
+	}
 
 	let mcps: string[] | undefined;
 	if (definition.mcps !== undefined) {
@@ -311,6 +351,12 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	}
 
 	// --- overlay narrowing (ticket 06) ---
+	// An undeclared kind's overlay base is its native referenceable discovery
+	// result; the concrete removed entries are carried separately so the
+	// generator can emit native-base force-exclusions without converting the
+	// kind into an allowlist.
+	let disabledSkills: SkillEntry[] | undefined;
+	let disabledExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }> | undefined;
 	if (overlay !== undefined) {
 		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
 			const disabled = expandDisableEntries(
@@ -320,7 +366,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				profile.name,
 				(entry) => unmatched.push(`overlay skill:${entry}`),
 			);
+			const removed = selectedSkills.filter((skill) => disabled.has(skill.name));
 			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
+			if (!skillsDeclared && removed.length > 0) disabledSkills = removed;
 		}
 		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
 			const disabled = expandDisableEntries(
@@ -330,7 +378,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				profile.name,
 				(entry) => unmatched.push(`overlay extension:${entry}`),
 			);
+			const removed = planExtensions.filter((entry) => disabled.has(entry.id));
 			planExtensions = planExtensions.filter((entry) => !disabled.has(entry.id));
+			if (!extensionsDeclared && removed.length > 0) disabledExtensions = removed;
 		}
 		if (overlay.disabledMcps !== undefined && overlay.disabledMcps.length > 0) {
 			const active = mcps ?? [];
@@ -465,10 +515,14 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		filter: "selection",
 		skills: selectedSkills,
 		extensions: planExtensions.map((entry) => ({ id: entry.id, entry: entry.entry })),
+		resourceSelection: { skills: skillsDeclared, extensions: extensionsDeclared },
+		...(disabledSkills !== undefined ? { disabledSkills } : {}),
+		...(disabledExtensions !== undefined ? { disabledExtensions } : {}),
 		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
 		...(disabledTools !== undefined ? { disabledTools } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
+		...(definition.subagents !== undefined ? { subagents: definition.subagents } : {}),
 		...(mcps !== undefined ? { mcps } : {}),
 		...(mcpTools !== undefined ? { mcpTools } : {}),
 		...(instanceMcpConfig !== undefined ? { instanceMcpConfig } : {}),

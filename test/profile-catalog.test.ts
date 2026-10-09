@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CatalogError, ProfileCatalog } from "../src/profile-catalog.ts";
+import { CatalogError, parseProfileDefinition, ProfileCatalog } from "../src/profile-catalog.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -145,6 +145,31 @@ describe("ProfileCatalog (global catalog)", () => {
 		await expect(errorPromise).rejects.toThrow(new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 		await expect(errorPromise).rejects.toThrow(/review/);
 		await expect(errorPromise).rejects.toThrow(/skills/);
+	});
+
+	it("normalizes, preserves, and round-trips supported subagent declarations", async () => {
+		const declaration = { defaultModel: " inherit ", agentOverrides: { reviewer: { thinking: "high", advertise: false } } };
+		await writeGlobalProfile("review", { subagents: declaration, unlisted: "ignored" });
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
+		const parsed = catalog.resolve("review")!.definition;
+		expect(parsed.subagents).toEqual({ defaultModel: "inherit", agentOverrides: { reviewer: { thinking: "high", advertise: false } } });
+		expect(JSON.parse(JSON.stringify(parsed))).toEqual({ subagents: parsed.subagents });
+		expect(parseProfileDefinition("review", { subagents: {} }).subagents).toBeUndefined();
+	});
+
+	it("project profile replacement does not inherit global subagent declarations", async () => {
+		await writeGlobalProfile("review", { subagents: { defaultModel: "model" } });
+		await writeProjectProfile("review", { label: "Project" });
+		const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+		expect(catalog.resolve("review")?.source).toBe("project");
+		expect(catalog.resolve("review")?.definition.subagents).toBeUndefined();
+	});
+
+	it("reports subagent file, profile, nested path, and remedy for invalid declarations", async () => {
+		const filePath = await writeGlobalProfile("review", { subagents: { agentOverrides: { reviewer: { advertise: "yes" } } } });
+		const error = ProfileCatalog.load(fixture.agentDir);
+		await expect(error).rejects.toThrow(filePath);
+		await expect(error).rejects.toThrow(/review.*subagents\.agentOverrides\.reviewer\.advertise.*boolean/);
 	});
 
 	it("defaults optional fields to absent rather than empty", async () => {

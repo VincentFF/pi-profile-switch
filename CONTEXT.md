@@ -4,7 +4,7 @@
 
 | Term | Meaning | Avoid |
 | --- | --- | --- |
-| **Profile** | A named capability definition: references skills, extensions, MCP servers, and tools; optionally declares model, thinking level, and instructions. | preset, config, bundle, capability |
+| **Profile** | A named capability definition: references skills, extensions, MCP servers, and tools; optionally declares model, thinking level, instructions, and native child-role settings. | preset, config, bundle, capability |
 | **default profile** | The built-in profile: not deletable, absent from catalog files; loads every resource Pi can discover. | built-in |
 | **Catalog** | The `profiles/` directory holding profile definitions: one global, one per project, one `<name>.json` file per profile. | — |
 | **Source scope** | Where a profile comes from: `builtin`, `global`, or `project`. Determines which scope its runtime state and edits are written to. | — |

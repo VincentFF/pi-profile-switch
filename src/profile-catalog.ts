@@ -23,6 +23,7 @@ import path from "node:path";
 
 import { getGlobalProfilesDir } from "./workspace.ts";
 import { isRecord, readJsonFile } from "./json-file.ts";
+import { parseSubagentSettings, SubagentSettingsError, type ProfileSubagentSettings } from "./subagent-settings.ts";
 
 export const DEFAULT_PROFILE_NAME = "default";
 export const PROFILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -50,6 +51,7 @@ export interface ProfileDefinition {
 	defaultModel?: string;
 	defaultThinkingLevel?: string;
 	instructions?: string;
+	subagents?: ProfileSubagentSettings;
 }
 
 /** Where a profile's definition came from. */
@@ -160,6 +162,13 @@ export function parseProfileDefinition(name: string, raw: unknown, filePath?: st
 	if (defaultThinkingLevel !== undefined) definition.defaultThinkingLevel = defaultThinkingLevel;
 	const instructions = readOptionalString(raw.instructions, "instructions", name, filePath);
 	if (instructions !== undefined) definition.instructions = instructions;
+	try {
+		const subagents = parseSubagentSettings(raw.subagents, { profile: name, ...(filePath !== undefined ? { filePath } : {}) });
+		if (subagents !== undefined) definition.subagents = subagents;
+	} catch (error) {
+		if (error instanceof SubagentSettingsError) throw new CatalogError(error.message);
+		throw error;
+	}
 	return definition;
 }
 

@@ -13,6 +13,7 @@ import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-p
 import { OVERLAY_USAGE, applyOverlayMutation, clearOverlay, parseOverlayArgs } from "../../src/switching/overlay.ts";
 import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
+import { observeSubagentExtension } from "../../src/switching/subagent-observation.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 import { getGlobalStateDir, getProfileSwitchDir } from "../../src/workspace.ts";
 
@@ -95,10 +96,38 @@ async function startStartupNotices(surface: NoticeSurface): Promise<void> {
 	}
 }
 
+async function observeRegisteredSubagents(pi: ExtensionAPI): Promise<"detected" | "unconfirmed"> {
+	try {
+		return await observeSubagentExtension([...pi.getAllTools(), ...pi.getCommands()]);
+	} catch {
+		return "unconfirmed";
+	}
+}
+
 function setProfileStatus(ui: unknown, profile: string | undefined): void {
 	if (profile && typeof (ui as { setStatus?: (k: string, v: string) => void })?.setStatus === "function") {
 		(ui as { setStatus: (k: string, v: string) => void }).setStatus("profile", `profile: ${profile}`);
 	}
+}
+
+/** Reports an activation failure through the current UI, falling back to
+ *  stderr when the UI is absent or the command context is already stale.
+ *  Unlike the success channel, a failure must not vanish after the rollback
+ *  reload, so a stale context falls back to stderr instead of being
+ *  swallowed. */
+function reportActivationFailure(
+	ctx: { ui?: { notify?(message: string, level: "error" | "info" | "warning"): void } },
+	message: string,
+): void {
+	try {
+		if (ctx.ui?.notify !== undefined) {
+			ctx.ui.notify(message, "error");
+			return;
+		}
+	} catch {
+		// The command context was invalidated by a reload: fall through to stderr.
+	}
+	process.stderr.write(`pi-profile: ${message}\n`);
 }
 
 export default function piProfileExtension(pi: ExtensionAPI): void {
@@ -122,6 +151,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				getAllTools: () => pi.getAllTools(),
 				setActiveTools: (names) => pi.setActiveTools(names),
 				notify: (message, level) => ctx.ui?.notify(message, level),
+				getCommands: () => pi.getCommands(),
+				observeSubagents: () => observeRegisteredSubagents(pi),
+				notifySubagentWarning: (message) => noticeSurface.display(message, "warning"),
 			},
 		});
 		pendingSummary = result.summary;
@@ -186,6 +218,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					assertStale: () => {
 						void ctx.cwd;
 					},
+					// Deliver the actionable failure cause before the rollback
+					// reload invalidates this context; fall back to stderr otherwise.
+					reportFailure: (message) => reportActivationFailure(ctx, message),
 				};
 				if (subcommand === "use") {
 					const result = await switchProfile(rest[0], deps, { clearOverlay: true });
@@ -241,6 +276,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					);
 					const report = buildStatusReport({
 						plan,
+						...(plan.subagents !== undefined
+							? { subagentObservation: await observeRegisteredSubagents(pi) }
+							: {}),
 						overlay: state.overlay,
 						discoveredMcpServers,
 						disabledMcpServers,

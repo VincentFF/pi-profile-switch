@@ -328,7 +328,78 @@ describe("switchProfile", () => {
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
 			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")}`,
 		]);
+	});
+
+	it("switching and reloading rebuild subagent settings from the current native base", async () => {
+		const nativePath = path.join(fixture.agentDir, "settings.json");
+		const native = {
+			subagents: {
+				defaultModel: "base/model",
+				agentOverrides: { reviewer: { model: "native/model", description: "native description", inheritedContext: true } },
+			},
+		};
+		await writeFile(nativePath, JSON.stringify(native));
+		await writeCatalog({
+			review: { subagents: { agentOverrides: { reviewer: { model: "profile/model", description: "profile description" } } } },
+			plain: {},
+		});
+
+		await switchProfile("review", deps());
+		const overridden = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(overridden.subagents.agentOverrides.reviewer).toEqual({
+			model: "profile/model", description: "profile description", inheritedContext: true,
+		});
+
+		await switchProfile("plain", deps());
+		let restored = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(restored.subagents).toEqual(native.subagents);
+		expect((await readPlanFile()).subagents).toBeUndefined();
+
+		await switchProfile("review", deps());
+		const editedNative = {
+			subagents: {
+				defaultModel: "edited/base",
+				agentOverrides: { reviewer: { model: "native/edited", description: "edited native description", inheritedContext: false } },
+			},
+		};
+		await writeFile(nativePath, JSON.stringify(editedNative));
+		await writeCatalog({ review: { subagents: { agentOverrides: { reviewer: { model: "profile/model" } } } } });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+
+		restored = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(restored.subagents).toEqual({
+			defaultModel: "edited/base",
+			agentOverrides: { reviewer: { model: "profile/model", description: "edited native description", inheritedContext: false } },
+		});
+		expect((await readPlanFile()).subagents).toEqual({ agentOverrides: { reviewer: { model: "profile/model" } } });
+	});
+
+	it("restores exact subagent settings and declaration on failed reload", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ subagents: { defaultModel: "native", agentOverrides: { reviewer: { model: "native/model", description: "native" } } } }),
+		);
+		await writeCatalog({
+			review: { subagents: { agentOverrides: { reviewer: { model: "profile/model", description: "profile" } } } },
+			plain: {},
+		});
+		await switchProfile("review", deps());
+		const previousSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const previousPlan = await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8");
+		let reloads = 0;
+
+		await expect(switchProfile("plain", deps({
+			reload: async () => {
+				reloads += 1;
+				if (reloads === 1) throw new Error("reload failed");
+			},
+		}))).rejects.toThrow(/restored the previous settings/);
+
+		expect(reloads).toBe(2);
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(previousSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(previousPlan);
 	});
 
 	it("profile switch changes per-server MCP tool policy", async () => {
@@ -455,5 +526,240 @@ describe("switchProfile", () => {
 
 		expect(await readFile(path.join(runtimeDir, "mcp.json"), "utf8")).toBe(initialMcp);
 		expect(await readPlanFile()).toEqual(initialPlan);
+	});
+});
+
+describe("sparse resource selection across activation (fix-undeclared-resource-filtering)", () => {
+	it("switching to a profile omitting a kind removes the previous restriction for that kind", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await addGlobalExtension(fixture, "ext-a");
+		await addGlobalExtension(fixture, "ext-b");
+		await writeCatalog({
+			declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+			open: {},
+		});
+
+		await switchProfile("declared", deps());
+		let settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
+			`-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md")}`,
+		]);
+		expect(settings.extensions).toEqual([path.join(fixture.agentDir, "extensions", "ext-a.ts")]);
+
+		await switchProfile("open", deps());
+		settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		// Both restrictions are gone: skills and extensions return to native
+		// visibility (no selection keys); the omitted extension kind is exposed
+		// through the conditional managed link to the real discovery directory.
+		expect(settings.skills).toBeUndefined();
+		expect(settings.extensions).toBeUndefined();
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
+		const plan = await readPlanFile();
+		const resolved = plan.resolved as { skills: Array<{ name: string }> };
+		expect(resolved.skills.map((skill) => skill.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
+	});
+
+	it("reloading after deleting a resource field restores native visibility for that kind only", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await writeCatalog({ impl: { skills: ["beta-skill"] } });
+		await switchProfile("impl", deps());
+		let settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
+			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+			`-${path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")}`,
+		]);
+
+		await writeCatalog({ impl: {} });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toBeUndefined();
+	});
+
+	it("reloading an omitted kind reflects edits to the current real user settings", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ open: {} });
+		await switchProfile("open", deps());
+
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ skills: ["-skills/alpha-skill/SKILL.md"] }),
+		);
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.skills).toEqual(["-skills/alpha-skill/SKILL.md"]);
+	});
+
+	it("a failed transition restores the exact prior runtime content and resource policy", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await addGlobalSkill(fixture, "beta-skill");
+		await writeCatalog({
+			declared: { skills: ["alpha-skill"] },
+			open: {},
+		});
+		await switchProfile("declared", deps());
+		const previousSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const previousPlan = await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8");
+
+		let reloads = 0;
+		const reload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("reload failed");
+		};
+		await expect(switchProfile("open", deps({ reload }))).rejects.toThrow(/restored the previous settings/);
+
+		expect(reloads).toBe(2);
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(previousSettings);
+		expect(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8")).toBe(previousPlan);
+	});
+
+	it("restores the extension-link representation in both transition directions on failure", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+		// Declared -> omitted failure: prior absence is restored.
+		await switchProfile("declared", deps());
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		let reloads = 0;
+		const failFirstReload = async () => {
+			reloads += 1;
+			if (reloads === 1) throw new Error("reload failed");
+		};
+		await expect(switchProfile("open", deps({ reload: failFirstReload }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		// Omitted -> declared failure: the prior link is restored.
+		await switchProfile("open", deps());
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
+
+		reloads = 0;
+		await expect(switchProfile("declared", deps({ reload: failFirstReload }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+		expect(await readlink(path.join(runtimeDir, "extensions"))).toBe(path.join(fixture.agentDir, "extensions"));
+		// The real extension source is never touched by the rollback.
+		expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+	});
+
+	it("fails actionably without deleting real content at the instance extension path", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+		// A real directory occupies the managed path instead of the generated link.
+		await mkdir(path.join(runtimeDir, "extensions"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "real.ts"), "real bytes");
+
+		await expect(switchProfile("open", deps())).rejects.toThrow(
+			/real directory.*will not delete or overwrite/,
+		);
+
+		// The content is never deleted or replaced by the generated link.
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isDirectory()).toBe(true);
+		expect(await readFile(path.join(runtimeDir, "extensions", "real.ts"), "utf8")).toBe("real bytes");
+	});
+
+	it("transitions the extension-link representation on reload after adding or deleting the field", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+
+		await switchProfile("open", deps());
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+
+		await writeCatalog({ open: { extensions: ["ext-a"] } });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		await expect(lstat(path.join(runtimeDir, "extensions"))).rejects.toMatchObject({ code: "ENOENT" });
+
+		await writeCatalog({ open: {} });
+		await switchProfile(undefined, deps(), { reloadCurrent: true });
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isSymbolicLink()).toBe(true);
+	});
+});
+
+describe("activation failure reporting (fix-undeclared-resource-filtering)", () => {
+	it("delivers the actionable cause before the rollback reload and survives a throwing reporter", async () => {
+		await addGlobalSkill(fixture, "alpha-skill");
+		await writeCatalog({ impl: { skills: ["alpha-skill"] } });
+		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
+		const events: string[] = [];
+		const reload = async () => {
+			events.push("reload");
+		};
+		const reportFailure = (message: string) => {
+			events.push(`report:${message}`);
+			throw new Error("reporter exploded");
+		};
+
+		fsFailure.failNextPlanWrite = true;
+		await expect(switchProfile("impl", deps({ reload, reportFailure }))).rejects.toThrow(
+			/restored the previous settings/,
+		);
+
+		const reported = events.filter((event) => event.startsWith("report:"));
+		expect(reported).toHaveLength(1);
+		expect(reported[0]).toContain('activation of profile "impl" failed');
+		expect(reported[0]).toContain("injected write failure");
+		// Reported before the rollback reload, which still ran despite the throw,
+		// and the reporter failure did not block restoration.
+		expect(events.indexOf(reported[0]!)).toBeLessThan(events.indexOf("reload"));
+		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
+	});
+
+	it("reports the unsafe extension-path refusal cause with its path and fix", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+		await mkdir(path.join(runtimeDir, "extensions"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "real.ts"), "real bytes");
+		const reported: string[] = [];
+
+		await expect(
+			switchProfile("open", deps({ reportFailure: (message) => reported.push(message) })),
+		).rejects.toThrow(/real directory.*will not delete or overwrite/);
+
+		expect(reported).toHaveLength(1);
+		expect(reported[0]).toContain(path.join(runtimeDir, "extensions"));
+		expect(reported[0]).toContain("will not delete or overwrite");
+	});
+});
+
+describe("generated extension mirror on the ordinary default profile (fix-undeclared-resource-filtering)", () => {
+	it("removes the generated mirror when switching from an omitted selection to default", async () => {
+		await addGlobalExtension(fixture, "ext-a");
+		await writeCatalog({ open: {} });
+
+		await switchProfile("open", deps());
+		const link = path.join(runtimeDir, "extensions");
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
+
+		await switchProfile("default", deps());
+
+		// The per-session generated mirror is gone; the real source is untouched.
+		await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+
+		// The default additive baseline is retained (filter:none representation).
+		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
+		expect(settings.extensions).toContain(path.join(fixture.agentDir, "extensions"));
+		expect(settings.defaultProjectTrust).toBeUndefined();
+	});
+
+	it("leaves foreign real content at the instance extension path untouched for default", async () => {
+		await writeCatalog({ open: {}, plain: {} });
+		// A foreign real directory Pi or a user created at the managed path.
+		await mkdir(path.join(runtimeDir, "extensions", "foreign"), { recursive: true });
+		await writeFile(path.join(runtimeDir, "extensions", "foreign", "keep.ts"), "keep");
+
+		await switchProfile("default", deps());
+
+		expect((await lstat(path.join(runtimeDir, "extensions"))).isDirectory()).toBe(true);
+		expect(await readFile(path.join(runtimeDir, "extensions", "foreign", "keep.ts"), "utf8")).toBe("keep");
 	});
 });

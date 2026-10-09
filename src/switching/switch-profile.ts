@@ -69,6 +69,11 @@ export interface SwitchDeps {
 	 *  skipped reload would be misreported as a successful switch. Optional
 	 *  for tests; always provided by the extension. */
 	assertStale?(): void;
+	/** Reports the actionable rollback cause before the rollback reload. The
+	 *  caller owns presentation; a reporter failure must not interrupt
+	 *  restoration or reload. Optional — without it the caller only sees the
+	 *  rejected `SwitchError`. */
+	reportFailure?(message: string): void;
 }
 
 export interface SwitchResult {
@@ -83,7 +88,10 @@ export interface SwitchResult {
 type FileSnapshot =
 	| { kind: "absent" }
 	| { kind: "symlink"; target: string }
-	| { kind: "file"; content: string; mode: number };
+	| { kind: "file"; content: string; mode: number }
+	/** Unsafe non-symlink content (a real file or directory) that must never be
+	 *  deleted or rewritten on restore. */
+	| { kind: "opaque" };
 
 interface RuntimeSnapshot {
 	settings: FileSnapshot;
@@ -91,6 +99,8 @@ interface RuntimeSnapshot {
 	mcp: FileSnapshot;
 	appendSystem: FileSnapshot;
 	trust: FileSnapshot;
+	/** The conditional managed extension link: absent or its raw symlink target. */
+	extensions: FileSnapshot;
 }
 
 /** Snapshots one managed runtime file. lstat (never stat) detects symlinks
@@ -112,6 +122,21 @@ async function snapshotFile(filePath: string): Promise<FileSnapshot> {
 	return { kind: "file", content: await readFile(filePath, "utf8"), mode: info.mode & 0o777 };
 }
 
+/** Snapshots the managed extension path as absence or a raw symlink target.
+ *  Real non-symlink content (a file or directory) at that path is unsafe and is
+ *  recorded as opaque: restore must never delete or rewrite it, and activation
+ *  refuses to replace it with the generated link. Reading it as a file would
+ *  surface an obscure EISDIR for directories. */
+async function snapshotExtensionPath(filePath: string): Promise<FileSnapshot> {
+	const info = await lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return null;
+		throw error;
+	});
+	if (info === null) return { kind: "absent" };
+	if (info.isSymbolicLink()) return { kind: "symlink", target: await readlink(filePath) };
+	return { kind: "opaque" };
+}
+
 async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot> {
 	return {
 		settings: await snapshotFile(path.join(runtimeDir, "settings.json")),
@@ -119,10 +144,13 @@ async function snapshotRuntimeFiles(runtimeDir: string): Promise<RuntimeSnapshot
 		mcp: await snapshotFile(path.join(runtimeDir, "mcp.json")),
 		appendSystem: await snapshotFile(path.join(runtimeDir, "APPEND_SYSTEM.md")),
 		trust: await snapshotFile(path.join(runtimeDir, "trust.json")),
+		extensions: await snapshotExtensionPath(path.join(runtimeDir, "extensions")),
 	};
 }
 
 async function restoreFile(filePath: string, snapshot: FileSnapshot): Promise<void> {
+	// Opaque (real, unsafe) content is never deleted or rewritten on restore.
+	if (snapshot.kind === "opaque") return;
 	// rm first, always: restoring a snapshotted FILE must never writeFile
 	// through a symlink the failed switch left on disk — that would write
 	// THROUGH to the link target (the user's real ~/.pi/agent/mcp.json)
@@ -142,6 +170,9 @@ async function restoreRuntimeFiles(runtimeDir: string, snapshot: RuntimeSnapshot
 	await restoreFile(path.join(runtimeDir, "mcp.json"), snapshot.mcp);
 	await restoreFile(path.join(runtimeDir, "APPEND_SYSTEM.md"), snapshot.appendSystem);
 	await restoreFile(path.join(runtimeDir, "trust.json"), snapshot.trust);
+	// Restore the extension-path representation (absence or raw link target)
+	// before the rollback reload; the real resource directory is never touched.
+	await restoreFile(path.join(runtimeDir, "extensions"), snapshot.extensions);
 }
 
 /** Waits are delegated to Pi's native `ctx.waitForIdle()` (see SwitchDeps);
@@ -207,6 +238,15 @@ export async function switchProfile(
 	const warnings = [...resolved.warnings];
 
 	const rollback = async (cause: string): Promise<never> => {
+		const message = `activation of profile "${target}" failed; restored the previous settings. Cause: ${cause}`;
+		// Report the actionable cause before the rollback reload invalidates the
+		// caller's command context; a reporter failure must never prevent
+		// restoration or reload.
+		try {
+			deps.reportFailure?.(message);
+		} catch {
+			// Presentation must not block rollback.
+		}
 		// Restore the verified snapshot and reload again — the runtime must
 		// never sit half-switched. State files were not written yet (the
 		// post-reload extension instance owns them), so nothing else moved.
@@ -216,9 +256,7 @@ export async function switchProfile(
 		} catch {
 			// The restore reload failing too is reported through the original error.
 		}
-		throw new SwitchError(
-			`activation of profile "${target}" failed; restored the previous settings. Cause: ${cause}`,
-		);
+		throw new SwitchError(message);
 	};
 
 	// The write-and-reload interval is one rollback boundary: a failure in any

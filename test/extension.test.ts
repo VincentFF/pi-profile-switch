@@ -78,6 +78,10 @@ function fakeCtx(options?: {
 	selectAnswers?: string[];
 	inputAnswers?: Array<string | undefined>;
 	confirmAnswers?: boolean[];
+	/** Model Pi's post-reload context invalidation for `ui` access. */
+	staleUi?: boolean;
+	/** No UI surface at all (non-interactive modes). */
+	uiAbsent?: boolean;
 }) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const selectCalls: Array<{ title: string; options: string[] }> = [];
@@ -88,6 +92,17 @@ function fakeCtx(options?: {
 	// context — property access afterwards throws (the switch's staleness
 	// probe reads ctx.cwd).
 	let stale = false;
+	const uiSurface = {
+		notify(message: string, level: string) {
+			notifications.push({ message, level });
+		},
+		select: async (title: string, selectOptions: string[]) => {
+			selectCalls.push({ title, options: selectOptions });
+			return selectAnswers.length > 0 ? selectAnswers.shift() : options?.selectAnswer;
+		},
+		input: async () => inputAnswers.shift(),
+		confirm: async () => confirmAnswers.shift() ?? true,
+	};
 	return {
 		notifications,
 		selectCalls,
@@ -102,16 +117,10 @@ function fakeCtx(options?: {
 		reload: async () => {
 			stale = true;
 		},
-		ui: {
-			notify(message: string, level: string) {
-				notifications.push({ message, level });
-			},
-			select: async (title: string, selectOptions: string[]) => {
-				selectCalls.push({ title, options: selectOptions });
-				return selectAnswers.length > 0 ? selectAnswers.shift() : options?.selectAnswer;
-			},
-			input: async () => inputAnswers.shift(),
-			confirm: async () => confirmAnswers.shift() ?? true,
+		get ui(): typeof uiSurface | undefined {
+			if (options?.uiAbsent) return undefined;
+			if (options?.staleUi && stale) throw new Error("context invalidated by reload");
+			return uiSurface;
 		},
 	};
 }
@@ -450,6 +459,51 @@ describe("pi-profile extension", () => {
 		expect(overlay === undefined || Object.keys(overlay).length === 0).toBe(true);
 	});
 
+	it("delivers an actionable activation failure before the rollback reload invalidates the context", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ open: {} });
+		// Real content at the managed extension path blocks the transition.
+		await mkdir(path.join(root, "extensions"), { recursive: true });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ staleUi: true });
+
+		await pi.commands.get("profile")?.handler("use open" as never, ctx as never);
+
+		const failure = ctx.notifications.find(
+			(entry) => entry.level === "error" && entry.message.includes('activation of profile "open" failed'),
+		);
+		expect(failure?.message).toContain(path.join(root, "extensions"));
+		expect(failure?.message).toContain("will not delete or overwrite");
+		// No false activation reporting on failure.
+		expect(ctx.notifications.some((entry) => entry.message.includes("profile active"))).toBe(false);
+	});
+
+	it("falls back to stderr when no UI is available for an activation failure", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ open: {} });
+		await mkdir(path.join(root, "extensions"), { recursive: true });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx({ uiAbsent: true });
+
+		const chunks: string[] = [];
+		const realWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = ((chunk: unknown) => {
+			chunks.push(String(chunk));
+			return true;
+		}) as typeof process.stderr.write;
+		try {
+			await pi.commands.get("profile")?.handler("use open" as never, ctx as never);
+		} finally {
+			process.stderr.write = realWrite;
+		}
+
+		const text = chunks.join("");
+		expect(text).toContain('activation of profile "open" failed');
+		expect(text).toContain("will not delete or overwrite");
+	});
+
 	describe("observability surface (ticket 07)", () => {
 		it("/profile status sends the resolved plan report", async () => {
 			await writeLaunchPlan({
@@ -468,6 +522,53 @@ describe("pi-profile extension", () => {
 			expect(content).toContain("profile: review (global)");
 			expect(content).toContain("code-review → /x/SKILL.md");
 			expect(content).toContain("mcp: enabled=[github]");
+		});
+
+		it("reports declared subagent inputs separately from live extension ownership", async () => {
+			await writeLaunchPlan({
+				profile: "review",
+				source: "global",
+				agentDir: root,
+				resolved: { skills: [], extensions: [] },
+				subagents: { defaultModel: "provider/model", agentOverrides: { reviewer: { description: "Review code" } } },
+			});
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("status" as never, fakeCtx() as never);
+
+			const message = pi.sentMessages[0];
+			const report = (message?.details as { report: { subagents?: unknown } }).report;
+			expect(report.subagents).toEqual({
+				declared: { defaultModel: "provider/model", agentOverrides: { reviewer: { description: "Review code" } } },
+				extension: "unconfirmed",
+			});
+			expect(String(message?.content)).toContain("not effective runtime mappings");
+			expect(String(message?.content)).toContain("/subagents-models");
+		});
+
+		it("warns through the mode-safe notice surface only when declarations exist", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global", subagents: { defaultModel: "provider/model" } });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(ctx.notifications.filter((entry) => entry.level === "warning" && entry.message.includes("pi-subagents"))).toHaveLength(1);
+			expect(ctx.notifications.find((entry) => entry.message.includes("pi-subagents"))?.message).toContain("/subagents-models");
+			expect(pi.activeTools).toEqual([]);
+		});
+
+		it("does not add subagent warning on session start without a declaration", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global" });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, mode: "tui" });
+
+			await fireSessionStart(pi, "startup", ctx);
+
+			expect(ctx.notifications.some((entry) => entry.message.includes("pi-subagents registration"))).toBe(false);
 		});
 
 		it("bare /profile falls back to the list without dialog-capable UI", async () => {

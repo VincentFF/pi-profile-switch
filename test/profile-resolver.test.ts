@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ResolvedProfile } from "../src/profile-catalog.ts";
 import { ActivationError, resolveProfile } from "../src/profile-resolver.ts";
@@ -44,6 +44,18 @@ async function extensionsWith(names: string[] = []): Promise<DiscoveredExtension
 }
 
 describe("resolveProfile", () => {
+	it("carries child settings verbatim without parent-model validation or resource selection", async () => {
+		const validateModel = vi.fn(async () => undefined);
+		const subagents = { defaultModel: "provider/model:high", agentOverrides: { unknownRole: { model: "inherit" } } };
+		const plan = await resolveProfile({
+			profile: profile("review", { subagents }), skills: [], extensions: await extensionsWith(), validateModel,
+		});
+		expect(plan.subagents).toEqual(subagents);
+		expect(plan.extensions).toEqual([]);
+		expect(plan.tools).toBeUndefined();
+		expect(validateModel).not.toHaveBeenCalled();
+	});
+
 	it("expands literal and glob skill references against the registry, deduped", async () => {
 		const skills = [skill("code-review"), skill("git-commit"), skill("research-web"), skill("research-docs")];
 
@@ -692,6 +704,141 @@ describe("overlay application (ticket 06)", () => {
 				overlay: { disabledMcps: ["ghost-server"] },
 			}),
 		).rejects.toThrow(/overlay disables unknown MCP server "ghost-server"/);
+	});
+});
+
+describe("sparse skill and extension selection (fix-undeclared-resource-filtering)", () => {
+	it("an omitted skills field keeps the full discovery result as its overlay vocabulary", async () => {
+		const skills = [skill("alpha-skill"), skill("beta-skill")];
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter"] }),
+			skills,
+			extensions: await extensionsWith(["linter"]),
+		});
+
+		expect(plan.resourceSelection).toEqual({ skills: false, extensions: true });
+		expect(plan.skills.map((entry) => entry.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+	});
+
+	it("an omitted extensions field keeps the full discovery result as its overlay vocabulary", async () => {
+		const extensions = await extensionsWith(["linter", "helper"]);
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["alpha-skill"] }),
+			skills: [skill("alpha-skill"), skill("beta-skill")],
+			extensions,
+		});
+
+		expect(plan.resourceSelection).toEqual({ skills: true, extensions: false });
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["helper", "linter"]);
+	});
+
+	it("an explicit empty selection stays restrictive and is distinguishable from omission", async () => {
+		const extensions = await extensionsWith(["linter"]);
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: [], extensions: [] }),
+			skills: [skill("alpha-skill")],
+			extensions,
+		});
+
+		expect(plan.resourceSelection).toEqual({ skills: true, extensions: true });
+		expect(plan.skills).toEqual([]);
+		expect(plan.extensions).toEqual([]);
+	});
+
+	it("a declared skill list narrows skills only and leaves extensions at native visibility", async () => {
+		const extensions = await extensionsWith(["linter", "helper"]);
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["alpha-skill"] }),
+			skills: [skill("alpha-skill"), skill("beta-skill")],
+			extensions,
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["helper", "linter"]);
+	});
+
+	it("a declared extension list narrows extensions only and leaves skills at native visibility", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter"] }),
+			skills: [skill("alpha-skill"), skill("beta-skill")],
+			extensions: await extensionsWith(["linter", "helper"]),
+		});
+
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect(plan.skills.map((entry) => entry.name).sort()).toEqual(["alpha-skill", "beta-skill"]);
+	});
+
+	it("declared references still fail on an unmatched literal and warn on a zero-match glob", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { skills: ["ghost-skill"] }),
+				skills: [skill("alpha-skill")],
+				extensions: await extensionsWith(),
+			}),
+		).rejects.toThrow(/ghost-skill/);
+
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["future-*"] }),
+			skills: [skill("alpha-skill")],
+			extensions: await extensionsWith(),
+		});
+		expect(plan.skills).toEqual([]);
+		expect(plan.unmatched).toEqual(["skill:future-*"]);
+	});
+
+	it("records the concrete exclusions when an overlay narrows an omitted skill kind", async () => {
+		const skills = [skill("alpha-skill"), skill("beta-skill")];
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter"] }),
+			skills,
+			extensions: await extensionsWith(["linter"]),
+			overlay: { disabledSkills: ["beta-skill"] },
+		});
+
+		expect(plan.resourceSelection.skills).toBe(false);
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect((plan.disabledSkills ?? []).map((entry) => entry.name)).toEqual(["beta-skill"]);
+		expect(plan.disabledExtensions).toBeUndefined();
+	});
+
+	it("records the concrete exclusions when an overlay narrows an omitted extension kind", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["alpha-skill"] }),
+			skills: [skill("alpha-skill")],
+			extensions: await extensionsWith(["linter", "helper"]),
+			overlay: { disabledExtensions: ["helper"] },
+		});
+
+		expect(plan.resourceSelection.extensions).toBe(false);
+		expect(plan.extensions.map((entry) => entry.id)).toEqual(["linter"]);
+		expect((plan.disabledExtensions ?? []).map((entry) => entry.id)).toEqual(["helper"]);
+		expect(plan.disabledSkills).toBeUndefined();
+	});
+
+	it("re-expands a native-base overlay glob against the omitted kind on every resolution", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter"] }),
+			skills: [skill("git-commit"), skill("git-rebase"), skill("alpha-skill")],
+			extensions: await extensionsWith(["linter"]),
+			overlay: { disabledSkills: ["git-*"] },
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect((plan.disabledSkills ?? []).map((entry) => entry.name).sort()).toEqual(["git-commit", "git-rebase"]);
+	});
+
+	it("a declared kind keeps overlay exclusions in the selection and records none separately", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["alpha-skill", "beta-skill"] }),
+			skills: [skill("alpha-skill"), skill("beta-skill")],
+			extensions: await extensionsWith(),
+			overlay: { disabledSkills: ["beta-skill"] },
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["alpha-skill"]);
+		expect(plan.disabledSkills).toBeUndefined();
 	});
 });
 

@@ -148,6 +148,45 @@ describe("buildStatusReport", () => {
 		expect(report.conflicts.map((conflict) => conflict.winnerPath)).toEqual(["not loaded", "not loaded"]);
 	});
 
+	it("reports subagent overrides as declared inputs and defaults missing observation to unconfirmed", () => {
+		const declaration = { defaultModel: "provider/model", agentOverrides: { reviewer: { description: "Review code" } } };
+		const report = buildStatusReport({
+			plan: { ...basePlan, subagents: declaration },
+			discoveredMcpServers: [],
+			...emptyRuntime,
+		});
+
+		expect(report.subagents).toEqual({ declared: declaration, extension: "unconfirmed" });
+		const markdown = formatStatusMarkdown(report);
+		expect(markdown).toContain("profile-declared overrides");
+		expect(markdown).toContain("not effective runtime mappings");
+		expect(markdown).toContain("/subagents-models");
+		expect(markdown).toContain("Review code");
+	});
+
+	it("includes native ownership observation only with a declaration", () => {
+		const withDeclaration = buildStatusReport({
+			plan: { ...basePlan, subagents: { defaultModel: "provider/model" } },
+			subagentObservation: "detected",
+			discoveredMcpServers: [],
+			...emptyRuntime,
+		});
+		const withoutDeclaration = buildStatusReport({
+			plan: basePlan,
+			subagentObservation: "detected",
+			discoveredMcpServers: [],
+			...emptyRuntime,
+		});
+
+		expect(withDeclaration.subagents?.extension).toBe("detected");
+		expect(Object.hasOwn(withoutDeclaration, "subagents")).toBe(false);
+	});
+
+	it("keeps the structured report shape unchanged without subagent declarations", () => {
+		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], ...emptyRuntime });
+		expect(Object.hasOwn(report, "subagents")).toBe(false);
+	});
+
 	it("keeps project-owned, non-disabled servers enabled when mcps is defined", () => {
 		const report = buildStatusReport({
 			plan: { ...basePlan, mcps: ["github"] },

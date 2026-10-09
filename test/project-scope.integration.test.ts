@@ -145,6 +145,7 @@ describe("launcher integration: project scope and trust", () => {
 			// resource, filtered like any other).
 			expect(generated.skills).toEqual([
 				`-${path.join(runtimeDir, "skills", "profile-config", "SKILL.md")}`,
+				`-${path.join(fixture.agentDir, "skills", "profile-config", "SKILL.md")}`,
 			]);
 			// Pi reads its project-scope decision from the linked store.
 			expect(await readlink(path.join(runtimeDir, "trust.json"))).toBe(

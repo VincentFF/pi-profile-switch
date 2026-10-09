@@ -8,7 +8,7 @@ Pi discovers resources globally: whichever skills, extensions, MCP servers, and 
 - Dangerous capabilities stay resident. File writes, command execution, and write access to external systems remain in the tool list once installed.
 - Boundaries can only exist in prompts. Switching between "read-only review" and "full implementation" means switching the capability set itself — a prompt cannot constrain whether a tool exists.
 
-Profiles turn resource selection into an explicit, switchable object, optionally accompanied by a declared model, thinking level, and extra system-prompt instructions. A profile does not copy resources: a `SKILL.md`, extension, or MCP server has exactly one implementation, referenced by any number of profiles.
+Profiles turn resource selection into an explicit, switchable object, optionally accompanied by a declared model, thinking level, extra system-prompt instructions, and native child-role settings. Child-role declarations are an opt-in profile behavior, described by the [profile-catalog contract](../openspec/specs/profile-catalog/spec.md). A profile does not copy resources: a `SKILL.md`, extension, or MCP server has exactly one implementation, referenced by any number of profiles.
 
 ```text
 SkillRegistry
@@ -69,7 +69,7 @@ Rationale: Pi itself is minimal, and the profile layer should not become a new l
 
 ## Success criteria
 
-1. When launched with a given profile, the first agent turn sees only the user-level resources selected by that profile, plus the project-level resources admitted by the trust determination; all other user-level resources are invisible.
+1. A launched profile's user-level resource visibility follows the [sparse skill and extension selection contract](../openspec/specs/resource-reference/spec.md): a declared kind is a selection, an omitted kind keeps Pi's native visibility. Project-level visibility follows the trust determination, per the [project boundary](../openspec/specs/resource-reference/spec.md#requirement-narrowing-boundary-of-project-level-resources).
 2. Switching profiles does not restart the Pi process; the current session's sessionId and history remain unchanged.
 3. After modifying a skill or extension referenced by multiple profiles, those profiles pick up the new content on the next launch or reload without touching any profile definition.
 4. When a profile declares no model, thinking level, or instructions, Pi's model, thinking level, and system prompt after activation match a native launch.

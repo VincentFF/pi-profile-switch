@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -99,6 +99,21 @@ describe("sweepStaleInstances", () => {
 		expect(existsSync(stale)).toBe(false);
 		expect(result.warnings).toEqual([]);
 		expect(result.notices).toEqual([]);
+	});
+
+	it("reclaims an instance whose extensions entry is a symlink without touching its target", async () => {
+		const dir = await makeInstanceDir("launch-extlink", { pid: await deadPid() });
+		await mkdir(path.join(fixture.agentDir, "extensions"), { recursive: true });
+		const real = path.join(fixture.agentDir, "extensions", "keep.ts");
+		await writeFile(real, "real bytes");
+		await symlink(path.join(fixture.agentDir, "extensions"), path.join(dir, "extensions"), "dir");
+
+		const result = await sweepStaleInstances(fixture.agentDir);
+
+		// The link is unlinked with the instance; the real target is never traversed.
+		expect(existsSync(dir)).toBe(false);
+		expect(await readFile(real, "utf8")).toBe("real bytes");
+		expect(result.warnings).toEqual([]);
 	});
 
 	it("keeps an instance dir whose pid is alive", async () => {

@@ -1,9 +1,9 @@
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LAUNCHER_BIN as BIN, launcherEnv } from "./helpers/launcher-runner.ts";
-import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
+import { LAUNCHER_BIN as BIN, launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
@@ -398,6 +398,356 @@ describe("launcher integration: in-session switching", () => {
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
 				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh" });
 				expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+});
+
+describe("in-session sparse resource selection (fix-undeclared-resource-filtering)", () => {
+	async function extensionCommandNames(rpc: RpcDriver): Promise<string[]> {
+		const response = await rpc.send({ type: "get_commands" });
+		const commands = (response.data?.commands ?? []) as Array<{ name: string; source?: string }>;
+		return commands.filter((command) => command.source === "extension").map((command) => command.name).sort();
+	}
+
+	it(
+		"switching from declared kinds to a profile omitting them restores native visibility without a restart",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({
+				declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+				open: {},
+			});
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsBefore).toEqual(["skill:alpha-skill"]);
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				const after = await getState(rpc);
+				// Session identity and message history are retained, not just the file.
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.sessionFile).toBe(before.sessionFile);
+				expect(after.messageCount).toBe(before.messageCount);
+				const skills = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skills).toContain("skill:alpha-skill");
+				expect(skills).toContain("skill:beta-skill");
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reload after deleting each resource field restores that kind's native visibility",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ impl: { skills: ["beta-skill"], extensions: ["ext-a"] } });
+
+			const rpc = runLauncherRpc(fixture, ["impl", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+
+				await writeCatalog({ impl: {} });
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
+				const skills = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skills).toContain("skill:alpha-skill");
+				expect(skills).toContain("skill:beta-skill");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reload reflects real user settings edits for an omitted kind",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsBefore).toContain("skill:alpha-skill");
+
+				await writeFile(
+					path.join(fixture.agentDir, "settings.json"),
+					JSON.stringify({ skills: ["-skills/alpha-skill/SKILL.md"] }),
+				);
+				const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 60_000);
+				expect(reloaded.success).toBe(true);
+
+				const skillsAfter = (await skillCommands(rpc)).map((command) => command.name);
+				expect(skillsAfter).toContain("skill:beta-skill");
+				expect(skillsAfter).not.toContain("skill:alpha-skill");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"an injected write failure restores the exact prior runtime content and resource visibility",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await addGlobalSkill(fixture, "beta-skill");
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({
+				declared: { skills: ["alpha-skill"], extensions: ["ext-a"] },
+				open: {},
+			});
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const skillsBefore = (await skillCommands(rpc)).map((command) => command.name);
+				const extensionsBefore = await extensionCommandNames(rpc);
+				expect(skillsBefore).toEqual(["skill:alpha-skill"]);
+				expect(extensionsBefore).not.toContain("ext-b");
+
+				const instance = await soleInstanceDir(fixture);
+				const settingsPath = path.join(instance, "settings.json");
+				const planPath = path.join(instance, "pi-profile.json");
+				const settingsBefore = await readFile(settingsPath, "utf8");
+				const planBefore = await readFile(planPath, "utf8");
+
+				// The switch writes settings.json first, then pi-profile.json. A
+				// read-only plan file makes the plan write fail after settings.json
+				// changed, exercising the process-level rollback boundary.
+				await chmod(planPath, 0o444);
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// Exact prior runtime content; the failed target is not active.
+				expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+				expect(await readFile(planPath, "utf8")).toBe(planBefore);
+				expect(JSON.parse(await readFile(planPath, "utf8")).profile).toBe("declared");
+
+				// Actual resource visibility after the real process reload: the
+				// failed target's extra resources are not visible and the declared
+				// restriction still applies.
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(skillsBefore);
+				expect(await extensionCommandNames(rpc)).toEqual(extensionsBefore);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reports an actionable activation failure at the user boundary after an injected write failure",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				// Make the plan write fail after settings.json changed.
+				await chmod(path.join(instance, "pi-profile.json"), 0o444);
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// The cause is delivered to the user (RPC notification) even though the
+				// rollback reload invalidates the old command context.
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("restored the previous settings"),
+					20_000,
+				);
+				const diagnosticJson = JSON.stringify(diagnostic);
+				expect(diagnosticJson).toContain("activation of profile");
+				expect(diagnosticJson).toMatch(/EACCES|permission denied/);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"transitions the extension mirror in both directions with session identity retained",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+
+				// Omitted -> declared: the generated link is removed and only the
+				// declared extension stays visible.
+				const switched = await rpc.send({ type: "prompt", message: "/profile use declared" }, 60_000);
+				expect(switched.success).toBe(true);
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+
+				// Declared -> omitted: the link is restored and native visibility
+				// returns without restarting.
+				const back = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(back.success).toBe(true);
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
+				expect(await extensionCommandNames(rpc)).toContain("ext-b");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"an unsafe real directory at the instance extension path blocks the transition safely",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				// Real content appears at the managed path (created by Pi or a user).
+				await mkdir(link, { recursive: true });
+				await writeFile(path.join(link, "real.ts"), "real bytes");
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use open" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				// The failure reaches the user boundary (RPC notification) before the
+				// rollback reload invalidates the command context.
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("will not delete or overwrite"),
+					20_000,
+				);
+				const diagnosticJson = JSON.stringify(diagnostic);
+				expect(diagnosticJson).toContain("activation of profile");
+				expect(diagnosticJson).toContain("restored the previous settings");
+				// Real content is never deleted; prior representation/visibility/selection intact.
+				expect(await readFile(path.join(link, "real.ts"), "utf8")).toBe("real bytes");
+				expect(JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8")).profile).toBe("declared");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
+				// The failed selection is not persisted.
+				await expect(
+					readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"),
+				).rejects.toThrow();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"removes the generated extension mirror when switching to the ordinary default profile",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await writeCatalog({ open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
+			try {
+				const before = await getState(rpc);
+				const instance = await soleInstanceDir(fixture);
+				const link = path.join(instance, "extensions");
+				expect((await lstat(link)).isSymbolicLink()).toBe(true);
+
+				const switched = await rpc.send({ type: "prompt", message: "/profile use default" }, 60_000);
+				expect(switched.success).toBe(true);
+
+				const after = await getState(rpc);
+				expect(after.sessionId).toBe(before.sessionId);
+				expect(after.messageCount).toBe(before.messageCount);
+				// The per-session generated mirror is gone and the real source is intact.
+				await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+				expect(await readFile(path.join(fixture.agentDir, "extensions", "ext-a.ts"), "utf8")).toContain("ext-a");
+				// The default additive baseline is retained.
+				const settings = JSON.parse(await readFile(path.join(instance, "settings.json"), "utf8"));
+				expect(settings.extensions).toContain(path.join(fixture.agentDir, "extensions"));
+				expect(settings.defaultProjectTrust).toBeUndefined();
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"refuses unexpected real content at the instance extension path for a declared selection",
+		{ timeout: 60_000 },
+		async () => {
+			await addGlobalExtension(fixture, "ext-a");
+			await addGlobalExtension(fixture, "ext-b");
+			await writeCatalog({ declared: { extensions: ["ext-a"] }, empty: { extensions: [] }, open: {} });
+
+			const rpc = runLauncherRpc(fixture, ["declared", "--", "--mode", "rpc"]);
+			try {
+				await rpc.send({ type: "get_state" });
+				const instance = await soleInstanceDir(fixture);
+				const extDir = path.join(instance, "extensions");
+				await expect(lstat(extDir)).rejects.toMatchObject({ code: "ENOENT" });
+				await mkdir(path.join(extDir, "sneaky"), { recursive: true });
+				await writeFile(path.join(extDir, "sneaky", "index.ts"), "export default 1");
+
+				const attempted = await rpc.send({ type: "prompt", message: "/profile use empty" }, 60_000);
+				expect(attempted.success).toBe(true);
+
+				const diagnostic = await rpc.waitFor(
+					(message) => JSON.stringify(message).includes("will not delete or overwrite"),
+					20_000,
+				);
+				expect(JSON.stringify(diagnostic)).toContain("activation of profile");
+
+				// Content is not deleted or adopted; the prior selection stays active.
+				expect(await readFile(path.join(extDir, "sneaky", "index.ts"), "utf8")).toBe("export default 1");
+				expect(JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8")).profile).toBe("declared");
+				expect(await extensionCommandNames(rpc)).toContain("ext-a");
+				expect(await extensionCommandNames(rpc)).not.toContain("ext-b");
 			} finally {
 				await rpc.close();
 			}

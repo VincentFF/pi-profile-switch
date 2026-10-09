@@ -5,6 +5,64 @@ Defines what a profile can reference, how those references resolve, and which re
 
 ## Requirements
 
+### Requirement: Sparse skill and extension selection
+
+A named profile SHALL distinguish an omitted `skills` or `extensions` field from an explicitly empty array. Each field SHALL control only its own resource kind. An omitted field SHALL preserve Pi's native visibility for that kind; an empty array SHALL select no referenceable user-level resources of that kind; a nonempty array SHALL follow the existing reference-resolution and failure-tiering contracts.
+
+Native visibility SHALL include resources enabled through the user's native resource settings and package filters, not only resources expressible through a profile name or glob. Native exclusions MUST remain effective. Pi's native built-in extension enable/disable controls MUST retain their meaning under omitted and declared profile selections; their identities and control syntax SHALL defer to Pi's own settings and extension registry.
+
+The existing "Narrowing boundary of project-level resources", "Tool reference resolution", "MCP server reference resolution", and "Per-server MCP tool selection" requirements SHALL remain applicable.
+
+#### Scenario: Omitted skills preserve native visibility
+
+- **WHEN** a named profile omits `skills` and Pi discovers enabled user-level skills from its ordinary discovery sources
+- **THEN** activation leaves those skills visible, including enabled package skills, without creating an empty selection
+
+#### Scenario: Omitted extensions preserve native visibility
+
+- **WHEN** a named profile omits `extensions` and the user has enabled loose extensions, package extensions, and a native settings-only extension outside standard directories
+- **THEN** activation preserves all of those extensions' native visibility
+
+#### Scenario: Empty selections remain restrictive
+
+- **WHEN** a named profile explicitly declares an empty `skills` or `extensions` array
+- **THEN** no referenceable user-level resource of that kind is selected; omission is not substituted for the empty array
+
+#### Scenario: Skill-only selection preserves extensions
+
+- **WHEN** a named profile declares only a skill selection, including an empty one
+- **THEN** user-level skills follow that selection while extensions retain native visibility
+
+#### Scenario: Extension-only selection preserves skills
+
+- **WHEN** a named profile declares only an extension selection, including an empty one
+- **THEN** referenceable user-level extensions follow that selection while skills retain native visibility
+
+#### Scenario: Declared references retain validation
+
+- **WHEN** an explicit skill or extension selection contains an unmatched literal or a zero-match glob
+- **THEN** the literal fails activation and the glob produces the existing non-fatal warning rather than changing the selection into native pass-through
+
+#### Scenario: Native exclusions remain effective
+
+- **WHEN** native settings or package filters disable a skill or extension and a profile omits that kind or selects it through a glob
+- **THEN** activation does not make the disabled resource visible, and native force-inclusion exceptions retain their native precedence
+
+#### Scenario: Native built-in extension controls remain effective
+
+- **WHEN** native settings disable a Pi built-in extension, including through a broad exclusion with an explicit native inclusion exception, and a named profile omits `extensions` or declares a reference list
+- **THEN** activation retains the resulting native built-in extension enable/disable state without requiring the profile to name those native extensions
+
+#### Scenario: MCP and tool omission stays unchanged
+
+- **WHEN** a named profile omits `mcps` and `tools` and declares no per-server MCP tool policy or tool overlay
+- **THEN** no additional MCP server policy or active-tool selection is imposed by the profile; tools supplied only by an excluded extension follow that extension's loading
+
+#### Scenario: Project resources retain their trust boundary
+
+- **WHEN** a profile omits or explicitly empties either resource field in a trusted or untrusted project
+- **THEN** project-level visibility continues to follow the existing project-trust boundary rather than the profile field
+
 ### Requirement: Skill reference resolution
 
 A skill reference's identity SHALL be Pi's skill name. Resolution SHALL take Pi's own complete discovery result in a read-only manner, MUST NOT implement directory scanning of its own, and MUST NOT execute any extension code or install any package because of resolving a profile.
@@ -326,3 +384,41 @@ Literal selectors in `mcp_tools` SHALL NOT be checked against a server's tool li
 
 - **WHEN** `mcp_tools` names a server defined only by trusted project configuration
 - **THEN** activation fails with an explanation that a profile cannot narrow that project-level server, and the project server is unchanged
+
+### Requirement: Subagent override resolution boundaries
+
+Resolution SHALL preserve the profile's validated native subagent declaration without treating its role keys as selectable Resources, registering agents, expanding globs, or applying Resource-reference failure tiering to those keys. Effectively empty declarations SHALL contribute no subagent override to activation.
+
+The declaration alone MUST NOT import pi-subagents, execute extension code, discover agent files, install packages, contact providers, or require child-model authentication. Parent-model validation SHALL retain its existing behavior and MUST NOT be reused to reinterpret child model strings. Final child-model selection, native clearing behavior, runner-specific model handling, and launch failures SHALL remain owned by pi-subagents.
+
+Agent names and advertisement or description declarations MUST NOT enable delegation, alter child prompts directly, or filter unmentioned agents. Existing extension and tool selection SHALL remain the only profile-controlled loading and parent-tool mechanisms in this change.
+
+#### Scenario: Omitted or empty child declarations remain absent from activation
+
+- **WHEN** a profile declares no effective subagent override
+- **THEN** activation contains no additional child override and performs no subagent-specific dependency or discovery work
+
+#### Scenario: Child model does not invoke parent-model validation
+
+- **WHEN** a profile declares a child model but no parent model declaration
+- **THEN** activation carries the child model string without invoking parent-model authentication or requiring a child-model registry
+
+#### Scenario: Native model syntax is preserved
+
+- **WHEN** a role model contains the native inheritance marker, a provider-qualified model with a thinking suffix, or an external runner's model alias
+- **THEN** resolution preserves the nonempty string for pi-subagents rather than translating it into a parent-model declaration
+
+#### Scenario: Unknown role keys are not missing Resource references
+
+- **WHEN** a profile declares an exact role name that is not currently registered
+- **THEN** activation retains its override without creating an agent or failing Resource-reference validation, and does not claim that the role exists
+
+#### Scenario: A single role override does not narrow other roles
+
+- **WHEN** a profile overrides only the reviewer and pi-subagents can discover additional roles
+- **THEN** the override declaration introduces no availability restriction for the other roles
+
+#### Scenario: Child declaration does not select the extension or tools
+
+- **WHEN** a profile declares subagent overrides without selecting the user-level pi-subagents extension or delegation tools
+- **THEN** resolution does not add the extension, grant tools, or alter the existing project-resource boundary
