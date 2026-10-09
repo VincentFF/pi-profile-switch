@@ -32,7 +32,7 @@ None.
 
 Changes concentrate in `src/profile-catalog.ts`, `src/profile-resolver.ts`, `src/extension-discovery.ts`, `src/launcher/initial-profile.ts`, `src/launcher/model-check.ts`, `src/mcp-config.ts`, `src/settings-generator.ts`, `src/switching/`, and `extensions/pi-profile/index.ts`. Catalog and plan interfaces need additive diagnostics and asynchronous targeted reading; tests expecting fatal reference failures must change.
 
-Initial planning inspected local `main` at `851564a` in the `fix/profile-verify` worktree. Integration uses `origin/main` as its baseline. The upstream [sparse selection](../../specs/resource-reference/spec.md#requirement-sparse-skill-and-extension-selection) and [subagent boundary](../../specs/resource-reference/spec.md#requirement-subagent-override-resolution-boundaries) contracts remain in effect except for the explicitly modified clauses in this change. Unmerged work in the original worktree is not a dependency.
+Initial planning inspected local `main` at `851564a` in the `fix/profile-verify` worktree. Integration uses `origin/main` as its baseline. The upstream [sparse selection](../../../specs/resource-reference/spec.md#requirement-sparse-skill-and-extension-selection) and [subagent boundary](../../../specs/resource-reference/spec.md#requirement-subagent-override-resolution-boundaries) contracts remain in effect except for the explicitly modified clauses in this change. Unmerged work in the original worktree is not a dependency.
 
 ## Doc Impact
 
