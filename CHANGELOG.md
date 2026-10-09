@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.15.0...v0.16.0) (2026-10-09)
+
+
+### Features
+
+* add tolerant profile activation and simplify documentation ([#86](https://github.com/VincentFF/pi-profile-switch/issues/86)) ([dd948b5](https://github.com/VincentFF/pi-profile-switch/commit/dd948b5ded779c98f22747524085327c96071b4b))
+
 ## [0.15.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.14.0...v0.15.0) (2026-10-09)
 
 
