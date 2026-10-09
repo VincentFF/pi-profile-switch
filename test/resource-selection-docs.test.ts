@@ -28,6 +28,32 @@ function fieldRows(markdown: string): Map<string, string> {
 		.map((match) => [match[1]!, match[2]!]));
 }
 
+function readmeScopeIssues(markdown: string, headings: readonly string[]): string[] {
+	const prose = markdown.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, "");
+	const actual = [...prose.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)].map((match) => match[1]!);
+	const issues: string[] = [];
+	if (JSON.stringify(actual) !== JSON.stringify(headings)) issues.push("unexpected top-level sections");
+	if (/^#{2,6}[ \t]+(?:Migration\b|迁移|Architecture\b|架构|Design\b|设计|Release (?:history|notes)\b|Changelog\b|版本历史|发布说明|Implementation details\b|实现机制)/im.test(prose)) {
+		issues.push("migration, release, or internal-design section");
+	}
+	for (const target of localLinks(prose)) {
+		const normalized = path.posix.normalize(target.split("#", 1)[0]!);
+		if (/^(?:docs\/(?:adr|architecture)|openspec\/specs)(?:\/|$)/.test(normalized)) {
+			issues.push(`internal-document link: ${target}`);
+		}
+	}
+	return issues;
+}
+
+function readmeRuleReferenceIssues(rules: string, config: string): string[] {
+	const issues: string[] = [];
+	if ([...rules.matchAll(/^### README authoring[ \t]*$/gm)].length !== 1) {
+		issues.push("expected one canonical README authoring section");
+	}
+	if (!config.includes("AGENTS.md#readme-authoring")) issues.push("missing config reference to README authoring");
+	return issues;
+}
+
 describe("resource-selection documentation", () => {
 	it("architecture overview describes the per-kind control and native-base exclusions", async () => {
 		const overview = await read("docs/architecture/overview.md");
@@ -77,6 +103,7 @@ describe("resource-selection documentation", () => {
 		for (const document of [
 			"README.md",
 			"README.zh-CN.md",
+			"AGENTS.md",
 			"docs/prd.md",
 			"docs/architecture/overview.md",
 		]) {
@@ -86,6 +113,46 @@ describe("resource-selection documentation", () => {
 				await expect(stat(resolved), `${document} -> ${target}`).resolves.toBeDefined();
 			}
 		}
+	});
+
+	it.each([
+		["README.md", ["About", "Installation and usage", "Configuration"]],
+		["README.zh-CN.md", ["工具介绍", "安装与使用", "配置详解"]],
+	])("%s stays within the accepted user-guide scope", async (document, headings) => {
+		expect(readmeScopeIssues(await read(document), headings)).toEqual([]);
+	});
+
+	it("scope checks reject unrelated sections and internal links without banning code examples", () => {
+		const headings = ["About", "Installation and usage", "Configuration"];
+		const base = headings.map((heading) => `## ${heading}\n`).join("\n");
+		for (const extra of [
+			"## Other content\n",
+			"### Migration notes\n",
+			"### 迁移说明\n",
+			"### Architecture\n",
+			"### Design decisions\n",
+			"### Release history\n",
+			"[Decision](./docs/adr/0001.md)\n",
+			"[Architecture](docs/architecture/overview.md)\n",
+			"[Contract](openspec/specs/profile-catalog/spec.md#requirements)\n",
+		]) {
+			expect(readmeScopeIssues(`${base}\n${extra}`, headings), extra).not.toEqual([]);
+		}
+		expect(readmeScopeIssues(`${base}\n[Schema](schemas/profiles.schema.json)\n`, headings)).toEqual([]);
+		expect(readmeScopeIssues(`${base}\n\`\`\`text\n## Migration\n[Contract](openspec/specs/example/spec.md)\n\`\`\`\n`, headings)).toEqual([]);
+	});
+
+	it("config references the canonical README authoring rules", async () => {
+		expect(readmeRuleReferenceIssues(await read("AGENTS.md"), await read("openspec/config.yaml"))).toEqual([]);
+	});
+
+	it("rule-reference checks reject a missing, duplicate, or unreferenced rule section", () => {
+		const rules = "### README authoring\n";
+		const config = "README authoring principles are defined in AGENTS.md#readme-authoring.\n";
+		expect(readmeRuleReferenceIssues(rules, config)).toEqual([]);
+		expect(readmeRuleReferenceIssues("", config)).not.toEqual([]);
+		expect(readmeRuleReferenceIssues(`${rules}\n${rules}`, config)).not.toEqual([]);
+		expect(readmeRuleReferenceIssues(rules, "")).not.toEqual([]);
 	});
 
 	it.each([
