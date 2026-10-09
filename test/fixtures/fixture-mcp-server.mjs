@@ -113,6 +113,8 @@ rl.on("line", (line) => {
 			}) + "\n",
 		);
 	} else if (method === "tools/call") {
+		const callsFile = process.env.FIXTURE_MCP_CALLS_FILE;
+		if (callsFile) fs.appendFileSync(callsFile, JSON.stringify({ name: params?.name, arguments: params?.arguments }) + "\n");
 		const toolName = params?.name;
 		const knownTool = currentTools.find((t) => t.name === toolName);
 		if (knownTool) {

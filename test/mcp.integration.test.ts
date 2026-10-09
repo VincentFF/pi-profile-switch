@@ -3,13 +3,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-	LAUNCHER_BIN as BIN,
-	launcherEnv,
-	runLauncher,
-} from "./helpers/launcher-runner.ts";
+import { runLauncher, runLauncherRpc } from "./helpers/launcher-runner.ts";
+import { runNativePi } from "./helpers/native-pi-runner.ts";
+import { MCP_INVOCATION_ARGS, invokeNativeTool, localMcpServer } from "./helpers/mcp-invocation.ts";
 import { createPiFixture, launchInstanceDirs, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
-import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
 
@@ -35,14 +32,16 @@ async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
 
 describe("launcher integration: native MCP snapshot semantics", () => {
 	it(
-		"a profile declaring mcp fails before spawn when the snapshot does not define it",
+		"a missing-only MCP selection starts with warnings and disables discovered user servers",
 		{ timeout: 30_000 },
 		async () => {
 			await writeMcpConfig({ github: { url: "https://x" } });
 			await writeCatalog({ review: { mcps: ["typo-server"] } });
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
-			expect(failure.code).toBe(2);
+			expect(failure.code).toBe(0);
+			const snapshot = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+			expect(snapshot.mcpServers.github.enabled).toBe(false);
 			expect(failure.stderr).toContain('unknown MCP server: "typo-server" (usable candidates: github)');
 		},
 	);
@@ -55,10 +54,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig(globalConfig);
 			await writeCatalog({ review: { mcps: ["github"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -91,10 +87,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig(globalConfig);
 			await writeCatalog({ plain: {} });
 
-			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["plain", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -111,18 +104,20 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 		},
 	);
 
-	it(
-		"fails before spawn when an explicitly selected server uses SSE",
-		{ timeout: 30_000 },
-		async () => {
-			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
-			await writeCatalog({ review: { mcps: ["github"] } });
-
-			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
-			expect(failure.code).toBe(2);
-			expect(failure.stderr).toContain('selected MCP server "github" uses the legacy SSE transport');
-		},
-	);
+	it("passes selected unsupported transport to Pi with native diagnostics and exit parity", { timeout: 45_000 }, async () => {
+		const servers = { github: { type: "sse", url: "http://127.0.0.1:9/sse" } };
+		await writeMcpConfig(servers); await writeCatalog({ review: { mcps: ["github"] } });
+		const native = await runNativePi(fixture, ["--mode", "rpc"]);
+		const actual = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
+		expect(actual.code).toBe(native.code);
+		expect(native.signal).toBeNull();
+		const nativeOutput = native.stdout + native.stderr;
+		const actualOutput = actual.stdout + actual.stderr;
+		expect(nativeOutput).toContain("legacy SSE transport is not supported");
+		expect(actualOutput).toContain("legacy SSE transport is not supported");
+		expect(actual.stderr).not.toMatch(/pi-profile:.*legacy SSE/);
+		expect(JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8")).mcpServers).toEqual(servers);
+	});
 
 	it(
 		"passes an unselected SSE server through and lets Pi report its own config error",
@@ -131,10 +126,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig({ github: { type: "sse", url: "http://localhost:3000/sse" } });
 			await writeCatalog({ plain: {} });
 
-			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["plain", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -159,10 +151,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig(globalConfig);
 			await writeCatalog({ review: { mcp_tools: { github: ["search"] } } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -192,10 +181,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig(globalConfig);
 			await writeCatalog({ review: { mcp_tools: { github: [] } } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -227,10 +213,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			const originalMcp = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
 			await writeCatalog({ denyall: { mcps: [] } });
 
-			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["denyall", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -265,10 +248,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
 			await writeCatalog({ denyall: { mcps: [] } });
 
-			const rpc = new RpcDriver("node", [BIN, "denyall", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["denyall", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -289,10 +269,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig({});
 			await writeCatalog({ empty: { mcps: [] } });
 
-			const rpc = new RpcDriver("node", [BIN, "empty", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["empty", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -356,10 +333,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			await writeMcpConfig({ shared: { url: "https://agentdir" } });
 			await writeCatalog({ plain: {} });
 
-			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["plain", "--", "--mode", "rpc"]);
 			try {
 				const response = await rpc.send({ type: "get_state" });
 				expect(response.success).toBe(true);
@@ -377,7 +351,7 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 	);
 
 	it(
-		"an explicit MCP policy fails before spawn when a required source is malformed",
+		"an explicit MCP policy survives malformed sources without discarding restrictions",
 		{ timeout: 30_000 },
 		async () => {
 			await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
@@ -387,7 +361,9 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 
 			const failure = await runLauncher(fixture, ["review", "--", "--mode", "rpc"]);
 
-			expect(failure.code).toBe(2);
+			expect(failure.code).toBe(0);
+			const snapshot = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+			expect(Object.keys(snapshot.mcpServers)).toEqual(["github"]);
 			expect(failure.stderr).toContain(path.join(fixture.root, ".agents", "mcp.json"));
 			expect(failure.stderr).toContain("not valid JSON");
 		},
@@ -410,4 +386,51 @@ describe("launcher integration: native MCP snapshot semantics", () => {
 			expect(instanceMcp.mcpServers).toEqual({ github: { url: "https://x" } });
 		},
 	);
+});
+
+
+describe("native MCP missing and disabled selections", () => {
+	it.each([{ definition: { mcps: [] }, disabled: true }, { definition: { mcp_tools: {} }, disabled: false }, { definition: {}, disabled: false }])("keeps explicit-empty/empty-policy/omitted intent with malformed sources: %j", { timeout: 45_000 }, async ({ definition, disabled }) => {
+		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
+		const invalid = path.join(fixture.root, ".agents", "mcp.json"); await writeFile(invalid, "{ bad");
+		const marker = path.join(fixture.root, "started"); const server = localMcpServer(marker);
+		await writeMcpConfig({ fixture: server }); await writeCatalog({ focused: definition });
+		const before = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+		const result = await runLauncher(fixture, ["focused", "--", "--mode", "rpc"]);
+		expect(result.code).toBe(0);
+		expect(result.stderr.split("\n").filter((line) => line.includes("pi-profile: warning:") && line.includes(invalid))).toHaveLength(1);
+		const snapshot = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "mcp.json"), "utf8"));
+		expect(snapshot.mcpServers.fixture).toEqual(disabled ? { ...server, enabled: false } : server);
+		if (disabled) expect(existsSync(marker)).toBe(false);
+		expect(await readFile(invalid, "utf8")).toBe("{ bad");
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(before);
+	});
+	it.each([false, true])("does not connect unselected or source-disabled servers (missing-only=%s)", { timeout: 90_000 }, async (missingOnly) => {
+		const disabled = path.join(fixture.root, "disabled-started"); const unselected = path.join(fixture.root, "unselected-started");
+		await writeMcpConfig({ disabled: { ...localMcpServer(disabled), enabled: false }, unselected: localMcpServer(unselected), fixture: localMcpServer() });
+		await writeCatalog({ focused: { mcps: ["missing", "disabled", ...(missingOnly ? [] : ["fixture"])], mcp_tools: { disabled: [], fixture: ["search"] } } });
+		const before = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
+		const rpc = runLauncherRpc(fixture, ["focused", "--", ...MCP_INVOCATION_ARGS]);
+		try {
+			const allowed = await invokeNativeTool(rpc, "mcp__fixture__search", { query: "selected" });
+			expect(allowed.isError).toBe(missingOnly);
+			expect((await invokeNativeTool(rpc, "codemode", { code: 'text(await tools.mcp__disabled__search({query:"forbidden"}));' })).isError).toBe(true);
+			expect(rpc.stderr.join("")).toContain("enable it there or remove");
+		} finally { await rpc.close(); await rpc.waitForExit(); }
+		expect(existsSync(disabled)).toBe(false); expect(existsSync(unselected)).toBe(false);
+		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(before);
+	});
+	it("leaves trusted project servers callable despite an empty user selection and a dormant project policy", { timeout: 90_000 }, async () => {
+		await writeMcpConfig({ fixture: localMcpServer() });
+		const project = path.join(fixture.cwd, ".pi", "mcp.json"); const content = JSON.stringify({ mcpServers: { project: localMcpServer() } });
+		await writeFile(project, content); await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+		await writeCatalog({ focused: { mcps: [], mcp_tools: { project: [] }, tools: ["read"] } });
+		const rpc = runLauncherRpc(fixture, ["focused", "--", ...MCP_INVOCATION_ARGS]);
+		try {
+			expect((await invokeNativeTool(rpc, "codemode", { code: 'text(await tools.mcp__project__search({query:"native-project"}));' })).isError).toBe(false);
+			expect((await invokeNativeTool(rpc, "mcp__fixture__search", { query: "forbidden" })).isError).toBe(true);
+			expect(rpc.stderr.join("")).toContain("cannot narrow project-level");
+		} finally { await rpc.close(); await rpc.waitForExit(); }
+		expect(await readFile(project, "utf8")).toBe(content);
+	});
 });

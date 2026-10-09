@@ -245,3 +245,31 @@ describe("native provider lifecycle through profiles", () => {
 		await noRequests(wrapped, wrappedDriver); await noRequests(native, nativeDriver);
 	});
 });
+
+
+describe("selected definition and unexpected IO startup boundaries", () => {
+	it.each(["{ invalid", "[]", '{"skills":1}'])("rejects the selected definition before native creation: %s", { timeout: 45_000 }, async (content) => {
+		const wrapped = await fixture();
+		await profile(wrapped, "broken", {});
+		const file = path.join(wrapped.profileSwitchDir, "profiles", "broken.json");
+		await writeFile(file, content); environment(wrapped);
+		const result = await runLauncher(wrapped, ["broken", "--", ...RPC_ARGS, "-e", PROVIDER_EXTENSION]);
+		expect(result.code).toBe(2); expect(result.stderr).toContain(file);
+		expect(await events(wrapped)).toEqual([]);
+		expect(existsSync(path.join(wrapped.profileSwitchDir, "instances"))).toBe(false);
+	});
+	it("rejects explicitly absent names rather than substituting a profile", { timeout: 45_000 }, async () => {
+		const wrapped = await fixture(); environment(wrapped);
+		const result = await runLauncher(wrapped, ["absent", "--", ...RPC_ARGS, "-e", PROVIDER_EXTENSION]);
+		expect(result.code).toBe(2); expect(result.stderr).toContain("unknown profile: absent");
+		expect(await events(wrapped)).toEqual([]);
+	});
+	it("keeps genuine filesystem failure fatal rather than a skipped-content warning", { timeout: 45_000 }, async () => {
+		const wrapped = await fixture(); await profile(wrapped, "focused", declaration("startup"));
+		await mkdir(path.join(wrapped.agentDir, "mcp.json")); environment(wrapped);
+		const result = await runLauncher(wrapped, ["focused", "--", ...RPC_ARGS]);
+		expect(result.code).toBe(1); expect(result.stderr).toContain("EISDIR");
+		expect(result.stderr).not.toContain("source skipped");
+		expect(await events(wrapped)).toEqual([]);
+	});
+});
