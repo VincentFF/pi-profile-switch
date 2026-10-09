@@ -74,6 +74,16 @@ async function readPlanFile(): Promise<Record<string, unknown>> {
 	return JSON.parse(await readFile(path.join(runtimeDir, "pi-profile.json"), "utf8"));
 }
 
+async function managedSnapshot(): Promise<unknown[]> {
+	return Promise.all(["settings.json", "pi-profile.json", "mcp.json", "APPEND_SYSTEM.md", "trust.json"].map(async (name) => {
+		const file = path.join(runtimeDir, name);
+		const info = await lstat(file).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+		if (!info) return { name, kind: "absent" };
+		if (info.isSymbolicLink()) return { name, kind: "symlink", target: await readlink(file) };
+		return { name, kind: "file", mode: info.mode & 0o777, content: await readFile(file, "utf8") };
+	}));
+}
+
 describe("switchProfile", () => {
 	it("rewrites the runtime files for the target profile and marks the plan for persistence", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
@@ -122,6 +132,10 @@ describe("switchProfile", () => {
 	it("rolls back every managed file when a write fails after settings.json changed", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await writeCatalog({ impl: { skills: ["alpha-skill"], instructions: "Be terse." } });
+		const originalManaged = await managedSnapshot();
+		const statePath = path.join(fixture.agentDir, "pi-profile-state.json");
+		const originalState = JSON.stringify({ activeProfile: "default", overlay: { disabledSkills: ["saved-entry"] } });
+		await writeFile(statePath, originalState);
 		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
 		const originalPlan = await readPlanFile();
 		let reloads = 0;
@@ -144,11 +158,17 @@ describe("switchProfile", () => {
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
 		expect(await readPlanFile()).toEqual(originalPlan);
 		await expect(lstat(path.join(runtimeDir, "APPEND_SYSTEM.md"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await managedSnapshot()).toEqual(originalManaged);
+		expect(await readFile(statePath, "utf8")).toBe(originalState);
 	});
 
 	it("restores the snapshot and reloads again when reload fails", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await writeCatalog({ impl: { skills: ["alpha-skill"] } });
+		const originalManaged = await managedSnapshot();
+		const statePath = path.join(fixture.agentDir, "pi-profile-state.json");
+		const originalState = JSON.stringify({ activeProfile: "default", overlay: { disabledSkills: ["saved-entry"] } });
+		await writeFile(statePath, originalState);
 		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
 		let reloads = 0;
 		const reload = async () => {
@@ -161,11 +181,17 @@ describe("switchProfile", () => {
 		expect(reloads).toBe(2);
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
 		expect((await readPlanFile()).profile).toBe("default");
+		expect(await managedSnapshot()).toEqual(originalManaged);
+		expect(await readFile(statePath, "utf8")).toBe(originalState);
 	});
 
 	it("rolls back when Pi silently skips the reload (context never goes stale)", async () => {
 		await addGlobalSkill(fixture, "alpha-skill");
 		await writeCatalog({ impl: { skills: ["alpha-skill"] } });
+		const originalManaged = await managedSnapshot();
+		const statePath = path.join(fixture.agentDir, "pi-profile-state.json");
+		const originalState = JSON.stringify({ activeProfile: "default", overlay: { disabledSkills: ["saved-entry"] } });
+		await writeFile(statePath, originalState);
 		const originalSettings = await readFile(path.join(runtimeDir, "settings.json"), "utf8");
 		let reloads = 0;
 
@@ -184,6 +210,8 @@ describe("switchProfile", () => {
 		expect(reloads).toBe(2); // the restore reload
 		expect(await readFile(path.join(runtimeDir, "settings.json"), "utf8")).toBe(originalSettings);
 		expect((await readPlanFile()).profile).toBe("default");
+		expect(await managedSnapshot()).toEqual(originalManaged);
+		expect(await readFile(statePath, "utf8")).toBe(originalState);
 	});
 
 	it("restores mcp.json, APPEND_SYSTEM.md, and trust.json to the pre-switch state when the reload fails", async () => {
@@ -761,5 +789,42 @@ describe("generated extension mirror on the ordinary default profile (fix-undecl
 
 		expect((await lstat(path.join(runtimeDir, "extensions"))).isDirectory()).toBe(true);
 		expect(await readFile(path.join(runtimeDir, "extensions", "foreign", "keep.ts"), "utf8")).toBe("keep");
+	});
+});
+
+describe("tolerant switch resolution with strict fatal boundaries", () => {
+	it.each(["{ invalid", "[]", '{"skills":1}', '{"mcp_tools":{"github":"search"}}'])("does not write or reload for malformed selected definitions: %s", async (content) => {
+		await writeCatalog({ broken: {} });
+		await writeFile(path.join(fixture.profileSwitchDir, "profiles", "broken.json"), content);
+		const before = await managedSnapshot(); const reload = vi.fn(async () => {});
+		await expect(switchProfile("broken", deps({ reload }))).rejects.toThrow(/broken.json/);
+		expect(reload).not.toHaveBeenCalled();
+		expect(await managedSnapshot()).toEqual(before);
+	});
+	it("switches partially, retains original references, and resolves new resources on reload", async () => {
+		await addGlobalSkill(fixture, "selected"); await addGlobalExtension(fixture, "selected-ext");
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), '{"mcpServers":{"fixture":{"command":"fixture"}}}');
+		await writeCatalog({ partial: { skills: ["selected", "future"], extensions: ["selected-ext", "future-ext"], mcps: ["fixture", "future-server"], mcp_tools: { "future-server": ["search"] } } });
+		const file = path.join(fixture.profileSwitchDir, "profiles", "partial.json"); const original = await readFile(file, "utf8");
+		const result = await switchProfile("partial", deps(), { clearOverlay: true });
+		expect(result.warnings.some((message) => message.includes('unknown skill "future"'))).toBe(true);
+		expect(result.warnings.some((message) => message.includes('unknown extension: "future-ext"'))).toBe(true);
+		let plan = await readPlanFile();
+		expect(plan.mcps).toEqual(["fixture"]); expect(plan.mcpTools).toEqual({ "future-server": ["search"] });
+		await addGlobalSkill(fixture, "future"); await addGlobalExtension(fixture, "future-ext");
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), '{"mcpServers":{"fixture":{"command":"fixture"},"future-server":{"command":"future"}}}');
+		const next = await switchProfile(undefined, deps(), { reloadCurrent: true });
+		expect(next.warnings).toEqual([]);
+		plan = await readPlanFile(); expect(plan.mcps).toEqual(["fixture", "future-server"]);
+		expect((plan.resolved as { skills: Array<{ name: string }> }).skills.map((entry) => entry.name)).toEqual(["selected", "future"]);
+		expect((plan.resolved as { extensions: Array<{ id: string }> }).extensions.map((entry) => entry.id)).toEqual(["selected-ext", "future-ext"]);
+		expect(plan.switchedFrom).toBeUndefined(); expect(plan.persistSelection).toBe(true);
+		expect(await readFile(file, "utf8")).toBe(original);
+	});
+	it("still rejects overlay disabling a skipped literal without changing the active files", async () => {
+		await writeCatalog({ partial: { skills: ["missing"] } });
+		const before = await managedSnapshot();
+		await expect(switchProfile("partial", deps(), { overlay: { disabledSkills: ["missing"] } })).rejects.toThrow(/overlay disables unknown skill/);
+		expect(await managedSnapshot()).toEqual(before);
 	});
 });

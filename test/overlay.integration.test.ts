@@ -2,9 +2,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LAUNCHER_BIN as BIN, launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
+import { runLauncherRpc } from "./helpers/launcher-runner.ts";
 import { addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
-import { RpcDriver } from "./helpers/rpc-driver.ts";
+import type { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
 
@@ -41,10 +41,7 @@ describe("launcher integration: runtime overlay", () => {
 			await addGlobalSkill(fixture, "beta-skill");
 			await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
 
@@ -69,18 +66,17 @@ describe("launcher integration: runtime overlay", () => {
 				expect((await readState()).overlay).toBeUndefined();
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 
 			// A fresh launch restores the profile WITHOUT the discarded overlay
 			// (the launcher never reads stored overlays).
-			const relaunched = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const relaunched = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				expect(await skillNames(relaunched)).toEqual(["skill:alpha-skill", "skill:beta-skill"]);
 			} finally {
 				await relaunched.close();
+				await relaunched.waitForExit();
 			}
 		},
 	);
@@ -104,10 +100,7 @@ describe("launcher integration: runtime overlay", () => {
 			);
 			await writeCatalog({ review: { extensions: ["my-ext"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				const commands = await rpc.commandNames();
 				expect(commands.some((c) => c.name === "my-ext-cmd")).toBe(true);
@@ -122,6 +115,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect(state.overlay?.disabledExtensions).toEqual(["my-ext"]);
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -137,10 +131,7 @@ describe("launcher integration: runtime overlay", () => {
 				impl: { skills: ["beta-skill"] },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				await rpc.send({ type: "prompt", message: "/profile overlay disable skill beta-skill" }, 60_000);
 				expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
@@ -154,6 +145,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect(state.overlay).toBeUndefined();
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -166,10 +158,7 @@ describe("launcher integration: runtime overlay", () => {
 			await addGlobalSkill(fixture, "git-commit");
 			await writeCatalog({ review: { skills: ["alpha-skill", "git-commit"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				expect(await skillNames(rpc)).toEqual(["skill:alpha-skill", "skill:git-commit"]);
 
@@ -193,6 +182,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect((await readState()).overlay).toEqual({ disabledSkills: ["git-*"] });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -244,10 +234,7 @@ describe("launcher integration: runtime overlay", () => {
 			};
 			const clearActiveTools = async () => rm(activeToolsPath, { force: true });
 
-			const rpc = new RpcDriver("node", [BIN, "empty", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["empty", "--", "--mode", "rpc"]);
 			try {
 				await rpc.send({ type: "get_state" }).catch((error: unknown) => {
 					throw new Error(`${error instanceof Error ? error.message : String(error)}\n${rpc.stderr.join("")}`);
@@ -283,6 +270,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect(await readActiveTools()).toContain("lint_check");
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -293,10 +281,7 @@ describe("launcher integration: runtime overlay", () => {
 		async () => {
 			await writeCatalog({ review: { tools: ["read", "bash"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				// The launcher creates the instance dir as pi starts — resolve it
 				// after the first round trip, not at spawn time.
@@ -330,6 +315,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect((await plan()).disabledTools).toBeUndefined();
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -342,10 +328,7 @@ describe("launcher integration: runtime overlay", () => {
 			await addGlobalSkill(fixture, "beta-skill");
 			await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["review", "--", "--mode", "rpc"]);
 			try {
 				const disabled = await rpc.send(
 					{ type: "prompt", message: "/profile overlay disable skill beta-skill" },
@@ -367,6 +350,7 @@ describe("launcher integration: runtime overlay", () => {
 				expect(afterEnable === undefined || Object.keys(afterEnable).length === 0).toBe(true);
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);

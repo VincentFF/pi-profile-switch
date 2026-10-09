@@ -1,10 +1,11 @@
-import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LAUNCHER_BIN as BIN, launcherEnv, runLauncherRpc } from "./helpers/launcher-runner.ts";
+import { MCP_INVOCATION_ARGS, invokeNativeTool, localMcpServer, mcpCalls } from "./helpers/mcp-invocation.ts";
+import { runLauncherRpc } from "./helpers/launcher-runner.ts";
 import { addGlobalExtension, addGlobalSkill, createPiFixture, soleInstanceDir, type PiFixture } from "./helpers/pi-fixture.ts";
-import { RpcDriver } from "./helpers/rpc-driver.ts";
+import type { RpcDriver } from "./helpers/rpc-driver.ts";
 
 let fixture: PiFixture;
 
@@ -55,6 +56,16 @@ async function skillCommands(rpc: RpcDriver): Promise<Array<{ name: string; desc
 	return commands.filter((command) => command.name.startsWith("skill:"));
 }
 
+async function managedFiles(instance: string): Promise<unknown[]> {
+	return Promise.all(["settings.json", "pi-profile.json", "mcp.json", "APPEND_SYSTEM.md", "trust.json"].map(async (name) => {
+		const file = path.join(instance, name);
+		const info = await lstat(file).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+		if (!info) return { name, kind: "absent" };
+		if (info.isSymbolicLink()) return { name, kind: "symlink", target: await readlink(file) };
+		return { name, kind: "file", mode: info.mode & 0o777, content: await readFile(file, "utf8") };
+	}));
+}
+
 describe("launcher integration: in-session switching", () => {
 	it(
 		"project-level visibility is the same before and after switching to default",
@@ -65,10 +76,7 @@ describe("launcher integration: in-session switching", () => {
 			await writeCatalog({ doc: { skills: [] } });
 			await trustProject();
 
-			const rpc = new RpcDriver("node", [BIN, "doc", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["doc", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
 				expect((await skillCommands(rpc)).map((command) => command.name).sort()).toEqual([
@@ -88,6 +96,7 @@ describe("launcher integration: in-session switching", () => {
 				]);
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -103,10 +112,7 @@ describe("launcher integration: in-session switching", () => {
 				beta: { skills: ["beta-skill"] },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "alpha", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["alpha", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:alpha-skill"]);
@@ -128,6 +134,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(state).toEqual({ activeProfile: "beta" });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -139,10 +146,7 @@ describe("launcher integration: in-session switching", () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await writeCatalog({ alpha: { skills: ["alpha-skill"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "alpha", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["alpha", "--", "--mode", "rpc"]);
 			try {
 				expect((await skillCommands(rpc))[0]?.description).toContain("alpha-skill");
 
@@ -158,6 +162,7 @@ describe("launcher integration: in-session switching", () => {
 				expect((await skillCommands(rpc))[0]?.description).toBe("EDITED description");
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -169,10 +174,7 @@ describe("launcher integration: in-session switching", () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await writeCatalog({ alpha: { skills: ["alpha-skill"] } });
 
-			const rpc = new RpcDriver("node", [BIN, "alpha", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["alpha", "--", "--mode", "rpc"]);
 			try {
 				const failed = await rpc.send({ type: "prompt", message: "/profile use ghost" }, 60_000);
 				expect(failed.success).toBe(true);
@@ -182,6 +184,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -199,10 +202,7 @@ describe("launcher integration: in-session switching", () => {
 				narrow: { mcp_tools: { github: ["search"] } },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "broad", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["broad", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
@@ -219,6 +219,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -235,10 +236,7 @@ describe("launcher integration: in-session switching", () => {
 				denied: { mcp_tools: { github: [] } },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "denied", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["denied", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
@@ -255,12 +253,13 @@ describe("launcher integration: in-session switching", () => {
 				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden" });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
 
 	it(
-		"failed switch restores previous MCP tool policy",
+		"malformed project winner leaves the previous policy and all managed files unchanged",
 		{ timeout: 60_000 },
 		async () => {
 			await writeFile(
@@ -269,26 +268,35 @@ describe("launcher integration: in-session switching", () => {
 			);
 			await writeCatalog({
 				initial: { mcp_tools: { github: ["search"] } },
-				failing: { mcp_tools: { unknown_srv: ["search"] } },
+				failing: { mcp_tools: { github: [] } },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "initial", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+						await trustProject();
+			const projectProfiles = path.join(fixture.cwd, ".pi", "profiles");
+			await mkdir(projectProfiles, { recursive: true });
+			const invalidWinner = path.join(projectProfiles, "failing.json");
+			await writeFile(invalidWinner, '{"mcp_tools":{"github":"invalid-type"}}');
+			const rpc = runLauncherRpc(fixture, ["initial", "--", "--mode", "rpc"]);
 			try {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
+				const before = await managedFiles(instance);
+				const session = await getState(rpc);
 				let instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
 				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 
 				const failed = await rpc.send({ type: "prompt", message: "/profile use failing" }, 60_000);
 				expect(failed.success).toBe(true);
+				await rpc.waitFor((message) => JSON.stringify(message).includes(invalidWinner));
+				expect(await managedFiles(instance)).toEqual(before);
+				expect((await getState(rpc)).sessionId).toBe(session.sessionId);
+				expect((await import("node:fs")).existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
 
 				instanceMcp = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
 				expect(instanceMcp.mcpServers.github.toolExposure).toEqual({ "*": "hidden", search: "direct" });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -308,10 +316,7 @@ describe("launcher integration: in-session switching", () => {
 				closed: { mcps: [] },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "open", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["open", "--", "--mode", "rpc"]);
 			try {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
@@ -324,6 +329,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -342,10 +348,7 @@ describe("launcher integration: in-session switching", () => {
 				closed: { mcps: [] },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "closed", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["closed", "--", "--mode", "rpc"]);
 			try {
 				const before = await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
@@ -362,6 +365,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(instanceMcp.mcpServers.github).toEqual({ url: "https://gh", enabled: false });
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -382,10 +386,7 @@ describe("launcher integration: in-session switching", () => {
 				closed: { mcps: [] },
 			});
 
-			const rpc = new RpcDriver("node", [BIN, "closed", "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(fixture),
-			});
+			const rpc = runLauncherRpc(fixture, ["closed", "--", "--mode", "rpc"]);
 			try {
 				await getState(rpc);
 				const instance = await soleInstanceDir(fixture);
@@ -400,6 +401,7 @@ describe("launcher integration: in-session switching", () => {
 				expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(originalMcp);
 			} finally {
 				await rpc.close();
+				await rpc.waitForExit();
 			}
 		},
 	);
@@ -753,4 +755,96 @@ describe("in-session sparse resource selection (fix-undeclared-resource-filterin
 			}
 		},
 	);
+});
+
+describe("live partial switching and re-resolution", () => {
+	it("persists a partial switch, clears its old overlay, and reloads reappearing resources without changing history, process or project trust", { timeout: 90_000 }, async () => {
+		await addGlobalSkill(fixture, "selected"); await addGlobalSkill(fixture, "unselected");
+		await addGlobalExtension(fixture, "selected-ext"); await addGlobalExtension(fixture, "unselected-ext");
+		await addProjectSkill("project-skill"); await trustProject();
+		const projectExt = path.join(fixture.cwd, ".pi", "extensions"); await mkdir(projectExt, { recursive: true });
+		await writeFile(path.join(projectExt, "project-ext.ts"), 'export default function(pi) { pi.registerCommand("project-ext", { handler: async () => {} }); }');
+		await writeMcpConfig({ fixture: localMcpServer() });
+		await writeCatalog({ initial: { skills: ["selected", "unselected"], extensions: ["selected-ext"] }, partial: { skills: ["selected", "future-skill"], extensions: ["selected-ext", "future-ext"], mcps: ["fixture", "future-server"], mcp_tools: { "future-server": ["search"] } } });
+		const profileFile = path.join(fixture.profileSwitchDir, "profiles", "partial.json"); const definition = await readFile(profileFile, "utf8");
+		const trustFile = path.join(fixture.agentDir, "trust.json"); const trust = await readFile(trustFile, "utf8");
+		const rpc = runLauncherRpc(fixture, ["initial", "--", ...MCP_INVOCATION_ARGS]);
+		try {
+			const seeded = await rpc.send({ type: "bash", command: "printf switch-history" }); expect(seeded.success).toBe(true);
+			const before = await getState(rpc); const history = (await rpc.send({ type: "get_messages" })).data?.messages;
+			expect((history as unknown[]).length).toBeGreaterThan(0);
+			const instance = await soleInstanceDir(fixture); const pid = await readFile(path.join(instance, "pid"), "utf8");
+			const trustLink = await readlink(path.join(instance, "trust.json"));
+			await rpc.send({ type: "prompt", message: "/profile overlay disable skill unselected" }, 45_000);
+			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8")).overlay).toEqual({ disabledSkills: ["unselected"] });
+			const switched = await rpc.send({ type: "prompt", message: "/profile use partial" }, 45_000); expect(switched.success).toBe(true);
+			expect(await rpc.skillCommandNames()).toEqual(["skill:project-skill", "skill:selected"]);
+			let names = (await rpc.commandNames()).map((entry) => entry.name);
+			expect(names).toContain("project-ext"); expect(names).toContain("selected-ext"); expect(names).not.toContain("unselected-ext"); expect(names).not.toContain("future-ext");
+			let plan = JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8"));
+			expect(plan.profile).toBe("partial"); expect(plan.mcps).toEqual(["fixture"]);
+			for (const reference of ["future-skill", "future-ext", "future-server"]) expect(plan.diagnostics.some((issue: { reference?: string }) => issue.reference === reference)).toBe(true);
+			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"))).toEqual({ activeProfile: "partial" });
+			await addGlobalSkill(fixture, "future-skill"); await addGlobalExtension(fixture, "future-ext");
+			await writeMcpConfig({ fixture: localMcpServer(), "future-server": localMcpServer() });
+			const reloaded = await rpc.send({ type: "prompt", message: "/profile reload" }, 45_000); expect(reloaded.success).toBe(true);
+			expect(await rpc.skillCommandNames()).toEqual(["skill:future-skill", "skill:project-skill", "skill:selected"]);
+			names = (await rpc.commandNames()).map((entry) => entry.name); expect(names).toContain("future-ext"); expect(names).toContain("project-ext"); expect(names).not.toContain("unselected-ext");
+			plan = JSON.parse(await readFile(path.join(instance, "pi-profile.json"), "utf8"));
+			expect(plan.mcps).toEqual(["fixture", "future-server"]); expect(plan.diagnostics).toBeUndefined(); expect(plan.switchedFrom).toBeUndefined();
+			const after = await getState(rpc); expect(after.sessionId).toBe(before.sessionId); expect(after.sessionFile).toBe(before.sessionFile);
+			expect((await rpc.send({ type: "get_messages" })).data?.messages).toEqual(history);
+			expect(await readFile(path.join(instance, "pid"), "utf8")).toBe(pid);
+			expect(await readlink(path.join(instance, "trust.json"))).toBe(trustLink); expect(await readFile(trustFile, "utf8")).toBe(trust);
+			expect((await invokeNativeTool(rpc, "mcp__future_server__search", { query: "reappeared" })).isError).toBe(false);
+			await rpc.send({ type: "prompt", message: "/profile use default" }, 45_000);
+			expect((await rpc.commandNames()).map((entry) => entry.name)).toContain("project-ext"); expect(await rpc.skillCommandNames()).toContain("skill:project-skill");
+			expect((await getState(rpc)).sessionId).toBe(before.sessionId);
+			expect(await readlink(path.join(instance, "trust.json"))).toBe(trustLink);
+		} finally { await rpc.close(); await rpc.waitForExit(); }
+		expect(await readFile(profileFile, "utf8")).toBe(definition); expect(await readFile(trustFile, "utf8")).toBe(trust);
+	});
+
+	it("keeps one-shot CLI selection transient across real reload", { timeout: 60_000 }, async () => {
+		await addGlobalSkill(fixture, "selected"); await writeCatalog({ transient: { skills: ["selected"] } });
+		const rpc = runLauncherRpc(fixture, ["transient", "--", "--mode", "rpc"]);
+		try {
+			const before = await getState(rpc);
+			await rpc.send({ type: "prompt", message: "/profile reload" }, 45_000);
+			const plan = JSON.parse(await readFile(path.join(await soleInstanceDir(fixture), "pi-profile.json"), "utf8"));
+			expect(plan.profile).toBe("transient"); expect(plan.persistSelection).toBe(false);
+			expect((await getState(rpc)).sessionId).toBe(before.sessionId);
+			const { existsSync } = await import("node:fs");
+			expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+			expect(existsSync(path.join(fixture.profileSwitchDir, "pi-profile-state.json"))).toBe(false);
+		} finally { await rpc.close(); await rpc.waitForExit(); }
+	});
+
+	it("changes actual user MCP callability for empty/reload/omitted transitions while project servers and source files stay native", { timeout: 90_000 }, async () => {
+		const userCalls = path.join(fixture.root, "user-calls.jsonl"); const projectCalls = path.join(fixture.root, "project-calls.jsonl");
+		await writeMcpConfig({ fixture: { ...localMcpServer(undefined, userCalls), exposure: "direct" } });
+		const source = path.join(fixture.agentDir, "mcp.json"); const original = await readFile(source, "utf8");
+		const project = path.join(fixture.cwd, ".pi", "mcp.json"); const projectSource = JSON.stringify({ mcpServers: { project: { ...localMcpServer(undefined, projectCalls), exposure: "direct" } } });
+		await writeFile(project, projectSource); await trustProject();
+		await writeCatalog({ open: { tools: ["read"] }, closed: { tools: ["read"], mcps: [] } });
+		const rpc = runLauncherRpc(fixture, ["open", "--", ...MCP_INVOCATION_ARGS]);
+		try {
+			const before = await getState(rpc); const instance = await soleInstanceDir(fixture); const link = await readlink(path.join(instance, "trust.json"));
+			expect((await invokeNativeTool(rpc, "mcp__fixture__search", { query: "before" })).isError).toBe(false);
+			const history = (await rpc.send({ type: "get_messages" })).data?.messages;
+			await rpc.send({ type: "prompt", message: "/profile use closed" }, 45_000);
+			expect((await rpc.send({ type: "get_messages" })).data?.messages).toEqual(history);
+			expect((await invokeNativeTool(rpc, "mcp__fixture__search", { query: "denied" })).isError).toBe(true);
+			expect((await invokeNativeTool(rpc, "mcp__project__search", { query: "project" })).isError).toBe(false);
+			await rpc.send({ type: "prompt", message: "/profile reload" }, 45_000);
+			expect((await invokeNativeTool(rpc, "mcp__fixture__search", { query: "still-denied" })).isError).toBe(true);
+			await rpc.send({ type: "prompt", message: "/profile use open" }, 45_000);
+			expect((await invokeNativeTool(rpc, "mcp__fixture__search", { query: "reopened" })).isError).toBe(false);
+			expect((await getState(rpc)).sessionId).toBe(before.sessionId); expect(await readlink(path.join(instance, "trust.json"))).toBe(link);
+			expect(await mcpCalls(userCalls)).toEqual([{ name: "search", arguments: { query: "before" } }, { name: "search", arguments: { query: "reopened" } }]);
+			expect((await mcpCalls(projectCalls)).map((call) => call.name)).toEqual(["search"]);
+			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"))).toEqual({ activeProfile: "open" });
+		} finally { await rpc.close(); await rpc.waitForExit(); }
+		expect(await readFile(source, "utf8")).toBe(original); expect(await readFile(project, "utf8")).toBe(projectSource);
+	});
 });
