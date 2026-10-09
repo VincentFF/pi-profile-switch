@@ -2,6 +2,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { existsSync } from "node:fs";
+import { localMcpServer } from "./helpers/mcp-invocation.ts";
+import type { StatusReport } from "../src/switching/status.ts";
+import { soleInstanceDir } from "./helpers/pi-fixture.ts";
 import { runLauncherRpc } from "./helpers/launcher-runner.ts";
 import type { RpcDriver } from "./helpers/rpc-driver.ts";
 import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
@@ -183,5 +187,43 @@ describe("tolerant observability in native Pi", () => {
 		expect(seen).not.toContain("linear: no enabled MCP tools");
 		expect(await driver.skillCommandNames()).toEqual(["skill:review"]);
 		expect(await readFile(file, "utf8")).toBe('{"skills":["review","missing"],"mcps":["absent"],"mcp_tools":{"absent":["opaque"],"linear":[]},"unknownField":true}');
+	});
+});
+
+
+describe("dormant policy status uses activation knowledge", () => {
+	it.each([false, true])("does not activate missing/source-disabled policy in status before reload (source-disabled=%s)", { timeout: 60_000 }, async (sourceDisabled) => {
+		const marker = path.join(fixture.root, "late-started");
+		const late = localMcpServer(marker);
+		const source = path.join(fixture.agentDir, "mcp.json");
+		await writeFile(source, JSON.stringify({ mcpServers: { native: localMcpServer(), ...(sourceDisabled ? { late: { ...late, enabled: false } } : {}) } }));
+		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { project: localMcpServer() } }));
+		await writeFile(path.join(fixture.profileSwitchDir, "profiles", "policy.json"), '{"mcp_tools":{"late":["search"]}}');
+		await start("policy");
+		const instance = await soleInstanceDir(fixture);
+		const status = async (): Promise<{ content: string; report: StatusReport }> => {
+			const offset = driver.messages.length;
+			await command("profile status");
+			const event = await driver.waitFor((message) => driver.messages.indexOf(message) >= offset && JSON.stringify(message).includes('"kind":"status"')) as { message: { content: string; details: { report: StatusReport } } };
+			return { content: event.message.content, report: event.message.details.report };
+		};
+		const initial = await status();
+		expect(initial.report.mcp.enabled).not.toContain("late");
+		await writeFile(source, JSON.stringify({ mcpServers: { native: localMcpServer(), late } }));
+		const beforeReload = await status();
+		expect(beforeReload.report.mcp.enabled).toEqual(["native", "project"]);
+		expect(beforeReload.report.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"], state: sourceDisabled ? "disabled" : "missing" });
+		expect(beforeReload.content).toContain("not applied");
+		expect(existsSync(marker)).toBe(false);
+		await command("profile reload");
+		const afterReload = await status();
+		expect(afterReload.report.mcp.enabled).toEqual(["late", "native", "project"]);
+		expect(afterReload.report.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"] });
+		expect(afterReload.report.diagnostics?.some((issue) => issue.kind === "mcp-tools" && issue.reference === "late") ?? false).toBe(false);
+		const snapshot = JSON.parse(await readFile(path.join(instance, "mcp.json"), "utf8"));
+		expect(snapshot.mcpServers.late.toolExposure).toEqual({ "*": "hidden", search: "direct" });
+		const deadline = Date.now() + 5000;
+		while (!existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(existsSync(marker)).toBe(true);
 	});
 });

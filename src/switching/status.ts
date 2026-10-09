@@ -96,7 +96,15 @@ export function buildStatusReport(input: {
 	const snapshotDisabled = new Set(input.disabledMcpServers);
 	const project = new Set(input.projectMcpServers ?? []);
 	const diagnostics = mergeResolutionDiagnostics(plan.diagnostics);
-	const enabled = input.discoveredMcpServers.filter((name) => !snapshotDisabled.has(name) && (project.has(name) || plan.mcps === undefined || plan.mcps.includes(name))).sort();
+	const dormantPolicies = new Map<string, "missing" | "disabled">();
+	for (const issue of diagnostics) {
+		if (issue.kind !== "mcp-tools" || issue.reference === undefined || !Object.hasOwn(plan.mcpTools ?? {}, issue.reference)) continue;
+		if (issue.code === "unknown-reference") dormantPolicies.set(issue.reference, "missing");
+		if (issue.code === "disabled-server") dormantPolicies.set(issue.reference, "disabled");
+	}
+	// Fresh candidates do not make a skipped declared policy active before
+	// reload. Unmentioned resources and native project ownership stay fresh.
+	const enabled = input.discoveredMcpServers.filter((name) => !snapshotDisabled.has(name) && (project.has(name) || (!dormantPolicies.has(name) && (plan.mcps === undefined || plan.mcps.includes(name))))).sort();
 	const disabled = input.discoveredMcpServers.filter((name) => !enabled.includes(name)).sort();
 	const referenced = new Set([
 		...(plan.mcps ?? []), ...Object.keys(plan.mcpTools ?? {}),
@@ -109,6 +117,8 @@ export function buildStatusReport(input: {
 	const policyState = (server: string): Pick<McpServerToolStatus, "state"> => {
 		if (!discovered.has(server)) return { state: "missing" };
 		if (project.has(server)) return { state: "project" };
+		const retainedState = dormantPolicies.get(server);
+		if (retainedState !== undefined) return { state: retainedState };
 		if (!enabled.includes(server)) return { state: "disabled" };
 		return {};
 	};

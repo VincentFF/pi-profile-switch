@@ -341,3 +341,29 @@ describe("diagnostic status and dormant MCP policies", () => {
 		expect(report.mcp).toEqual({ enabled: ["kept"], disabled: ["disabled"], missing: ["missing"] });
 	});
 });
+
+
+describe("retained activation knowledge before MCP reload", () => {
+	it.each([{ code: "unknown-reference", state: "missing" }, { code: "disabled-server", state: "disabled" }] as const)("keeps a $state policy dormant after source changes until reload", ({ code, state }) => {
+		const issue = { kind: "mcp-tools", code, reference: "late", message: "late policy was not applied this activation" };
+		const plan = { profile: "policy", source: "global", mcpTools: { late: ["search"] }, diagnostics: [issue] };
+		const input = { discoveredMcpServers: ["late", "native", "project"], disabledMcpServers: [], projectMcpServers: ["project"], commands: [], tools: [] };
+		const beforeReload = buildStatusReport({ ...input, plan });
+		expect(beforeReload.mcp.enabled).toEqual(["native", "project"]);
+		expect(beforeReload.mcp.disabled).toContain("late");
+		expect(beforeReload.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"], state });
+		expect(formatStatusMarkdown(beforeReload)).toContain(`late: declared policy [search] (${state}; not applied)`);
+		expect(beforeReload.diagnostics).toEqual([issue]);
+		const afterReload = buildStatusReport({ ...input, plan: { ...plan, diagnostics: undefined } });
+		expect(afterReload.mcp.enabled).toEqual(["late", "native", "project"]);
+		expect(afterReload.mcpTools).toContainEqual({ server: "late", policy: "restricted", tools: ["search"] });
+	});
+	it("preserves older plans and native project precedence even with an old user-level miss", () => {
+		const input = { discoveredMcpServers: ["late"], disabledMcpServers: [], commands: [], tools: [] };
+		const plan = { profile: "policy", source: "global", mcpTools: { late: ["search"] } };
+		expect(buildStatusReport({ ...input, plan }).mcp.enabled).toEqual(["late"]);
+		const report = buildStatusReport({ ...input, projectMcpServers: ["late"], plan: { ...plan, diagnostics: [{ kind: "mcp-tools", code: "unknown-reference", reference: "late", message: "old user miss" }] } });
+		expect(report.mcp.enabled).toEqual(["late"]);
+		expect(report.mcpTools).toEqual([{ server: "late", policy: "restricted", tools: ["search"], state: "project" }]);
+	});
+});

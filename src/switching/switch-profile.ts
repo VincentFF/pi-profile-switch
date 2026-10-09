@@ -235,7 +235,11 @@ export async function switchProfile(
 					...(previousPlan.mcps !== undefined ? { mcps: previousPlan.mcps } : {}),
 				}
 			: undefined;
-	const warnings = [...resolved.warnings];
+	// Generation owns the final structured diagnostic snapshot. Keep only
+	// plain resolution warnings here; otherwise refreshed or cleared MCP
+	// diagnostics would resurrect earlier candidate messages after reload.
+	const structuredResolutionWarnings = new Set((resolved.plan.diagnostics ?? []).map((issue) => issue.message));
+	const warnings = resolved.warnings.filter((message) => !structuredResolutionWarnings.has(message));
 
 	const rollback = async (cause: string): Promise<never> => {
 		const message = `activation of profile "${target}" failed; restored the previous settings. Cause: ${cause}`;

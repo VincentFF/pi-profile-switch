@@ -877,3 +877,41 @@ describe("unavailable listing and diagnostic status", () => {
 		expect(notices.some((entry) => entry.message.includes("context invalidated"))).toBe(false);
 	});
 });
+
+
+describe("command feedback after diagnostic message refresh", () => {
+	it.each([false, true])("does not replay replaced/cleared diagnostics (cleared=%s) and retains plain warnings", async (cleared) => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		await writeGlobalProfiles({ policy: { mcp_tools: { late: ["search"] } } });
+		await writeFile(path.join(root, "mcp.json"), '{"mcpServers":{"alpha":{"command":"alpha"}}}');
+		const resolve = initialProfile.resolveInitialProfile;
+		vi.spyOn(initialProfile, "resolveInitialProfile").mockImplementation(async (...args) => {
+			const result = await resolve(...args);
+			await writeFile(path.join(root, "mcp.json"), JSON.stringify({ mcpServers: cleared ? { late: { command: "late" } } : { beta: { command: "beta" } } }));
+			return { ...result, warnings: [...result.warnings, "plain discovery warning"] };
+		});
+		const pi = fakePi(); piProfileExtension(pi as never);
+		const next = fakeCtx({ hasUI: true }); const previous = fakeCtx({ hasUI: true });
+		const invalidate = previous.reload;
+		previous.reload = async () => { await fireSessionStart(pi, "reload", next); await invalidate(); };
+		await pi.commands.get("profile")?.handler("use policy" as never, previous as never);
+		const warnings = [...previous.notifications, ...next.notifications].filter((entry) => entry.level === "warning").map((entry) => entry.message);
+		expect(warnings.filter((message) => message === "plain discovery warning")).toHaveLength(1);
+		expect(warnings.some((message) => message.includes("candidates: alpha"))).toBe(false);
+		const issues = warnings.filter((message) => message.includes('unknown MCP server "late"'));
+		expect(issues).toHaveLength(cleared ? 0 : 1);
+		if (!cleared) expect(issues[0]).toContain("candidates: beta");
+	});
+});
+
+it("preserves legacy plain command warnings when the persisted plan has no diagnostics", async () => {
+	await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [] }, projectTrusted: true, warnings: ["legacy plain warning"] });
+	const pi = fakePi(); piProfileExtension(pi as never);
+	const previous = fakeCtx({ hasUI: true }); const next = fakeCtx({ hasUI: true });
+	const invalidate = previous.reload;
+	previous.reload = async () => { await fireSessionStart(pi, "reload", next); await invalidate(); };
+	await pi.commands.get("profile")?.handler("use legacy" as never, previous as never);
+	expect([...previous.notifications, ...next.notifications].filter((entry) => entry.message === "legacy plain warning")).toHaveLength(1);
+	expect(JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8")).diagnostics).toBeUndefined();
+});

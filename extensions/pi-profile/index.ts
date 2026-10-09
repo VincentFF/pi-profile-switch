@@ -190,8 +190,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				}
 			};
 			const notifySwitchWarnings = async (result: { profile: string; warnings: string[] }): Promise<void> => {
-				// Successful switching proved a real reload. Its new extension
-				// owns persisted diagnostics; preserve any other returned warnings.
+				// switchProfile returns final-stage structured messages only, not
+				// superseded resolution messages. Successful reload delivered these
+				// persisted issues; unmatched plain/legacy warnings remain observable.
 				const next = await readLaunchPlanFile(runtimeDir);
 				const delivered = new Set(next?.profile === result.profile ? (next.diagnostics ?? []).map((issue) => issue.message) : []);
 				for (const warning of new Set(result.warnings)) if (!delivered.has(warning)) notify(warning, "warning");

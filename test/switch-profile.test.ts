@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as initialProfile from "../src/launcher/initial-profile.ts";
 import { generateRuntimeDir, writeRuntimeFiles } from "../src/settings-generator.ts";
 import { defaultPlan } from "../src/profile-resolver.ts";
 import { switchProfile, SwitchError } from "../src/switching/switch-profile.ts";
@@ -44,6 +45,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	process.env.HOME = savedHome;
 	await rm(fixture.root, { recursive: true, force: true });
 });
@@ -827,4 +829,32 @@ describe("tolerant switch resolution with strict fatal boundaries", () => {
 		await expect(switchProfile("partial", deps(), { overlay: { disabledSkills: ["missing"] } })).rejects.toThrow(/overlay disables unknown skill/);
 		expect(await managedSnapshot()).toEqual(before);
 	});
+});
+
+
+describe("final-stage diagnostic ownership during switching", () => {
+	it.each([false, true])("returns refreshed diagnostics without stale candidate messages (cleared=%s), preserving plain warnings", async (cleared) => {
+		await writeCatalog({ policy: { mcp_tools: { late: ["search"] } } });
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), '{"mcpServers":{"alpha":{"command":"alpha"}}}');
+		const resolve = initialProfile.resolveInitialProfile;
+		vi.spyOn(initialProfile, "resolveInitialProfile").mockImplementation(async (...args) => {
+			const result = await resolve(...args);
+			expect(result.warnings.some((message) => message.includes("candidates: alpha"))).toBe(true);
+			await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: cleared ? { late: { command: "late" } } : { beta: { command: "beta" } } }));
+			return { ...result, warnings: [...result.warnings, "plain discovery warning"] };
+		});
+		const result = await switchProfile("policy", deps());
+		expect(result.warnings).toContain("plain discovery warning");
+		expect(result.warnings.some((message) => message.includes("candidates: alpha"))).toBe(false);
+		const issues = result.warnings.filter((message) => message.includes('unknown MCP server "late"'));
+		expect(issues).toHaveLength(cleared ? 0 : 1);
+		if (!cleared) expect(issues[0]).toContain("candidates: beta");
+	});
+});
+
+it("retains plain warnings from resolution plans without diagnostic metadata", async () => {
+	vi.spyOn(initialProfile, "resolveInitialProfile").mockResolvedValue({ plan: { profile: "legacy", source: "global", filter: "selection", skills: [], extensions: [] }, projectTrusted: true, warnings: ["legacy plain warning"] });
+	const result = await switchProfile("legacy", deps());
+	expect(result.warnings).toEqual(["legacy plain warning"]);
+	expect((await readPlanFile()).diagnostics).toBeUndefined();
 });
